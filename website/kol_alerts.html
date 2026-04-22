@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#090909" />
+  <title>Nerds Alpha — Token Alerts</title>
+  <link rel="icon" href="/logo.png" type="image/png" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{background:#090909;color:#f0e8c0;font-family:Inter,system-ui,sans-serif}
+    a{color:inherit;text-decoration:none}
+    .wrap{width:100%;max-width:1600px;margin:0 auto;padding:18px 22px}
+    .top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .brand{display:flex;align-items:center;gap:10px}
+    .brand img{width:30px;height:30px;border:1px solid rgba(255,204,0,.30);border-radius:6px}
+    .brand span{font-family:"JetBrains Mono",monospace;letter-spacing:.14em;text-transform:uppercase;color:#ffcc00;font-weight:700;font-size:12px}
+    .btn{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,204,0,.25);color:rgba(240,232,192,.80)}
+    .btn:hover{border-color:rgba(255,204,0,.45);color:#ffcc00}
+    .grid{margin-top:14px;display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
+    .card{border:1px solid rgba(255,204,0,.18);border-radius:14px;background:rgba(9,9,9,.7);overflow:hidden;position:relative}
+    .card.accent::before{
+      content:"";
+      position:absolute; inset:0;
+      pointer-events:none;
+      background: radial-gradient(900px 240px at 20% 0%, rgba(var(--acc,255,204,0), .14), transparent 55%);
+      opacity:.9;
+    }
+    .card.accent{border-color:rgba(var(--acc,255,204,0), .28); box-shadow:0 0 0 1px rgba(var(--acc,255,204,0), .06) inset}
+    .card.span12{grid-column:span 12}
+    .card.span4{grid-column:span 4}
+    @media (max-width: 980px){ .card.span4{grid-column:span 12} }
+    .ph{padding:12px 14px;border-bottom:1px solid rgba(255,204,0,.12);display:flex;justify-content:space-between;align-items:center}
+    .pt{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:rgba(240,232,192,.70)}
+    .ps{font-family:"JetBrains Mono",monospace;font-size:10px;color:rgba(240,232,192,.45)}
+    .pb{padding:10px 14px;max-height:74vh;overflow:auto}
+    .item{padding:10px 0;border-bottom:1px solid rgba(255,204,0,.10)}
+    .row{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+    .ttl{font-weight:900;color:#ffcc00}
+    .tmeta{white-space:nowrap;color:rgba(240,232,192,.45);font-family:"JetBrains Mono",monospace;font-size:10px}
+    .body{margin-top:6px;color:rgba(240,232,192,.78);font-size:13px;line-height:1.35;white-space:pre-wrap}
+    /* Table-like layout (like your screenshot) */
+    .topHeader{display:grid;grid-template-columns:46px 1fr 165px 140px 140px 110px 170px 140px;gap:12px;align-items:center;
+      padding:10px 0;border-bottom:1px solid rgba(255,204,0,.16)}
+    .tokRow{display:grid;grid-template-columns:46px 1fr 165px 140px 140px 110px 170px 140px;gap:12px;align-items:center;
+      padding:10px 0;border-bottom:1px solid rgba(255,204,0,.10)}
+    .colH{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:rgba(240,232,192,.45)}
+    @media (max-width: 1020px){
+      .topHeader,.tokRow{grid-template-columns:46px 1fr}
+      .topHeader .colH{display:none}
+      .tokRow .colTime,.tokRow .colCall,.tokRow .colAth,.tokRow .colAthx,.tokRow .colCaller,.tokRow .colLinks{display:none}
+    }
+    .av{width:40px;height:40px;border-radius:12px;border:1px solid rgba(255,204,0,.22);background:rgba(255,204,0,.06);overflow:hidden}
+    .av img{width:100%;height:100%;object-fit:cover;display:block}
+    .badge{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:999px;
+      font-family:"JetBrains Mono",monospace;font-size:10px;border:1px solid rgba(255,204,0,.12);background:rgba(255,204,0,.08);color:rgba(240,232,192,.88)}
+    .badge.k{background:rgba(120,180,255,.10);border-color:rgba(120,180,255,.22)}
+    .badge.g{background:rgba(120,255,180,.10);border-color:rgba(120,255,180,.22)}
+    .badge.r{background:rgba(255,150,150,.10);border-color:rgba(255,150,150,.22)}
+    .badge.p{background:rgba(200,160,255,.10);border-color:rgba(200,160,255,.22)}
+    .badge b{font-weight:800;color:#ffcc00}
+    .sub{margin-top:6px;display:flex;flex-wrap:wrap;gap:8px}
+
+    /* Loading / error + LIVE pill */
+    .loadWrap{display:flex;align-items:center;gap:10px}
+    .err{padding:12px 14px;color:rgba(255,150,150,.88);font-family:"JetBrains Mono",monospace;font-size:11px}
+    .livePill{
+      display:inline-flex;align-items:center;gap:8px;
+      font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+      padding:6px 10px;border-radius:999px;
+      background:rgba(90,255,160,.12);border:1px solid rgba(90,255,160,.28);
+      color:rgba(200,255,220,.95);
+      box-shadow:0 0 0 1px rgba(90,255,160,.10) inset;
+    }
+    .livePill i{width:7px;height:7px;border-radius:50%;background:#5aff9f;box-shadow:0 0 16px rgba(90,255,160,.55);display:inline-block;animation:pulse 1.1s ease-in-out infinite}
+    @keyframes pulse{0%{opacity:.35;transform:scale(.9)}50%{opacity:1;transform:scale(1)}100%{opacity:.35;transform:scale(.9)}}
+    .wait{padding:14px 14px;color:rgba(240,232,192,.55);font-family:"JetBrains Mono",monospace;font-size:11px;line-height:1.6}
+    .headRight{display:flex;align-items:center;gap:10px}
+    .liveMini{transform:translateY(-1px); padding:5px 9px}
+    .liveMini i{width:6px;height:6px}
+
+    /* Column-specific accents */
+    .accLow{--acc:120,180,255}
+    .acc100k{--acc:255,220,120}
+    .acc1m{--acc:120,255,180}
+
+    /* Slightly tint the pills inside each column */
+    .accLow .badge.k{background:rgba(120,180,255,.14);border-color:rgba(120,180,255,.30)}
+    .acc100k .badge.k{background:rgba(255,220,120,.14);border-color:rgba(255,220,120,.30)}
+    .acc1m .badge.k{background:rgba(120,255,180,.14);border-color:rgba(120,255,180,.30)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <a class="brand" href="/"><img src="/logo.png" alt="Nerds Alpha" /><span>Nerds Alpha · Token Alerts</span></a>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+        <a class="btn" href="/projects">Projects</a>
+        <a class="btn" href="/daily-finds">Daily Finds</a>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card span12">
+        <div class="ph">
+          <div class="pt">Top performed coins (24h) · ranked by ATHx</div>
+          <div class="loadWrap">
+            <span class="livePill" title="Live feed"><i></i>LIVE</span>
+            <div class="ps" id="stat">—</div>
+          </div>
+        </div>
+        <div class="pb" id="top"></div>
+      </div>
+
+      <div class="card accent accLow span4">
+        <div class="ph">
+          <div class="pt">Low mcap alerts</div>
+          <div class="headRight"><span class="livePill liveMini"><i></i>LIVE</span><div class="ps">&lt;50k</div></div>
+        </div>
+        <div class="pb" id="b_low"></div>
+      </div>
+      <div class="card accent acc100k span4">
+        <div class="ph">
+          <div class="pt">#100k mcap alerts</div>
+          <div class="headRight"><span class="livePill liveMini"><i></i>LIVE</span><div class="ps">50k–100k</div></div>
+        </div>
+        <div class="pb" id="b_100k"></div>
+      </div>
+      <div class="card accent acc1m span4">
+        <div class="ph">
+          <div class="pt">1m+ mcap alerts</div>
+          <div class="headRight"><span class="livePill liveMini"><i></i>LIVE</span><div class="ps">100k+</div></div>
+        </div>
+        <div class="pb" id="b_1m"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;").replace(/'/g,"&#39;");}
+    function fmtTime(iso){try{var d=new Date(iso);if(!isNaN(d.getTime()))return d.toLocaleString();}catch(e){}return iso||"";}
+    function fmtMc(n){
+      if (n === null || n === undefined) return "—";
+      var v = Number(n);
+      if (!isFinite(v) || v<=0) return "—";
+      if (v >= 1e9) return "$" + (v/1e9).toFixed(2) + "B";
+      if (v >= 1e6) return "$" + (v/1e6).toFixed(2) + "M";
+      if (v >= 1e3) return "$" + (v/1e3).toFixed(1) + "K";
+      return "$" + Math.round(v);
+    }
+    function fmtX(x){
+      if (x === null || x === undefined) return "—";
+      var v = Number(x);
+      if (!isFinite(v) || v<=0) return "—";
+      return v.toFixed(2) + "x";
+    }
+    function badge(label, value, cls){
+      var v = (value===null||value===undefined||value==="") ? "—" : String(value);
+      return '<span class="badge '+esc(cls||"")+'"><b>'+esc(label)+'</b> '+esc(v)+'</span>';
+    }
+    function renderTop(items){
+      var el=document.getElementById("top");
+      if(!items||!items.length){el.innerHTML='<div class="ps">No leaderboard yet.</div>';return;}
+      var html="";
+      html+='<div class="topHeader">'
+        +'<div></div>'
+        +'<div class="colH">Top performing calls</div>'
+        +'<div class="colH">Call time</div>'
+        +'<div class="colH">MC@call</div>'
+        +'<div class="colH">ATH</div>'
+        +'<div class="colH">ATHx</div>'
+        +'<div class="colH">Caller</div>'
+        +'<div class="colH">Links</div>'
+        +'</div>';
+      items.forEach(function(r, idx){
+        var av = (r.thumb_url||"").trim();
+        var chart = r.chart_url || "";
+        var dex = r.dex_url || "";
+        var callerLink = r.caller_x ? ("https://x.com/" + String(r.caller_x).replace(/^@/,"")) : "";
+        html+='<div class="tokRow">';
+        html+='<div class="av">'+(av?('<img src="'+esc(av)+'" loading="lazy" />'):'')+'</div>';
+        html+='<div>';
+        html+='<div class="row"><div class="ttl">'+esc(String(idx+1)+". ")+ '<a href="'+esc(chart)+'" target="_blank" rel="noreferrer" style="color:#ffcc00">'+esc(r.ticker||"—")+'</a></div></div>';
+        html+='<div class="body" style="margin-top:4px;color:rgba(240,232,192,.60);font-size:12px;">'
+          +esc(r.mint||"").slice(0,6)+'…'+esc(r.mint||"").slice(-6)
+          +'</div>';
+        html+='</div>';
+        html+='<div class="colTime"><span class="tmeta">'+esc(fmtTime(r.call_ts||""))+'</span></div>';
+        html+='<div class="colCall">'+badge("MC", fmtMc(r.call_mc), "k")+'</div>';
+        html+='<div class="colAth">'+badge("ATH", fmtMc(r.ath_mc), "g")+'</div>';
+        html+='<div class="colAthx">'+badge("x", fmtX(r.ath_x), "g")+'</div>';
+        html+='<div class="colCaller">'+(callerLink?('<a class="badge r" target="_blank" rel="noreferrer" href="'+esc(callerLink)+'"><b>'+esc(r.caller||"Caller")+'</b></a>'):badge("Caller", r.caller||"—", "r"))+'</div>';
+        html+='<div class="colLinks">'
+          +(chart?('<a class="badge" target="_blank" rel="noreferrer" href="'+esc(chart)+'"><b>Chart</b></a>'):'')
+          +(dex?('<a class="badge p" target="_blank" rel="noreferrer" href="'+esc(dex)+'"><b>Dex</b></a>'):'')
+          +'</div>';
+        html+='</div>';
+      });
+      el.innerHTML=html;
+    }
+    function renderBucket(elId, items){
+      var el=document.getElementById(elId);
+      if(!items||!items.length){
+        el.innerHTML='<div class="wait"><span class="livePill" style="padding:5px 9px;"><i></i>LIVE</span> <span class="ps" style="margin-left:8px;">Waiting for signal…</span></div>';
+        return;
+      }
+      var html="";
+      items.forEach(function(r){
+        var detail = r.event_id ? ("/alert/"+encodeURIComponent(r.event_id)) : "";
+        var chart = r.chart_url || "";
+        html+='<div class="item">';
+        html+='<div class="row"><div class="ttl">'+(detail?('<a href="'+esc(detail)+'">'+esc(r.ticker||r.title||"Token")+'</a>'):esc(r.ticker||r.title||"Token"))+'</div>'
+          +'<div class="tmeta">'+esc(fmtTime(r.ts||""))+'</div></div>';
+        html+='<div class="sub">'
+          +badge("MC@call", fmtMc(r.call_mc), "k")
+          +badge("ATH", fmtMc(r.ath_mc), "g")
+          +badge("ATHx", fmtX(r.ath_x), "g")
+          +'</div>';
+        html+='<div class="sub">'
+          +(chart?('<a class="badge" target="_blank" rel="noreferrer" href="'+esc(chart)+'"><b>Chart</b> gmgn</a>'):'')
+          +(r.dex_url?('<a class="badge" target="_blank" rel="noreferrer" href="'+esc(r.dex_url)+'"><b>Dex</b> link</a>'):'')
+          +'</div>';
+        html+='</div>';
+      });
+      el.innerHTML=html;
+    }
+    async function refresh(){
+      var stat = document.getElementById("stat");
+      if (stat) stat.textContent = "Updating…";
+      try{
+        var r=await fetch("/api/kol/dashboard?hours=24&top=10&per_bucket=6",{credentials:"include"});
+        if(!r.ok){
+          var txt = "";
+          try{ txt = (await r.text()) || ""; }catch(e){}
+          document.getElementById("top").innerHTML = '<div class="err">Failed to load: HTTP '+esc(r.status)+'<br/>'+esc(txt.slice(0,220))+'</div>';
+          document.getElementById("b_low").innerHTML = '<div class="ps">—</div>';
+          document.getElementById("b_100k").innerHTML = '<div class="ps">—</div>';
+          document.getElementById("b_1m").innerHTML = '<div class="ps">—</div>';
+          if (stat) stat.textContent = "Error";
+          return;
+        }
+        var d=await r.json();
+        renderTop((d&&d.top)||[]);
+        var b = (d&&d.buckets)||{};
+        renderBucket("b_low", b.low||[]);
+        renderBucket("b_100k", b["100k"]||[]);
+        renderBucket("b_1m", b["1m"]||[]);
+        if (stat) stat.textContent="Updated " + new Date().toLocaleTimeString();
+      } catch(e){
+        document.getElementById("top").innerHTML = '<div class="err">Failed to load: '+esc(String(e||""))+'</div>';
+        if (stat) stat.textContent = "Error";
+      } finally {}
+    }
+    refresh(); setInterval(refresh,7000);
+  </script>
+</body>
+</html>
+

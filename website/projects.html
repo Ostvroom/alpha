@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#090909" />
+  <title>Nerds Alpha — Projects</title>
+  <link rel="icon" href="/logo.png" type="image/png" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{background:#090909;color:#f0e8c0;font-family:Inter,system-ui,sans-serif}
+    a{color:inherit;text-decoration:none}
+    /* Fill the page on wide screens (screenshot-like) */
+    .wrap{width:100%;max-width:1600px;margin:0 auto;padding:18px 22px}
+    .top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .brand{display:flex;align-items:center;gap:10px}
+    .brand img{width:30px;height:30px;border:1px solid rgba(255,204,0,.30);border-radius:6px}
+    .brand span{font-family:"JetBrains Mono",monospace;letter-spacing:.14em;text-transform:uppercase;color:#ffcc00;font-weight:700;font-size:12px}
+    .btn{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,204,0,.25);color:rgba(240,232,192,.80)}
+    .btn:hover{border-color:rgba(255,204,0,.45);color:#ffcc00}
+    .grid{margin-top:14px;display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
+    .card{border:1px solid rgba(255,204,0,.18);border-radius:14px;background:rgba(9,9,9,.7);overflow:hidden}
+    .card.span6{grid-column:span 6}
+    .card.span12{grid-column:span 12}
+    @media (max-width: 920px){ .card.span6{grid-column:span 12} }
+    .ph{padding:12px 14px;border-bottom:1px solid rgba(255,204,0,.12);display:flex;justify-content:space-between;align-items:center}
+    .pt{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:rgba(240,232,192,.70)}
+    .ps{font-family:"JetBrains Mono",monospace;font-size:10px;color:rgba(240,232,192,.45)}
+    .pb{padding:10px 14px;max-height:76vh;overflow:auto}
+    .item{padding:10px 0;border-bottom:1px solid rgba(255,204,0,.10)}
+    .row{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+    .ttl{font-weight:800;color:#ffcc00}
+    .tmeta{white-space:nowrap;color:rgba(240,232,192,.45);font-family:"JetBrains Mono",monospace;font-size:10px}
+    .body{margin-top:6px;color:rgba(240,232,192,.78);font-size:13px;line-height:1.35;white-space:pre-wrap}
+    .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid rgba(255,204,0,.18);border-radius:999px;padding:4px 9px;
+      font-family:"JetBrains Mono",monospace;font-size:10px;color:rgba(240,232,192,.70);background:rgba(0,0,0,.18)}
+    .mini{display:flex;gap:10px;align-items:center}
+    .rank{width:22px;height:22px;border-radius:7px;display:flex;align-items:center;justify-content:center;
+      font-family:"JetBrains Mono",monospace;font-size:11px;color:#090909;background:#ffcc00;font-weight:800}
+    .sub{margin-top:6px;display:flex;flex-wrap:wrap;gap:8px}
+
+    /* Rich rows (screenshot-like) */
+    .projRow{display:grid;grid-template-columns:46px 1fr;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid rgba(255,204,0,.10)}
+    .av{width:40px;height:40px;border-radius:12px;border:1px solid rgba(255,204,0,.22);background:rgba(255,204,0,.06);overflow:hidden}
+    .av img{width:100%;height:100%;object-fit:cover;display:block}
+    .titleLine{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .handle{font-weight:900;color:#ffcc00}
+    .muted{color:rgba(240,232,192,.55)}
+    .desc{margin-top:6px;color:rgba(240,232,192,.78);font-size:12.8px;line-height:1.35}
+    /* Badge style closer to your screenshot */
+    .badge{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:999px;
+      font-family:"JetBrains Mono",monospace;font-size:10px;border:1px solid rgba(255,204,0,.12);background:rgba(255,204,0,.08);color:rgba(240,232,192,.88)}
+    .badge.k{background:rgba(120,180,255,.10);border-color:rgba(120,180,255,.22)}
+    .badge.g{background:rgba(120,255,180,.10);border-color:rgba(120,255,180,.22)}
+    .badge.p{background:rgba(200,160,255,.10);border-color:rgba(200,160,255,.22)}
+    .badge.r{background:rgba(255,150,150,.10);border-color:rgba(255,150,150,.22)}
+    .badge.y{background:rgba(255,220,120,.10);border-color:rgba(255,220,120,.22)}
+    .badge b{font-weight:800;color:#ffcc00}
+
+    /* Finds feed: separate right-side columns */
+    .findsHeader{display:grid;grid-template-columns:46px 1fr 92px 120px 140px;gap:12px;align-items:center;
+      padding:10px 0;border-bottom:1px solid rgba(255,204,0,.16)}
+    .findsRow{display:grid;grid-template-columns:46px 1fr 92px 120px 140px;gap:12px;align-items:center;
+      padding:10px 0;border-bottom:1px solid rgba(255,204,0,.10)}
+    .colH{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:rgba(240,232,192,.45)}
+    .colV{font-family:"JetBrains Mono",monospace;font-size:11px;color:rgba(240,232,192,.82)}
+    .colV .badge{transform:translateY(-1px)}
+    @media (max-width: 980px){
+      .findsHeader,.findsRow{grid-template-columns:46px 1fr}
+      .findsHeader .colH{display:none}
+      .findsRow .colAge,.findsRow .colFol,.findsRow .colCat{display:none}
+    }
+
+    /* Gate overlay: blur/dim page behind a small modal */
+    body.locked{overflow:hidden}
+    #page{transition:filter .18s ease, opacity .18s ease}
+    body.locked #page{filter: blur(6px); opacity:.35; pointer-events:none; user-select:none}
+    .gate{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center}
+    body.locked .gate{display:flex}
+    .gate-back{position:absolute;inset:0;background:rgba(0,0,0,.55)}
+    .gate-card{
+      position:relative;
+      width:min(720px, 92vw);
+      background:#0b0b0d;
+      border:1px solid rgba(255,204,0,.32);
+      border-radius:14px;
+      box-shadow:0 28px 120px rgba(0,0,0,.75);
+      padding:16px 16px 14px;
+    }
+    .gate-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+    .gate-title{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,204,0,.90)}
+    .gate-close{border:1px solid rgba(255,204,0,.35);background:rgba(255,204,0,.06);color:#ffcc00;width:36px;height:36px;font-size:22px;cursor:pointer;border-radius:8px}
+    .gate-close:hover{background:rgba(255,204,0,.12)}
+    .gate-steps{font-size:14px;color:rgba(240,232,192,.68);line-height:1.6}
+    .gate-steps b{color:#ffcc00}
+    .gate-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
+    .gate-inp{
+      flex:1;min-width:260px;
+      background:rgba(0,0,0,.25);
+      border:1px solid rgba(255,204,0,.18);
+      color:#f0e8c0;
+      border-radius:10px;
+      padding:11px 12px;
+      font-family:"JetBrains Mono",monospace;
+      font-size:12px;
+      outline:none;
+    }
+    .gate-help{font-family:"JetBrains Mono",monospace;font-size:10.5px;color:rgba(240,232,192,.42);margin-top:8px}
+    .gate-err{font-family:"JetBrains Mono",monospace;font-size:11px;color:rgba(255,150,150,.92);margin-top:10px;display:none}
+  </style>
+</head>
+<body>
+  <div id="page">
+    <div class="wrap">
+      <div class="top">
+        <a class="brand" href="/"><img src="/logo.png" alt="Nerds Alpha" /><span>Nerds Alpha · Projects</span></a>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+          <a class="btn" href="/kol-alerts">Token Alerts</a>
+          <a class="btn" href="/daily-finds">Daily Finds</a>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="card span6">
+          <div class="ph">
+            <div class="pt">🔥 Trending</div>
+            <div class="ps"><a href="#" id="moreTrending" style="color:rgba(240,232,192,.55);">More</a></div>
+          </div>
+          <div class="pb" id="trending" style="max-height:280px;"></div>
+        </div>
+
+        <div class="card span6">
+          <div class="ph">
+            <div class="pt">⚡ Latest escalations</div>
+            <div class="ps"><a href="#" id="moreNew" style="color:rgba(240,232,192,.55);">More</a></div>
+          </div>
+          <div class="pb" id="newProjects" style="max-height:280px;"></div>
+        </div>
+
+        <div class="card span12">
+          <div class="ph">
+            <div class="pt">📡 Finds feed</div>
+            <div class="ps" id="stat">—</div>
+          </div>
+          <div class="pb" id="list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="gate" id="gate">
+    <div class="gate-back" id="gateBack"></div>
+    <div class="gate-card" role="dialog" aria-modal="true" aria-label="Access gate">
+      <div class="gate-head">
+        <div class="gate-title">Access gate · like + RT + reply</div>
+        <button class="gate-close" type="button" id="gateClose" aria-label="Close">&times;</button>
+      </div>
+      <div class="gate-steps">
+        1) Open the tweet and <b>Like</b> + <b>RT</b> + <b>Reply</b><br/>
+        2) Paste your <b>reply link</b> and submit to unlock.
+      </div>
+      <div class="gate-row">
+        <a class="btn" id="gateOpenTweet" href="#" target="_blank" rel="noreferrer">Open Tweet</a>
+        <input id="gateReply" class="gate-inp" placeholder="Paste your reply link (x.com/.../status/ID)" />
+        <button class="btn" id="gateSubmit" type="button">Submit</button>
+      </div>
+      <div class="gate-help">Tip: `https://x.com/yourname/status/123...`</div>
+      <div class="gate-err" id="gateErr"></div>
+    </div>
+  </div>
+
+  <script>
+    function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;").replace(/'/g,"&#39;");}
+    function fmtTime(iso){try{var d=new Date(iso);if(!isNaN(d.getTime()))return d.toLocaleString();}catch(e){}return iso||"";}
+    function fmtAgeDays(n){
+      if (n === null || n === undefined || n === "") return "—";
+      return String(n) + "d";
+    }
+    function fmtFollowers(n){
+      if (n === null || n === undefined) return "—";
+      var v = Number(n);
+      if (!isFinite(v)) return "—";
+      if (v >= 1e6) return (v/1e6).toFixed(1).replace(/\.0$/,"") + "M";
+      if (v >= 1e3) return (v/1e3).toFixed(1).replace(/\.0$/,"") + "k";
+      return String(v);
+    }
+
+    function _img(url){
+      url = String(url||"").trim();
+      if (!url) return "";
+      return url;
+    }
+    function badge(label, value, cls){
+      var v = (value===null||value===undefined||value==="") ? "—" : String(value);
+      return '<span class="badge '+esc(cls||"")+'"><b>'+esc(label)+'</b> '+esc(v)+'</span>';
+    }
+
+    function renderTrending(items){
+      var el=document.getElementById("trending");
+      if(!items||!items.length){el.innerHTML='<div class="ps">No data yet.</div>';return;}
+      var html="";
+      items.forEach(function(p, idx){
+        var url = p.url || ("https://x.com/" + (p.handle||""));
+        var av = _img(p.pfp_url);
+        html+='<div class="projRow">';
+        html+='<div class="av">'+(av?('<img src="'+esc(av)+'" loading="lazy" />'):'')+'</div>';
+        html+='<div>';
+        html+='<div class="titleLine"><span class="rank">'+(idx+1)+'</span><a class="handle" href="'+esc(url)+'" target="_blank" rel="noreferrer">@'+esc(p.handle||p.name||"")+'</a></div>';
+        html+='<div class="sub">'
+          +badge("HVA", (p.hva_smarts||0), "y")
+          +badge("AGE", fmtAgeDays(p.age_days), "k")
+          +'</div>';
+        if (p.description) html+='<div class="desc">'+esc(p.description).slice(0,180)+'</div>';
+        html+='</div>';
+        html+='</div>';
+      });
+      el.innerHTML=html;
+    }
+
+    function renderNew(items){
+      var el=document.getElementById("newProjects");
+      if(!items||!items.length){el.innerHTML='<div class="ps">No data yet.</div>';return;}
+      var html="";
+      items.forEach(function(p, idx){
+        var url = p.id ? ("/alert/" + encodeURIComponent(p.id)) : (p.url || "");
+        var extra = p.extra || {};
+        var av = _img(extra.pfp_url);
+        html+='<div class="projRow">';
+        html+='<div class="av">'+(av?('<img src="'+esc(av)+'" loading="lazy" />'):'')+'</div>';
+        html+='<div>';
+        html+='<div class="titleLine"><a class="handle" href="'+esc(url)+'">'+esc(p.title||"Escalation")+'</a></div>';
+        if (p.body) html+='<div class="desc">'+esc(p.body).slice(0,180)+'</div>';
+        html+='<div class="sub">'
+          +badge("TYPE", (extra.interaction||"signal").toString(), "p")
+          +badge("AT", fmtTime(p.ts||""), "k")
+          +'</div>';
+        html+='</div>';
+        html+='</div>';
+      });
+      el.innerHTML=html;
+    }
+
+    function renderFinds(items){
+      var el=document.getElementById("list");
+      if(!items||!items.length){el.innerHTML='<div class="ps">No events yet.</div>';return;}
+      var html="";
+      html+='<div class="findsHeader">'
+        +'<div></div>'
+        +'<div class="colH">Project</div>'
+        +'<div class="colH" style="text-align:left">Age</div>'
+        +'<div class="colH" style="text-align:left">Followers</div>'
+        +'<div class="colH" style="text-align:left">Category</div>'
+        +'</div>';
+      items.forEach(function(p){
+        var src=(p.url||"").trim();
+        var av = _img(p.pfp_url);
+        html+='<div class="findsRow">';
+        html+='<div class="av">'+(av?('<img src="'+esc(av)+'" loading="lazy" />'):'')+'</div>';
+        html+='<div>';
+        html+='<div class="titleLine"><a class="handle" href="'+esc(src)+'" target="_blank" rel="noreferrer">@'+esc(p.handle||p.name||"")+'</a>'
+          +'</div>';
+        if (p.summary) html+='<div class="desc">'+esc(p.summary).slice(0,220)+'</div>';
+        html+='<div class="sub">'+badge("ALERT", fmtTime(p.alerted_at||""), "p")+'</div>';
+        html+='</div>';
+        html+='<div class="colAge"><span class="badge k"><b>AGE</b> '+esc(fmtAgeDays(p.age_days))+'</span></div>';
+        html+='<div class="colFol"><span class="badge g"><b>F</b> '+esc(fmtFollowers(p.followers))+'</span></div>';
+        html+='<div class="colCat">'+(p.category?('<span class="badge r">'+esc(p.category)+'</span>'):'<span class="colV">—</span>')+'</div>';
+        html+='</div>';
+      });
+      el.innerHTML=html;
+    }
+
+    async function refresh(){
+      try{
+        var tr = await fetch("/api/projects/trending?limit=15",{credentials:"include"});
+        var nw = await fetch("/api/feed/events?limit=15&kinds=escalation",{credentials:"include"});
+        var fd = await fetch("/api/projects/finds?limit=80",{credentials:"include"});
+        if (tr.ok) renderTrending((await tr.json()).items||[]);
+        if (nw.ok) renderNew((await nw.json()).events||[]);
+        if (fd.ok){
+          var items = (await fd.json()).items || [];
+          document.getElementById("stat").textContent=(items.length||0)+" in last 24h";
+          renderFinds(items);
+        }
+      } catch(e){}
+    }
+
+    // Gate flow: prefer live check via /api/debug/access (more reliable than HTML injection).
+    (function(){
+      function looksLikeStatus(u){
+        u = String(u||"").trim();
+        return /https?:\/\/(www\.)?(x\.com|twitter\.com)\/[^\/]+\/status\/\d+/.test(u);
+      }
+      function lockUi(){
+        document.body.classList.add("locked");
+        document.getElementById("trending").innerHTML = '<div class="ps">Locked — complete tweet gate to view.</div>';
+        document.getElementById("newProjects").innerHTML = '<div class="ps">Locked — complete tweet gate to view.</div>';
+        document.getElementById("list").innerHTML = '<div class="ps">Locked — complete tweet gate to view.</div>';
+        document.getElementById("stat").textContent = "Locked";
+        var TWEET_URL = (window.NERDS_TWEET_URL || "https://x.com/Degensultan/status/0");
+        var openTweet = document.getElementById("gateOpenTweet");
+        if (openTweet) openTweet.href = TWEET_URL;
+
+        var closeBtn = document.getElementById("gateClose");
+        var back = document.getElementById("gateBack");
+        var replyInp = document.getElementById("gateReply");
+        var submitBtn = document.getElementById("gateSubmit");
+        var err = document.getElementById("gateErr");
+
+        function close(){
+          try { replyInp && replyInp.focus(); } catch(e) {}
+        }
+        if (closeBtn) closeBtn.addEventListener("click", close);
+        if (back) back.addEventListener("click", close);
+        document.addEventListener("keydown", function(e){ if (e.key === "Escape") close(); });
+
+        async function submit(){
+          var replyUrl = String(replyInp && replyInp.value || "").trim();
+          if (!looksLikeStatus(TWEET_URL) || !looksLikeStatus(replyUrl)){
+            if (err){ err.style.display="block"; err.textContent="Please paste a valid X reply link (x.com/.../status/ID)."; }
+            return;
+          }
+          if (submitBtn) submitBtn.disabled = true;
+          if (err){ err.style.display="none"; err.textContent=""; }
+          try{
+            var r = await fetch("/api/access/tweet", {
+              method: "POST",
+              credentials: "include",
+              headers: {"Content-Type":"application/json"},
+              body: JSON.stringify({tweet_url: TWEET_URL, reply_url: replyUrl})
+            });
+            if (!r.ok){
+              var t=""; try{ t = await r.text(); }catch(e){}
+              if (err){ err.style.display="block"; err.textContent=("Failed: HTTP "+r.status+" "+(t||"")).slice(0,180); }
+              return;
+            }
+            window.location.reload();
+          } catch(ex){
+            if (err){ err.style.display="block"; err.textContent="Network error. Try again."; }
+          } finally {
+            if (submitBtn) submitBtn.disabled = false;
+          }
+        }
+        if (submitBtn) submitBtn.addEventListener("click", submit);
+        if (replyInp) replyInp.addEventListener("keydown", function(e){ if (e.key === "Enter") submit(); });
+        setTimeout(function(){ try{ replyInp && replyInp.focus(); }catch(e){} }, 60);
+      }
+
+      async function init(){
+        // If server injected the flag, we lock immediately.
+        if (window.NA_NEEDS_GATE) { lockUi(); return; }
+        // Otherwise, check access state live (prevents "blank page" if injection is stale).
+        try{
+          var r = await fetch("/api/debug/access", {credentials:"include"});
+          if (r.ok){
+            var d = await r.json();
+            if (!d || !d.has_access){
+              lockUi(); return;
+            }
+          }
+        } catch(e){}
+        refresh(); setInterval(refresh,7000);
+      }
+      init();
+    })();
+  </script>
+</body>
+</html>
+

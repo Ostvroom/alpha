@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#090909" />
+  <title>Access — Nerds Alpha</title>
+  <link rel="icon" href="/logo.png" type="image/png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,700;0,800;0,900;1,800;1,900&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: radial-gradient(1100px 600px at 50% 25%, rgba(255, 204, 0, 0.10), transparent 55%),
+                  radial-gradient(900px 500px at 50% 80%, rgba(255, 204, 0, 0.05), transparent 55%),
+                  #090909;
+      color: #f0e8c0;
+      font-family: "Inter", system-ui, sans-serif;
+      overflow-x: hidden;
+    }
+    a { color: inherit; }
+
+    .grain::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        radial-gradient(circle at 10% 10%, rgba(255, 204, 0, 0.18) 1px, transparent 1px),
+        radial-gradient(circle at 60% 30%, rgba(255, 204, 0, 0.10) 1px, transparent 1px),
+        radial-gradient(circle at 30% 80%, rgba(255, 204, 0, 0.12) 1px, transparent 1px);
+      background-size: 260px 260px, 360px 360px, 520px 520px;
+      opacity: 0.25;
+      filter: blur(0.2px);
+    }
+
+    .wrap {
+      min-height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 44px 18px;
+    }
+
+    .panel {
+      width: min(920px, 100%);
+      border: 1px solid rgba(255, 204, 0, 0.35);
+      background: rgba(0,0,0,0.55);
+      box-shadow:
+        0 0 0 1px rgba(255, 204, 0, 0.08) inset,
+        0 28px 120px rgba(0,0,0,0.65);
+      padding: 26px 22px;
+      position: relative;
+    }
+    .panel::after {
+      content: "";
+      position: absolute;
+      inset: -2px;
+      border: 1px solid rgba(255, 204, 0, 0.08);
+      pointer-events: none;
+    }
+
+    .title {
+      font-family: "Barlow Condensed", sans-serif;
+      text-align: center;
+      font-size: clamp(28px, 5.2vw, 52px);
+      letter-spacing: 0.06em;
+      margin: 14px 0 10px;
+      text-transform: uppercase;
+      color: #f8f0d0;
+      text-shadow: 0 0 24px rgba(255, 204, 0, 0.16);
+    }
+    .sub {
+      text-align: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+      opacity: 0.72;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      margin-bottom: 14px;
+    }
+    .center { text-align: center; }
+
+    .countdown {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      margin: 16px 0 26px;
+      flex-wrap: wrap;
+    }
+    .cd {
+      width: 112px;
+      border: 1px solid rgba(255, 204, 0, 0.35);
+      background: rgba(0,0,0,0.45);
+      padding: 12px 10px 10px;
+      text-align: center;
+      box-shadow: 0 0 24px rgba(255, 204, 0, 0.08);
+    }
+    .cd strong {
+      display: block;
+      font-family: "Barlow Condensed", sans-serif;
+      font-size: 34px;
+      font-weight: 900;
+      letter-spacing: 0.02em;
+      color: #f8f0d0;
+    }
+    .cd span {
+      display: block;
+      font-size: 11px;
+      opacity: 0.8;
+      margin-top: 8px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      font-family: "JetBrains Mono", monospace;
+    }
+
+    .steps {
+      border: 1px solid rgba(255, 204, 0, 0.35);
+      background: rgba(0,0,0,0.38);
+      padding: 18px;
+      margin: 0 auto;
+      max-width: 740px;
+    }
+    .step {
+      display: grid;
+      grid-template-columns: 44px 1fr;
+      gap: 14px;
+      padding: 14px 10px;
+      border-top: 1px solid rgba(255, 204, 0, 0.15);
+    }
+    .step:first-child { border-top: none; }
+    .num {
+      font-family: "Barlow Condensed", sans-serif;
+      font-size: 32px;
+      font-weight: 900;
+      line-height: 1.2;
+      opacity: 0.85;
+      text-align: center;
+      padding-top: 2px;
+    }
+    .step h3 {
+      font-family: "Barlow Condensed", sans-serif;
+      font-size: 18px;
+      font-weight: 900;
+      letter-spacing: 0.10em;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      color: #f8f0d0;
+    }
+
+    .btn {
+      width: 100%;
+      border: 1px solid rgba(255, 204, 0, 0.45);
+      background: rgba(255, 204, 0, 0.06);
+      color: #ffcc00;
+      padding: 14px 12px;
+      cursor: pointer;
+      font-family: "Barlow Condensed", sans-serif;
+      font-size: 16px;
+      font-weight: 900;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      transition: transform 0.08s, background 0.15s, box-shadow 0.15s;
+      box-shadow: 0 0 30px rgba(255, 204, 0, 0.08);
+    }
+    .btn:hover { background: rgba(255, 204, 0, 0.10); }
+    .btn:active { transform: translateY(1px); }
+
+    .grid2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    @media (max-width: 620px) { .grid2 { grid-template-columns: 1fr; } }
+
+    .field {
+      width: 100%;
+      padding: 12px 12px;
+      border: 1px solid rgba(255, 204, 0, 0.35);
+      background: rgba(0,0,0,0.55);
+      color: #ffcc00;
+      outline: none;
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 14px;
+    }
+    .field::placeholder { color: rgba(255, 204, 0, 0.45); }
+    .help {
+      font-size: 12px;
+      opacity: 0.75;
+      margin-top: 8px;
+      line-height: 1.5;
+      color: rgba(240,232,192,.55);
+    }
+
+    .tasks {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    @media (max-width: 620px) { .tasks { grid-template-columns: 1fr; } }
+    .task-btn {
+      border: 1px solid rgba(255, 204, 0, 0.25);
+      background: rgba(0,0,0,0.35);
+      color: rgba(255, 204, 0, 0.86);
+      padding: 12px 10px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      cursor: pointer;
+      opacity: 0.92;
+      transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+    }
+    .task-btn.done {
+      border-color: rgba(255, 204, 0, 0.55);
+      background: rgba(255, 204, 0, 0.06);
+      opacity: 1;
+    }
+
+    .status {
+      margin-top: 12px;
+      border: 1px solid rgba(255, 204, 0, 0.20);
+      background: rgba(0,0,0,0.35);
+      padding: 12px 12px;
+      font-size: 12px;
+      line-height: 1.55;
+      opacity: 0.92;
+      display: none;
+    }
+    .status.show { display: block; }
+    .status.ok { border-color: rgba(34, 197, 94, 0.35); color: #bbf7d0; }
+    .status.bad { border-color: rgba(239, 68, 68, 0.35); color: #fecaca; }
+
+    /* Tweet gate modal (same unlock flow as landing page) */
+    .tg-modal { position: fixed; inset: 0; z-index: 9999; display: flex; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .18s ease, visibility .18s; }
+    .tg-modal.is-open { opacity: 1; visibility: visible; pointer-events: auto; }
+    .tg-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.78); backdrop-filter: blur(6px); cursor: pointer; }
+    .tg-dialog { position: relative; margin: auto; width: min(760px, 94vw); background: #0b0b0d; border: 1px solid rgba(255,204,0,.32); box-shadow: 0 28px 120px rgba(0,0,0,.75); padding: 16px 16px 14px; }
+    .tg-head { display:flex; align-items:center; justify-content:space-between; gap: 12px; margin-bottom: 12px; }
+    .tg-title { font-family:"JetBrains Mono",monospace; font-size: 11px; letter-spacing:.14em; text-transform:uppercase; color: rgba(255,204,0,.85); }
+    .tg-close { border: 1px solid rgba(255,204,0,.35); background: rgba(255,204,0,.06); color:#ffcc00; width:36px; height:36px; font-size:22px; cursor:pointer; border-radius:4px; }
+    .tg-close:hover{ background: rgba(255,204,0,.12); }
+    .tg-steps { font-size: 14px; color: rgba(240,232,192,.60); line-height: 1.65; margin-bottom: 12px; }
+    .tg-steps b{ color:#ffcc00; }
+    .tg-row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top: 10px; }
+    .tg-open { width: auto; padding: 12px 14px; font-size: 14px; }
+    .tg-input { flex: 1; min-width: 240px; }
+    .tg-help { font-family:"JetBrains Mono",monospace; font-size: 10.5px; color: rgba(240,232,192,.42); margin-top: 8px; }
+    .tg-err { font-family:"JetBrains Mono",monospace; font-size: 11px; color: rgba(255,150,150,.90); margin-top: 10px; display:none; }
+
+    footer { display: none; }
+  </style>
+</head>
+<body class="grain">
+  <div class="wrap">
+    <main class="panel" role="main">
+      <div class="center">
+        <div class="title">EARLY ACCESS</div>
+        <div class="sub">EARLY ACCESS CLOSES IN</div>
+      </div>
+
+      <div class="countdown" aria-label="Countdown">
+        <div class="cd"><strong id="cd-h">--</strong><span>HRS</span></div>
+        <div class="cd"><strong id="cd-m">--</strong><span>MIN</span></div>
+        <div class="cd"><strong id="cd-s">--</strong><span>SEC</span></div>
+      </div>
+
+      <div class="center" style="margin: 0 0 18px;">
+        <a class="btn" id="openFeedEarly" href="/projects" style="display:inline-block; text-decoration:none;">OPEN LIVE FEED</a>
+        <div class="help" style="margin-top:10px;">Unlock: Like + RT + reply to the tweet, then paste your reply link.</div>
+      </div>
+
+      <section class="steps" aria-label="Early access steps">
+        <div class="step">
+          <div class="num">1</div>
+          <div>
+            <h3>CONNECT IDENTITY</h3>
+            <button type="button" class="btn" id="fake-x">SIGN IN WITH X</button>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="num">2</div>
+          <div>
+            <h3>COMMUNITY TASKS</h3>
+            <div class="tasks">
+              <button type="button" class="task-btn" data-task="like">LIKE</button>
+              <button type="button" class="task-btn" data-task="rt">RT</button>
+              <button type="button" class="task-btn" data-task="share">SHARE</button>
+              <button type="button" class="task-btn" data-task="comment">COMMENT</button>
+            </div>
+            <div class="help">These are tracked locally on this device (lightweight checklist).</div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="num">3</div>
+          <div>
+            <h3>SOLANA WALLET</h3>
+            <input class="field" id="wallet" placeholder="Solana wallet address…" autocomplete="off" />
+            <div class="help">Optional: used for registration metadata only.</div>
+            <button type="button" class="btn" id="complete">COMPLETE REGISTRATION</button>
+            <div class="status" id="reg-status"></div>
+          </div>
+        </div>
+
+      </section>
+
+      <footer>Nerds Alpha © 2026</footer>
+    </main>
+  </div>
+
+  <!-- Tweet gate modal -->
+  <div id="tg-modal" class="tg-modal" aria-hidden="true">
+    <div class="tg-backdrop" id="tg-backdrop"></div>
+    <div class="tg-dialog" role="dialog" aria-modal="true" aria-label="Access gate">
+      <div class="tg-head">
+        <div class="tg-title">Access gate · like + RT + reply</div>
+        <button class="tg-close" type="button" id="tg-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="tg-steps">
+        1) Open the tweet and <b>Like</b> + <b>RT</b> + <b>Reply</b><br/>
+        2) Paste your <b>reply link</b> and submit to unlock the live feeds.
+      </div>
+      <div class="tg-row">
+        <a class="btn tg-open" id="tg-openTweet" href="#" target="_blank" rel="noreferrer">OPEN TWEET</a>
+        <input id="tg-reply" class="field tg-input" placeholder="Paste your reply link (x.com/.../status/ID)" />
+        <button class="btn tg-open" id="tg-submit" type="button">SUBMIT</button>
+      </div>
+      <div class="tg-help">Tip: your reply link looks like `https://x.com/yourname/status/123...`</div>
+      <div class="tg-err" id="tg-err"></div>
+    </div>
+  </div>
+
+  <script>
+    const CLOSE_AT = new Date(Date.now() + 1000 * 60 * 60 * 48); // default 48h rolling window
+
+    function pad2(n) { return String(n).padStart(2, "0"); }
+    function setCountdown() {
+      const now = new Date();
+      let diff = Math.max(0, CLOSE_AT - now);
+      const s = Math.floor(diff / 1000);
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const ss = s % 60;
+      document.getElementById("cd-h").textContent = pad2(h);
+      document.getElementById("cd-m").textContent = pad2(m);
+      document.getElementById("cd-s").textContent = pad2(ss);
+    }
+    setCountdown();
+    setInterval(setCountdown, 1000);
+
+    // Fake X sign-in (UI only)
+    document.getElementById("fake-x").addEventListener("click", () => {
+      const el = document.getElementById("reg-status");
+      el.className = "status show";
+      el.textContent = "X sign-in is not configured yet. Continue with the steps below.";
+    });
+
+    // Local community tasks (device-only)
+    const tasksKey = "na_early_tasks";
+    const tasks = new Set(JSON.parse(localStorage.getItem(tasksKey) || "[]"));
+    document.querySelectorAll(".task-btn").forEach(btn => {
+      const id = btn.getAttribute("data-task");
+      if (tasks.has(id)) btn.classList.add("done");
+      btn.addEventListener("click", () => {
+        if (tasks.has(id)) tasks.delete(id); else tasks.add(id);
+        btn.classList.toggle("done");
+        localStorage.setItem(tasksKey, JSON.stringify(Array.from(tasks)));
+      });
+    });
+
+    document.getElementById("complete").addEventListener("click", () => {
+      const el = document.getElementById("reg-status");
+      el.className = "status show ok";
+      el.textContent = "Saved. You're in — we'll message you inside Discord when access is enabled.";
+    });
+
+    // Tweet gate unlock (real access cookie)
+    (function(){
+      var TWEET_URL = (window.NERDS_TWEET_URL || "https://x.com/Degensultan/status/0");
+      var modal = document.getElementById("tg-modal");
+      var openBtn = document.getElementById("openFeedEarly");
+      var closeBtn = document.getElementById("tg-close");
+      var backdrop = document.getElementById("tg-backdrop");
+      var openTweet = document.getElementById("tg-openTweet");
+      var replyInp = document.getElementById("tg-reply");
+      var submitBtn = document.getElementById("tg-submit");
+      var err = document.getElementById("tg-err");
+      if (openTweet) openTweet.href = TWEET_URL;
+
+      function open(){
+        if (!modal) return;
+        if (err) { err.style.display="none"; err.textContent=""; }
+        if (replyInp) replyInp.value = "";
+        modal.classList.add("is-open");
+        modal.setAttribute("aria-hidden","false");
+        setTimeout(function(){ try{ replyInp && replyInp.focus(); }catch(e){} }, 50);
+      }
+      function close(){
+        if (!modal) return;
+        modal.classList.remove("is-open");
+        modal.setAttribute("aria-hidden","true");
+      }
+      if (openBtn) openBtn.addEventListener("click", function(e){ e.preventDefault(); open(); });
+      if (closeBtn) closeBtn.addEventListener("click", close);
+      if (backdrop) backdrop.addEventListener("click", close);
+      document.addEventListener("keydown", function(e){ if (e.key === "Escape") close(); });
+
+      function looksLikeStatus(u){
+        u = String(u||"").trim();
+        return /https?:\/\/(www\.)?(x\.com|twitter\.com)\/[^\/]+\/status\/\d+/.test(u);
+      }
+      async function submit(){
+        var replyUrl = String(replyInp && replyInp.value || "").trim();
+        if (!looksLikeStatus(TWEET_URL) || !looksLikeStatus(replyUrl)){
+          if (err){ err.style.display="block"; err.textContent="Please paste a valid X reply link (x.com/.../status/ID)."; }
+          return;
+        }
+        if (submitBtn) submitBtn.disabled = true;
+        try{
+          var r = await fetch("/api/access/tweet", {
+            method: "POST",
+            credentials: "include",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({tweet_url: TWEET_URL, reply_url: replyUrl})
+          });
+          if (!r.ok){
+            var t = ""; try{ t = await r.text(); }catch(e){}
+            if (err){ err.style.display="block"; err.textContent = ("Failed: HTTP "+r.status+" "+(t||"")).slice(0,180); }
+            return;
+          }
+          close();
+          window.location.href = "/projects";
+        } catch(ex){
+          if (err){ err.style.display="block"; err.textContent = "Network error. Try again."; }
+        } finally {
+          if (submitBtn) submitBtn.disabled = false;
+        }
+      }
+      if (submitBtn) submitBtn.addEventListener("click", submit);
+      if (replyInp) replyInp.addEventListener("keydown", function(e){ if (e.key === "Enter") submit(); });
+    })();
+  </script>
+</body>
+</html>
+

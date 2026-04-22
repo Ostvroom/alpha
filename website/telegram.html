@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#090909" />
+  <title>Nerds Alpha — Telegram Calls</title>
+  <link rel="icon" href="/logo.png" type="image/png" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{background:#090909;color:#f0e8c0;font-family:Inter,system-ui,sans-serif}
+    a{color:inherit;text-decoration:none}
+    .wrap{width:min(1080px,100%);margin:0 auto;padding:18px 22px}
+    .top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .brand{display:flex;align-items:center;gap:10px}
+    .brand img{width:30px;height:30px;border:1px solid rgba(255,204,0,.30);border-radius:6px}
+    .brand span{font-family:"JetBrains Mono",monospace;letter-spacing:.14em;text-transform:uppercase;color:#ffcc00;font-weight:700;font-size:12px}
+    .btn{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,204,0,.25);color:rgba(240,232,192,.80)}
+    .btn:hover{border-color:rgba(255,204,0,.45);color:#ffcc00}
+    .panel{margin-top:14px;border:1px solid rgba(255,204,0,.18);border-radius:14px;background:rgba(9,9,9,.7);overflow:hidden}
+    .ph{padding:12px 14px;border-bottom:1px solid rgba(255,204,0,.12);display:flex;justify-content:space-between;align-items:center}
+    .pt{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:rgba(240,232,192,.70)}
+    .ps{font-family:"JetBrains Mono",monospace;font-size:10px;color:rgba(240,232,192,.45)}
+    .pb{padding:10px 14px;max-height:74vh;overflow:auto}
+    .item{padding:10px 0;border-bottom:1px solid rgba(255,204,0,.10)}
+    .row{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+    .ttl{font-weight:800;color:#ffcc00}
+    .tmeta{white-space:nowrap;color:rgba(240,232,192,.45);font-family:"JetBrains Mono",monospace;font-size:10px}
+    .body{margin-top:6px;color:rgba(240,232,192,.78);font-size:13px;line-height:1.35;white-space:pre-wrap}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <a class="brand" href="/"><img src="/logo.png" alt="Nerds Alpha" /><span>Nerds Alpha · Telegram</span></a>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+        <a class="btn" href="/projects">Projects</a>
+        <a class="btn" href="/kol-alerts">Token Alerts</a>
+        <a class="btn" href="/daily-finds">Daily Finds</a>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="ph">
+        <div class="pt">Telegram calls</div>
+        <div class="ps" id="stat">—</div>
+      </div>
+      <div class="pb" id="list"></div>
+    </div>
+  </div>
+
+  <script>
+    function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;").replace(/'/g,"&#39;");}
+    function fmtTime(iso){try{var d=new Date(iso);if(!isNaN(d.getTime()))return d.toLocaleString();}catch(e){}return iso||"";}
+    function render(items){
+      var el=document.getElementById("list");
+      if(!items||!items.length){el.innerHTML='<div class="ps">No events yet.</div>';return;}
+      var html="";
+      items.forEach(function(ev){
+        var detail=ev.id?("/alert/"+encodeURIComponent(ev.id)):"";
+        var src=(ev.url||"").trim();
+        html+='<div class="item">';
+        html+='<div class="row">';
+        html+='<div class="ttl">'+(detail?('<a href="'+esc(detail)+'">'+esc(ev.title)+'</a>'):esc(ev.title))+(src?(' <span style="color:rgba(240,232,192,.45);font-weight:700">·</span> <a href="'+esc(src)+'" target="_blank" rel="noreferrer" style="color:rgba(240,232,192,.72);font-weight:700">source</a>'):"")+'</div>';
+        html+='<div class="tmeta">'+esc(fmtTime(ev.ts))+'</div>';
+        html+='</div>';
+        if(ev.body) html+='<div class="body">'+esc(ev.body)+'</div>';
+        html+='</div>';
+      });
+      el.innerHTML=html;
+    }
+    async function refresh(){
+      var r=await fetch("/api/feed/events?limit=80&kinds=telegram_call",{credentials:"include"});
+      if(!r.ok) return;
+      var d=await r.json();
+      var items=(d&&d.events)||[];
+      document.getElementById("stat").textContent=(items.length||0)+" recent";
+      render(items);
+    }
+    refresh(); setInterval(refresh,7000);
+  </script>
+</body>
+</html>
+

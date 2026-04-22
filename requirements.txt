@@ -1,0 +1,16 @@
+discord.py>=2.0
+# 2.3+ includes ClientTransaction fixes for X front-end changes ("Couldn't get KEY_BYTE indices").
+twikit>=2.3.3
+python-dotenv
+openai
+aiohttp
+requests
+web3
+base58
+# Keep compatible with Windows installs that lack script-write perms
+websockets>=11.0.3,<12
+fastapi
+uvicorn[standard]
+python-multipart
+telethon
+psycopg[binary]

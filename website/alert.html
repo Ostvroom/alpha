@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#090909" />
+  <title>Nerds Alpha — Alert</title>
+  <link rel="icon" href="/logo.png" type="image/png" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background:#090909; color:#f0e8c0; font-family: Inter, system-ui, sans-serif; }
+    a { color: inherit; text-decoration: none; }
+    .wrap { width: min(980px, 100%); margin: 0 auto; padding: 22px; }
+    .top { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+    .brand { display:flex; align-items:center; gap:10px; }
+    .brand img { width:30px; height:30px; border:1px solid rgba(255,204,0,.30); border-radius:6px; }
+    .brand span { font-family: "JetBrains Mono", monospace; letter-spacing:.14em; text-transform:uppercase; color:#ffcc00; font-weight:700; font-size:12px; }
+    .btn { font-family:"JetBrains Mono", monospace; font-size:11px; letter-spacing:.12em; text-transform:uppercase;
+      padding:10px 12px; border-radius:8px; border:1px solid rgba(255,204,0,.25); color:rgba(240,232,192,.80); }
+    .btn:hover { border-color: rgba(255,204,0,.45); color:#ffcc00; }
+    .card { margin-top:18px; border:1px solid rgba(255,204,0,.18); border-radius:14px; overflow:hidden; background:rgba(9,9,9,.7); }
+    .card-top { display:flex; gap:14px; padding:14px; border-bottom:1px solid rgba(255,204,0,.12); align-items:flex-start; }
+    .pfp { width:56px; height:56px; border-radius:12px; object-fit:cover; border:1px solid rgba(255,204,0,.25); background:#0b0b0d; }
+    .h1 { font-weight:800; color:#ffcc00; font-size:18px; line-height:1.2; }
+    .meta { margin-top:6px; font-family:"JetBrains Mono", monospace; font-size:11px; color:rgba(240,232,192,.55); }
+    .banner { width:100%; height:220px; object-fit:cover; background:#0b0b0d; }
+    .body { padding:14px; font-size:14px; line-height:1.45; color:rgba(240,232,192,.86); white-space:pre-wrap; }
+    .fields { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:10px; padding:14px; border-top:1px solid rgba(255,204,0,.10); }
+    .fields .field { border:1px solid rgba(255,204,0,.12); border-radius:12px; padding:10px 12px; background:rgba(0,0,0,.18); }
+    .fields .field.full { grid-column: 1 / -1; }
+    .fields .k { font-family:"JetBrains Mono", monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:rgba(240,232,192,.55); }
+    .fields .v { margin-top:6px; font-size:13px; color:rgba(240,232,192,.82); overflow-wrap:anywhere; white-space:pre-wrap; }
+    .kv { display:none; }
+    .kv div { border:1px solid rgba(255,204,0,.12); border-radius:12px; padding:10px 12px; background:rgba(0,0,0,.18); }
+    .k { font-family:"JetBrains Mono", monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:rgba(240,232,192,.55); }
+    .v { margin-top:6px; font-size:13px; color:rgba(240,232,192,.82); overflow-wrap:anywhere; }
+    .err { margin-top:14px; font-family:"JetBrains Mono", monospace; font-size:12px; color: rgba(255,120,120,.9); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <a class="brand" href="/projects">
+        <img src="/logo.png" alt="Nerds Alpha" />
+        <span>Nerds Alpha · Alert</span>
+      </a>
+      <a class="btn" id="btnBack" href="/projects">Back</a>
+    </div>
+
+    <div class="card" id="card" style="display:none;">
+      <div class="card-top">
+        <img id="pfp" class="pfp" alt="" />
+        <div style="flex:1; min-width:0;">
+          <div class="h1" id="title"></div>
+          <div class="meta" id="meta"></div>
+        </div>
+        <a class="btn" id="sourceLink" href="#" target="_blank" rel="noreferrer" style="display:none;">Open source</a>
+      </div>
+      <img id="banner" class="banner" alt="" style="display:none;" />
+      <div class="body" id="body"></div>
+      <div class="fields" id="fields" style="display:none;"></div>
+      <div class="kv" id="kv"></div>
+    </div>
+
+    <div class="err" id="err" style="display:none;"></div>
+  </div>
+
+  <script>
+    function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;").replace(/'/g,"&#39;");}
+    function getId(){
+      var m = window.location.pathname.match(/\/alert\/(\d+)/);
+      return m ? parseInt(m[1], 10) : 0;
+    }
+    function fmtTime(iso){
+      try { var d=new Date(iso); if(!isNaN(d.getTime())) return d.toLocaleString(); } catch(e){}
+      return iso||"";
+    }
+    function pickImg(extra, keys){
+      if(!extra) return "";
+      for (var i=0;i<keys.length;i++){
+        var v = extra[keys[i]];
+        if (v && String(v).trim()) return String(v).trim();
+      }
+      return "";
+    }
+    function richText(s){
+      // Render a small subset of Discord/Markdown nicely:
+      // - **bold**
+      // - `inline code`
+      // - [label](url)
+      // - bare http(s):// urls
+      // Keep newlines.
+      var t = String(s||"");
+      if (t.length > 50000) t = t.slice(0, 50000) + "\n…";
+      var out = esc(t);
+
+      function linkifyText(txt){
+        return txt.replace(/https?:\/\/[^\s<]+/g, function(m){
+          return '<a href="'+m+'" target="_blank" rel="noreferrer" style="color:#ffcc00; text-decoration:none">'+m+'</a>';
+        });
+      }
+      function linkifyOutsideTags(html){
+        var res = "";
+        var i = 0;
+        while (i < html.length){
+          var lt = html.indexOf("<", i);
+          if (lt === -1){
+            res += linkifyText(html.slice(i));
+            break;
+          }
+          res += linkifyText(html.slice(i, lt));
+          var gt = html.indexOf(">", lt);
+          if (gt === -1){
+            res += html.slice(lt);
+            break;
+          }
+          res += html.slice(lt, gt + 1);
+          i = gt + 1;
+        }
+        return res;
+      }
+
+      // inline code (do before linkify so code isn't linkified)
+      out = out.replace(/`([^`]+)`/g, function(_, code){
+        return '<code style="font-family:JetBrains Mono,monospace;font-size:12px;background:rgba(0,0,0,.25);border:1px solid rgba(255,204,0,.14);padding:1px 6px;border-radius:6px;color:rgba(240,232,192,.92)">'+code+'</code>';
+      });
+      // bold
+      out = out.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+      // markdown links: [label](url)
+      out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, function(_, label, url){
+        return '<a href="'+url+'" target="_blank" rel="noreferrer" style="color:#ffcc00; text-decoration:none">'+label+'</a>';
+      });
+      // bare urls (only outside tags to avoid corrupting href/src attributes)
+      out = linkifyOutsideTags(out);
+      // simple headings: "## " at start of line
+      out = out.replace(/(^|\n)##\s*([^\n]+)/g, '$1<span style="display:block;margin-top:10px;font-weight:900;color:#ffcc00">$2</span>');
+      return out;
+    }
+
+    function renderFieldsFromEmbed(embed){
+      var fieldsEl = document.getElementById("fields");
+      fieldsEl.innerHTML = "";
+      if (!embed || !embed.fields || !embed.fields.length) return false;
+      fieldsEl.style.display = "grid";
+      embed.fields.forEach(function(f){
+        var name = (f && f.name) ? String(f.name) : "";
+        var val = (f && f.value) ? String(f.value) : "";
+        var inline = !!(f && f.inline);
+        var div = document.createElement("div");
+        div.className = "field" + (inline ? "" : " full");
+        div.innerHTML = '<div class="k">'+esc(name)+'</div><div class="v">'+richText(val)+'</div>';
+        fieldsEl.appendChild(div);
+      });
+      return true;
+    }
+
+    function applyEmbed(ev, embed){
+      // Prefer embed title/description/url when present.
+      if (embed && embed.title) {
+        document.getElementById("title").innerHTML = esc(embed.title);
+      }
+      if (embed && embed.description) {
+        document.getElementById("body").innerHTML = richText(embed.description);
+      } else {
+        document.getElementById("body").innerHTML = richText(ev.body || "");
+      }
+      if (embed && embed.url) {
+        var a = document.getElementById("sourceLink");
+        a.href = embed.url;
+        a.style.display = "inline-block";
+      }
+      // Images
+      var thumb = "";
+      try { thumb = (embed && embed.thumbnail && embed.thumbnail.url) ? String(embed.thumbnail.url) : ""; } catch(e) {}
+      var img = "";
+      try { img = (embed && embed.image && embed.image.url) ? String(embed.image.url) : ""; } catch(e) {}
+      if (thumb) {
+        var p = document.getElementById("pfp");
+        p.src = thumb;
+        p.style.display = "block";
+        p.onerror = function(){ try{ p.style.display="none"; }catch(e){} };
+      }
+      if (img) {
+        var b = document.getElementById("banner");
+        b.src = img;
+        b.style.display = "block";
+        b.onerror = function(){ try{ b.style.display="none"; }catch(e){} };
+      }
+      renderFieldsFromEmbed(embed);
+    }
+    async function main(){
+      var id = getId();
+      if (!id){
+        document.getElementById("err").style.display="block";
+        document.getElementById("err").textContent="Missing alert id.";
+        return;
+      }
+      var r = await fetch("/api/feed/event/" + id, {credentials:"include"});
+      if (!r.ok){
+        document.getElementById("err").style.display="block";
+        document.getElementById("err").textContent="Could not load alert ("+r.status+").";
+        return;
+      }
+      var ev = await r.json();
+      var extra = ev.extra || {};
+      document.getElementById("card").style.display="block";
+      document.getElementById("title").innerHTML = esc(ev.title || ("Alert #" + id));
+      document.getElementById("meta").textContent = (ev.kind || "event") + " · " + fmtTime(ev.ts);
+      document.getElementById("body").innerHTML = richText(ev.body || "");
+
+      // If we have a stored Discord embed payload, render from it.
+      var embedPayload = extra && extra.embed ? extra.embed : null;
+      if (embedPayload) {
+        applyEmbed(ev, embedPayload);
+      }
+
+      var pfp = pickImg(extra, ["pfp_url","icon_url","author_icon_url","thumb_url"]);
+      var banner = pickImg(extra, ["banner_url","image_url"]);
+      if (pfp){
+        var p = document.getElementById("pfp");
+        if (!p.getAttribute("src")) p.src = pfp;
+        p.style.display = "block";
+        p.onerror = function(){ try{ p.style.display="none"; }catch(e){} };
+      }
+      if (banner){
+        var b = document.getElementById("banner");
+        if (!b.getAttribute("src")) b.src = banner;
+        b.style.display = "block";
+        b.onerror = function(){ try{ b.style.display="none"; }catch(e){} };
+      }
+
+      if (ev.url && (!embedPayload || !embedPayload.url)){
+        var a = document.getElementById("sourceLink");
+        a.href = ev.url;
+        a.style.display = "inline-block";
+      }
+      // Keep the raw key/value block hidden by default (fields render is nicer).
+    }
+    // Back button: prefer same-origin referrer; fallback to /projects
+    (function(){
+      var back = document.getElementById("btnBack");
+      if (!back) return;
+      try {
+        var ref = document.referrer || "";
+        if (ref) {
+          var u = new URL(ref);
+          if (u.origin === window.location.origin) {
+            back.href = u.pathname + u.search + u.hash;
+          }
+        }
+      } catch(e) {}
+    })();
+    main();
+  </script>
+</body>
+</html>
+

@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Nerds Alpha — website live feed for crypto intelligence: projects, token alerts, and daily finds." />
+  <meta name="theme-color" content="#090909" />
+  <title>NERDS ALPHA — WEBSITE LIVE FEED</title>
+  <link rel="icon" href="/logo.png" type="image/png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,700;0,800;0,900;1,800;1,900&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ── RESET ───────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: #090909;
+      color: #f0e8c0;
+      font-family: "Inter", system-ui, sans-serif;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: inherit; text-decoration: none; }
+    img { display: block; max-width: 100%; height: auto; }
+
+    /* ── LOADER ──────────────────────────────────────────── */
+    #loader {
+      position: fixed; inset: 0; z-index: 9999;
+      background: #090909;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 16px;
+      transition: opacity .5s ease, visibility .5s;
+      /* Safety: if JS doesn't run, don't trap user on loader */
+      animation: loaderAutoHide .6s ease forwards;
+      animation-delay: 1.6s;
+    }
+    #loader.hide { opacity: 0; visibility: hidden; pointer-events: none; }
+    @keyframes loaderAutoHide {
+      to { opacity: 0; visibility: hidden; pointer-events: none; }
+    }
+    .loader-big {
+      font-family: "Barlow Condensed", sans-serif;
+      font-size: clamp(44px, 12vw, 100px);
+      font-weight: 900; letter-spacing: -.01em;
+      text-transform: uppercase; color: #ffcc00;
+      text-shadow: 0 0 44px rgba(255,204,0,.4); line-height: 1;
+    }
+    .loader-label {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10.5px; font-weight: 700;
+      letter-spacing: .22em; text-transform: uppercase;
+      color: rgba(255,204,0,.55);
+    }
+    .loader-track {
+      width: 220px; height: 2px;
+      background: rgba(255,204,0,.14); overflow: hidden;
+    }
+    .loader-fill {
+      height: 100%; width: 0%;
+      background: #ffcc00; transition: width .06s linear;
+      box-shadow: 0 0 14px rgba(255,204,0,.6);
+    }
+
+    /* ── LAYOUT ──────────────────────────────────────────── */
+    /* Centered layout for main content */
+    .wrap { width: min(92.4vw, 1450px); margin: 0 auto; padding: 0 22px; }
+    @media (max-width: 1100px) { .wrap { width: min(94vw, 1080px); } }
+
+    /* Full-width bars (nav/footer) */
+    .fullbar { width: 100%; margin: 0 auto; padding: 0 22px; }
+
+    /* ── NAV ─────────────────────────────────────────────── */
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(9,9,9,.90);
+      backdrop-filter: blur(14px) saturate(1.5);
+      border-bottom: 1px solid rgba(255,204,0,.15);
+    }
+    .nav-inner {
+      display: flex; align-items: center;
+      justify-content: space-between; gap: 14px;
+      padding: 13px 0; flex-wrap: wrap;
+    }
+    .brand { display: flex; align-items: center; gap: 11px; }
+    .brand-logo {
+      width: 30px; height: 30px;
+      border: 1px solid rgba(255,204,0,.30);
+      border-radius: 5px;
+      object-fit: cover;
+    }
+    .brand-name {
+      font-family: "Barlow Condensed", sans-serif;
+      font-size: 21px; font-weight: 900;
+      letter-spacing: .06em; text-transform: uppercase; color: #ffcc00;
+    }
+    .nav-links { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+    .nav-links a {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10.5px; font-weight: 500; letter-spacing: .08em;
+      text-transform: uppercase; color: rgba(240,232,192,.52);
+      padding: 7px 11px; border-radius: 4px;
+      transition: color .12s, background .12s;
+    }
+    .nav-links a:hover { color: #ffcc00; background: rgba(255,204,0,.07); }
+    .nav-cta {
+      font-family: "Barlow Condensed", sans-serif !important;
+      font-size: 15px !important; font-weight: 900 !important;
+      letter-spacing: .08em !important; text-transform: uppercase !important;
+      background: #ffcc00 !important; color: #090909 !important;
+      border-radius: 4px !important; padding: 8px 18px !important;
+      transition: background .12s !important;
+    }
+    .nav-cta:hover { background: #ffe033 !important; }
+
+    /* ── TICKER ──────────────────────────────────────────── */
+    .ticker {
+      background: #ffcc00; overflow: hidden;
+      padding: 9px 0;
+      border-top: 2px solid #090909; border-bottom: 2px solid #090909;
+    }
+    .ticker-track {
+      display: flex; width: max-content;
+      animation: scroll-ticker 28s linear infinite;
+    }
+    .ticker-track:hover { animation-play-state: paused; }
+    @keyframes scroll-ticker {
+      from { transform: translateX(0); }
+      to   { transform: translateX(-50%); }
+    }
+    .t-item {
+      font-family: "Barlow Condensed", sans-serif;
+      font-size: 14px; font-weight: 800;
+      letter-spacing: .10em; text-transform: uppercase;
+      color: #090909; white-space: nowrap;
+      padding: 0 22px;
+      display: flex; align-items: center; gap: 22px;
+    }
+    .t-sep { opacity: .35; font-size: 16px; }
+
+    /* ── HERO ────────────────────────────────────────────── */
+    .hero {
+      padding: 80px 0 60px;
+      position: relative;
+      border-bottom: 1px solid rgba(255,204,0,.11);
+      overflow: hidden;
+    }
+    .hero::before {
+      content: "";
+      position: absolute; inset: 0; pointer-events: none; z-index: 0;
+      background-image: repeating-linear-gradient(
+        0deg, transparent, transparent 3px,
+        rgba(255,204,0,.018) 3px, rgba(255,204,0,.018) 4px
+      );
+    }
+    .hero-inner {
+      position: relative; z-index: 1;
+      display: grid; grid-template-columns: 1.1fr .9fr;
+      gap: 32px; align-items: center;
+    }
+    @media (max-width: 820px) { .hero-inner { grid-template-columns: 1fr; } }
+    /* Lift the terminal card up */
+    .term-card { align-self: start; margin-top: 6px; }
+
+    .hero-eyebrow {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10.5px; font-weight: 700; letter-spacing: .18em;
+      text-transform: uppercase; color: rgba(255,204,0,.60);
+      margin-bottom: 14px;
+    }
+    .hero h1 {
+      font-family: "Barlow Condensed", sans-serif;
+      font-size: clamp(52px, 9vw, 102px);
+      font-weight: 900; text-transform: uppercase;
+      line-height: .97; letter-spacing: -.01em; color: #f8f0d0;
+      margin-bottom: 10px;
+    }
+    .hero h1 .yl  { color: #ffcc00; display: block; }
+    .hero h1 .ol  { -webkit-text-stroke: 2px #ffcc00; color: transparent; display: block; }
+    .hero-sub {
+      font-size: 15.5px; line-height: 1.68;
+      color: rgba(240,232,192,.55);
+      max-width: 50ch; margin: 18px 0 30px;
+    }
+    .hero-btns { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 30px; }
+
+    /* stat row */
+    .hero-stats {
+      display: flex; gap: 0;
+      border: 1px solid rgba(255,204,0,.14); overflow: hidden;
+    }
+    .hstat {
+      flex: 1; padding: 13px 10px; text-align: center;
+      border-right: 1px solid rgba(255,204,0,.10);
+    }
+    .hstat:last-child { border-right: none; }
+    .hstat strong {
+      display: block; font-size: 21px; font-weight: 800;
+      color: #ffcc00; line-height: 1;
+    }
+    .hstat span {
+      display: block; margin-top: 4px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 9px; letter-spacing: .12em;
+      text-transform: uppercase; color: rgba(240,232,192,.38);
+    }
+
+    /* ── HOW IT WORKS ───────────────────────────────────── */
+    .how {
+      margin-top: 32px;
+      border: 1px solid rgba(255,204,0,.14);
+      background: rgba(0,0,0,.25);
+      box-shadow: 0 0 0 1px rgba(255,204,0,.06) inset;
+      padding: 18px 16px;
+    }
+    .how .sec-label {
+      display: inline-flex; align-items: center; gap: 10px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10px; letter-spacing: .18em;
+      text-transform: uppercase;
+      color: rgba(255,204,0,.58);
+      margin-bottom: 10px;
+    }
+    .how-grid{
+      display:grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+    @media (max-width: 820px){ .how-grid{ grid-template-columns: 1fr; } }
+    .how-card{
+      border:1px solid rgba(255,204,0,.12);
+      background: rgba(15,15,15,.75);
+      padding: 12px 12px;
+    }
+    .how-card b{
+      display:block;
+      font-family:"JetBrains Mono",monospace;
+      font-size:11px;
+      letter-spacing:.14em;
+      text-transform:uppercase;
+      color:#ffcc00;
+      margin-bottom:6px;
+    }
+    .how-card p{
+      font-size: 14.5px;
+      line-height: 1.6;
+      color: rgba(240,232,192,.62);
+    }
+    .how-note{
+      margin-top: 12px;
+      font-family:"JetBrains Mono",monospace;
+      font-size: 11.5px;
+      letter-spacing:.08em;
+      color: rgba(240,232,192,.48);
+    }
+
+    /* terminal card */
+    .term-card {
+      border: 1px solid rgba(255,204,0,.22);
+      background: #0f0f0f; overflow: hidden;
+    }
+    .term-bar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px;
+      background: rgba(255,204,0,.04);
+      border-bottom: 1px solid rgba(255,204,0,.12);
+    }
+    .c-dots { display: flex; gap: 5px; }
+    .c-dots span { width: 9px; height: 9px; border-radius: 50%; }
+    .c-dots span:nth-child(1) { background: #ff5f57; }
+    .c-dots span:nth-child(2) { background: #febc2e; }
+    .c-dots span:nth-child(3) { background: #28c840; }
+    .term-title {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10px; color: rgba(240,232,192,.38); letter-spacing: .05em;
+    }
+    .term-body {
+      padding: 16px 16px 20px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 12px; line-height: 1.9;
+    }
+    .cm  { color: #4a5275; }
+    .kw  { color: #ff79c6; }
+    .fn  { color: #8be9fd; }
+    .str { color: #f1fa8c; }
+    .yel { color: #ffcc00; }
+    .cursor {
+      display: inline-block; width: 8px; height: 13px;
+      background: #ffcc00; vertical-align: middle;
+      animation: blink .8s step-end infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* ── BUTTONS ─────────────────────────────────────────── */
+    .btn {
+      font-family: "Barlow Condensed", sans-serif;
+      font-size: 16px; font-weight: 800;
+      letter-spacing: .10em; text-transform: uppercase;
+      padding: 13px 26px; border-radius: 4px; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 8px;
+      border: 2px solid rgba(255,204,0,.38);
+      background: rgba(255,204,0,.08); color: #ffcc00;
+      transition: background .12s, transform .07s;
+    }
+    .btn:hover { background: rgba(255,204,0,.16); }
+    .btn:active { transform: translateY(1px); }
+    .btn.solid { background: #ffcc00; border-color: #ffcc00; color: #090909; }
+    .btn.solid:hover { background: #ffe033; }
+    .btn.ghost {
+      background: transparent; border-color: rgba(255,204,0,.22);
+      color: rgba(240,232,192,.72);
+    }
+    .btn.ghost:hover { border-color: rgba(255,204,0,.48); color: #ffcc00; }
+    .btn-sm { font-size: 14px; padding: 10px 18px; }
+    .btn-full { width: 100%; justify-content: center; }
+    .btn-dark { background: #090909; border-color: #090909; color: #ffcc00; }
+    .btn-dark:hover { background: #111; }
+
+    /* ── DIVIDER ─────────────────────────────────────────── */
+    .divider {
+      height: 1px;
+      background: linear-gradient(90deg,transparent,rgba(255,204,0,.14),transparent);
+      margin: 56px 0 0;
+    }
+    /* Push footer lower (more breathing room) */
+    footer { margin-top: 64px; }
+
+    /* ── SECTION SHELL ───────────────────────────────────── */
+    .section { padding: 88px 0; }
+    .sec-label {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10px; font-weight: 700; letter-spacing: .20em;
+      text-transform: uppercase; color: rgba(255,204,0,.52);
+      margin-bottom: 10px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .sec-label::before { content:""; width:20px; height:1px; background:rgba(255,204,0,.40); }
+    .big-h {
+      font-family: "Barlow Condensed", sans-serif;
+      font-size: clamp(38px, 6vw, 72px);
+      font-weight: 900; text-transform: uppercase;
+      letter-spacing: -.01em; line-height: .97; color: #f8f0d0;
+      margin-bottom: 14px;
+    }
+    .big-h .yl  { color: #ffcc00; }
+    .big-h .ol  { -webkit-text-stroke: 2px rgba(255,204,0,.55); color: transparent; }
+    .sec-sub {
+      font-size: 15px; color: rgba(240,232,192,.52);
+      line-height: 1.68; max-width: 56ch;
+    }
+    .sec-sub.center { text-align: center; margin: 0 auto; }
+
+    /* ── HOW TO ADD ──────────────────────────────────────── */
+    .how-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 28px; align-items: start; margin-top: 44px;
+    }
+    @media (max-width: 800px) { .how-grid { grid-template-columns: 1fr; } }
+
+    .wiz { border: 1px solid rgba(255,204,0,.18); background: #0f0f0f; overflow: hidden; }
+    .wiz-tabs {
+      display: grid; grid-template-columns: repeat(3,1fr);
+      border-bottom: 1px solid rgba(255,204,0,.14);
+    }
+    .wiz-tab {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10px; font-weight: 700; letter-spacing: .10em; text-transform: uppercase;
+      padding: 13px 8px; text-align: center; cursor: pointer;
+      border: none; border-right: 1px solid rgba(255,204,0,.10);
+      background: transparent; color: rgba(240,232,192,.32);
+      transition: color .12s, background .12s;
+    }
+    .wiz-tab:last-child { border-right: none; }
+    .wiz-tab.active {
+      background: rgba(255,204,0,.07); color: #ffcc00;
+      box-shadow: inset 0 -2px 0 #ffcc00;
+    }
+    .wiz-tab:hover:not(.active) { color: rgba(240,232,192,.72); background: rgba(255,204,0,.03); }
+    .wiz-pnl { display: none; padding: 28px 22px; }
+    .wiz-pnl.active { display: block; }
+    .wiz-no {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 9.5px; font-weight: 700; letter-spacing: .16em;
+      text-transform: uppercase; color: rgba(255,204,0,.42); margin-bottom: 8px;
+    }
+    .wiz-pnl h3 {
+      font-family: "Barlow Condensed", sans-serif;
+      font-size: 26px; font-weight: 800; letter-spacing: .04em;
+      text-transform: uppercase; color: #f8f0d0; margin-bottom: 8px;
+    }
+    .wiz-pnl p { font-size: 14px; color: rgba(240,232,192,.58); line-height: 1.67; margin-bottom: 18px; }
+    .wiz-btns { display: flex; flex-wrap: wrap; gap: 10px; }
+
+    .channels-frame { border: 1px solid rgba(255,204,0,.22); overflow: hidden; position: sticky; top: 72px; }
+    .channels-frame img { width: 100%; display: block; filter: brightness(.95); }
+
+    /* ── NFT COLLECTION ──────────────────────────────────── */
+    .nft-section {
+      padding: 0;
+      border-top: 1px solid rgba(255,204,0,.12);
+      border-bottom: 1px solid rgba(255,204,0,.12);
+      position: relative; overflow: hidden;
+    }
+    .nft-banner-wrap {
+      position: relative;
+      min-height: 380px;
+      background: radial-gradient(ellipse 80% 100% at 50% 0%, rgba(255,204,0,.08), transparent 55%), #090909;
+    }
+    .nft-overlay {
+      position: absolute; inset: 0;
+      background: linear-gradient(
+        to right,
+        rgba(9,9,9,.88) 0%,
+        rgba(9,9,9,.40) 40%,
+        rgba(9,9,9,.40) 60%,
+        rgba(9,9,9,.88) 100%
+      );
+    }
+    .nft-overlay-bottom {
+      position: absolute; bottom: 0; left: 0; right: 0; height: 50%;
+      background: linear-gradient(to top, #090909, transparent);
+    }
+    .nft-copy {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      text-align: center; padding: 24px;
+    }
+    .nft-copy .sec-label { justify-content: center; }
+    .nft-copy .big-h { font-size: clamp(38px, 7vw, 80px); }
+    .nft-copy .sec-sub.center { margin-top: 10px; }
+    .nft-btns { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 22px; }
+
+    /* ── FEATURES ────────────────────────────────────────── */
+    .feats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1px; background: rgba(255,204,0,.10);
+      border: 1px solid rgba(255,204,0,.10); margin-top: 44px;
+    }
+    .feat { background: #0f0f0f; padding: 28px 24px; transition: background .14s; }
+    .feat:hover { background: #131313; }
+    .feat-num {
+      font-family: "Barlow Condensed", sans-serif;
+      font-size: 62px; font-weight: 900; line-height: 1;
+      color: rgba(255,204,0,.09); margin-bottom: 8px; letter-spacing: -.02em;
+    }
+    .feat h3 {
+      font-family: "Barlow Condensed", sans-serif;
+      font-size: 21px; font-weight: 800; letter-spacing: .04em;
+      text-transform: uppercase; color: #f8f0d0; margin-bottom: 7px;
+    }
+    .feat p { font-size: 13.5px; color: rgba(240,232,192,.54); line-height: 1.62; }
+
+    /* Pricing UI removed (website alpha rebrand). */
+
+    /* CTA strip removed */
+
+    /* ── COMMANDS ────────────────────────────────────────── */
+    .cmd-table {
+      border: 1px solid rgba(255,204,0,.14); background: #0f0f0f;
+      overflow: hidden; margin-top: 36px;
+    }
+    .cmd-row {
+      display: flex; align-items: baseline; gap: 16px;
+      padding: 13px 20px; border-bottom: 1px solid rgba(255,204,0,.07);
+      transition: background .12s;
+    }
+    .cmd-row:last-child { border-bottom: none; }
+    .cmd-row:hover { background: rgba(255,204,0,.03); }
+    .cmd {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 13px; font-weight: 600; color: #ffcc00;
+      flex-shrink: 0; min-width: 130px;
+    }
+    .cmd-d { font-size: 13.5px; color: rgba(240,232,192,.52); }
+
+    /* ── FOOTER ──────────────────────────────────────────── */
+    footer {
+      background: #090909;
+      border-top: 1px solid rgba(255,204,0,.12);
+      padding: 34px 0 58px;
+    }
+    .foot-inner {
+      display: flex; align-items: center;
+      justify-content: space-between; flex-wrap: wrap;
+      gap: 18px; margin-bottom: 20px;
+    }
+    .foot-brand { display: flex; align-items: center; gap: 10px; }
+    .foot-brand img { width: 28px; height: 28px; border: 1px solid rgba(255,204,0,.22); border-radius: 5px; }
+    .foot-brand-name {
+      font-family: "Barlow Condensed", sans-serif;
+      font-size: 19px; font-weight: 900; letter-spacing: .06em;
+      text-transform: uppercase; color: #ffcc00;
+    }
+    .foot-links { display: flex; gap: 16px; flex-wrap: wrap; }
+    .foot-links a {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10.5px; font-weight: 500; letter-spacing: .10em;
+      text-transform: uppercase; color: rgba(240,232,192,.32);
+      transition: color .12s;
+    }
+    .foot-links a:hover { color: #ffcc00; }
+    .foot-copy {
+      text-align: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10.5px; letter-spacing: .08em; color: rgba(240,232,192,.20);
+    }
+
+    /* ── EARLY ACCESS MODAL (iframe: /early-access on server, early_access.html when opened as file) ───────── */
+    .ea-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity .2s ease, visibility .2s;
+    }
+    .ea-modal.is-open {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+    }
+    .ea-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      background: rgba(0,0,0,.78);
+      backdrop-filter: blur(6px);
+      cursor: pointer;
+    }
+    .ea-modal-dialog {
+      position: relative;
+      z-index: 1;
+      width: min(960px, 100%);
+      max-height: min(92vh, 920px);
+      margin: auto;
+      align-self: center;
+      background: #0b0b0d;
+      border: 1px solid rgba(255,204,0,.35);
+      box-shadow: 0 24px 80px rgba(0,0,0,.75);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .ea-modal-head {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 14px;
+      border-bottom: 1px solid rgba(255,204,0,.18);
+      background: #090909;
+    }
+    .ea-modal-head span {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: rgba(255,204,0,.85);
+    }
+    .ea-modal-close {
+      border: 1px solid rgba(255,204,0,.35);
+      background: rgba(255,204,0,.06);
+      color: #ffcc00;
+      width: 36px;
+      height: 36px;
+      font-size: 22px;
+      line-height: 1;
+      cursor: pointer;
+      border-radius: 4px;
+      transition: background .12s;
+    }
+    .ea-modal-close:hover { background: rgba(255,204,0,.12); }
+    .ea-modal-frame-wrap {
+      flex: 1;
+      min-height: 0;
+      position: relative;
+    }
+    .ea-modal-frame-wrap iframe {
+      display: block;
+      width: 100%;
+      height: min(85vh, 860px);
+      border: 0;
+      background: #0b0b0d;
+    }
+
+    /* Tweet gate modal */
+    .tg-modal { position: fixed; inset: 0; z-index: 9998; display: flex; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .18s ease, visibility .18s; }
+    .tg-modal.is-open { opacity: 1; visibility: visible; pointer-events: auto; }
+    .tg-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.78); backdrop-filter: blur(6px); cursor: pointer; }
+    .tg-dialog {
+      position: relative; margin: auto; width: min(760px, 94vw);
+      background: #0b0b0d; border: 1px solid rgba(255,204,0,.32);
+      box-shadow: 0 28px 120px rgba(0,0,0,.75);
+      padding: 16px 16px 14px;
+    }
+    .tg-head { display:flex; align-items:center; justify-content:space-between; gap: 12px; margin-bottom: 12px; }
+    .tg-title { font-family:"JetBrains Mono",monospace; font-size: 11px; letter-spacing:.14em; text-transform:uppercase; color: rgba(255,204,0,.85); }
+    .tg-close { border: 1px solid rgba(255,204,0,.35); background: rgba(255,204,0,.06); color:#ffcc00; width:36px; height:36px; font-size:22px; cursor:pointer; border-radius:4px; }
+    .tg-close:hover{ background: rgba(255,204,0,.12); }
+    .tg-steps { font-size: 14px; color: rgba(240,232,192,.60); line-height: 1.65; margin-bottom: 12px; }
+    .tg-steps b{ color:#ffcc00; }
+    .tg-row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top: 10px; }
+    .tg-input {
+      flex: 1; min-width: 240px;
+      background: rgba(0,0,0,.25);
+      border: 1px solid rgba(255,204,0,.18);
+      color: #f0e8c0;
+      border-radius: 6px;
+      padding: 11px 12px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 12px;
+      outline: none;
+    }
+    .tg-help { font-family:"JetBrains Mono",monospace; font-size: 10.5px; color: rgba(240,232,192,.42); margin-top: 8px; }
+    .tg-err { font-family:"JetBrains Mono",monospace; font-size: 11px; color: rgba(255,150,150,.90); margin-top: 10px; display:none; }
+  </style>
+</head>
+<body>
+
+<!-- ══ LOADER ════════════════════════════════════════════ -->
+<div id="loader">
+  <div class="loader-big">NERDS ALPHA</div>
+  <div class="loader-label">Initializing intelligence feed…</div>
+  <div class="loader-track"><div class="loader-fill" id="lbar"></div></div>
+</div>
+
+<!-- ══ NAV ══════════════════════════════════════════════ -->
+<nav>
+  <div class="fullbar">
+    <div class="nav-inner">
+      <a class="brand" href="#">
+        <img class="brand-logo" src="/logo.png" alt="Nerds Alpha" width="30" height="30" />
+        <span class="brand-name">Nerds Alpha</span>
+      </a>
+      <div class="nav-links">
+        <a class="nav-cta" href="/projects" id="openFeedNav">OPEN LIVE FEED</a>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<!-- ══ TICKER ════════════════════════════════════════════ -->
+<div class="ticker" aria-hidden="true">
+  <div class="ticker-track" id="ticker"></div>
+</div>
+
+<!-- ══ HERO ═════════════════════════════════════════════ -->
+<div class="wrap">
+  <section class="hero">
+    <div class="hero-inner">
+      <div>
+        <div class="hero-eyebrow">// Website alpha · live signal feed</div>
+        <h1>
+          NERDS
+          <span class="yl">ALPHA</span>
+          <span class="ol">LIVE FEED</span>
+        </h1>
+        <p class="hero-sub">
+          Projects, token alerts, and daily finds — all in one place.
+          This is the Nerds Alpha website live feed (early access).
+        </p>
+        <div class="hero-btns">
+          <a class="btn solid" href="/projects" id="openFeedBtn">Open Live Feed</a>
+        </div>
+        <div class="hero-stats">
+          <div class="hstat"><strong>&lt;2min</strong><span>Setup</span></div>
+          <div class="hstat"><strong>24/7</strong><span>Live feed</span></div>
+          <div class="hstat"><strong>&lt;10s</strong><span>Alert latency</span></div>
+          <div class="hstat"><strong>3</strong><span>Networks</span></div>
+        </div>
+
+      </div>
+
+      <div class="term-card" aria-hidden="true">
+        <div class="term-bar">
+          <div class="c-dots"><span></span><span></span><span></span></div>
+          <span class="term-title">nerds alpha — signal feed</span>
+        </div>
+        <div class="term-body">
+          <div class="cm">// Incoming KOL signal ⚡</div>
+          <div><span class="kw">const</span> sig = <span class="kw">await</span> <span class="fn">alpha</span>.<span class="fn">watch</span>(<span class="str">'kol'</span>);</div>
+          <div class="cm">// New token flagged</div>
+          <div><span class="fn">push</span>(<span class="str">'#kol-alerts'</span>, {</div>
+          <div>&nbsp;&nbsp;token: <span class="str">"$NERDS"</span>,</div>
+          <div>&nbsp;&nbsp;caller: <span class="yel">sig.kol</span>,</div>
+          <div>&nbsp;&nbsp;mcap:&nbsp;&nbsp;<span class="yel">sig.mcap</span>,</div>
+          <div>&nbsp;&nbsp;net:&nbsp;&nbsp;&nbsp;<span class="str">"Solana"</span></div>
+          <div>});</div>
+          <div class="cm">// ✓ Access token active</div>
+          <div><span class="yel">$</span>&nbsp;<span class="cursor"></span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Middle full-width section -->
+    <section class="how" aria-label="How it works" style="margin-top:18px;">
+      <div class="sec-label">// How it works</div>
+      <div class="how-grid">
+        <div class="how-card"><b>Projects</b><p>Spot early projects before they go mainstream — filtered by our HVA network and posted only when it meets our alert rules.</p></div>
+        <div class="how-card"><b>Token alerts</b><p>Monitor 100+ Telegram sources without joining them all. We surface the important calls and show MC at call, ATH, and performance.</p></div>
+        <div class="how-card"><b>Daily finds</b><p>Your rolling 24h digest: every newly alerted project in one clean list (with age, followers, and category).</p></div>
+        <div class="how-card"><b>Wallet tracker (coming soon)</b><p>Track NFT mints, transfers, and token activity across ETH, SOL, and Base — with smart filters to cut noise.</p></div>
+        <div class="how-card"><b>Mint overview (coming soon)</b><p>Live mint radar across ETH, Base, and Solana — monitor what’s minting now and what’s trending.</p></div>
+      </div>
+      <div class="how-note">Free access: like + RT + reply to the daily tweets (daily winners get access).</div>
+    </section>
+  </section>
+</div>
+
+<!-- Live feed moved to dedicated pages (/projects, /kol-alerts, /daily-finds). -->
+
+<div class="divider"></div>
+
+<!-- ══ FOOTER ════════════════════════════════════════════ -->
+<div class="fullbar">
+  <footer>
+    <div class="foot-inner">
+      <div class="foot-brand">
+        <img src="/logo.png" alt="" width="28" height="28" />
+        <span class="foot-brand-name">Nerds Alpha</span>
+      </div>
+      <div class="foot-links">
+        <a href="/projects" id="openFeedFoot">Open Live Feed</a>
+        <a href="https://x.com/Degensultan" target="_blank" rel="noreferrer">X: @Degensultan</a>
+        <a href="https://t.me/Sultandegeen" target="_blank" rel="noreferrer">Support: @Sultandegeen</a>
+      </div>
+    </div>
+    <div class="foot-copy">© 2026 NERDS ALPHA · NOT FINANCIAL ADVICE · INFORMATIONAL USE ONLY</div>
+  </footer>
+</div>
+
+<!-- Tweet gate modal -->
+<div id="tg-modal" class="tg-modal" aria-hidden="true">
+  <div class="tg-backdrop" id="tg-backdrop"></div>
+  <div class="tg-dialog" role="dialog" aria-modal="true" aria-label="Access gate">
+    <div class="tg-head">
+      <div class="tg-title">Access gate · like + RT + reply</div>
+      <button class="tg-close" type="button" id="tg-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="tg-steps">
+      1) Open the tweet below and <b>Like</b> + <b>RT</b> + <b>Reply</b><br/>
+      2) Paste your <b>reply link</b> and submit to unlock the live feeds.
+    </div>
+    <div class="tg-row">
+      <a class="btn ghost btn-sm" id="tg-openTweet" href="#" target="_blank" rel="noreferrer">Open Tweet</a>
+      <input id="tg-reply" class="tg-input" placeholder="Paste your reply link (x.com/.../status/ID)" />
+      <button class="btn solid btn-sm" id="tg-submit" type="button">Submit</button>
+    </div>
+    <div class="tg-help">Tip: your reply link looks like `https://x.com/yourname/status/123...`</div>
+    <div class="tg-err" id="tg-err"></div>
+  </div>
+</div>
+
+<!-- Early access modal: full `early_access.html` UI inside iframe -->
+<div id="ea-modal" class="ea-modal" role="dialog" aria-modal="true" aria-labelledby="ea-modal-title" aria-hidden="true">
+  <div class="ea-modal-backdrop" data-ea-close tabindex="-1"></div>
+  <div class="ea-modal-dialog">
+    <div class="ea-modal-head">
+      <span id="ea-modal-title">Early access</span>
+      <button type="button" class="ea-modal-close" data-ea-close aria-label="Close">&times;</button>
+    </div>
+    <div class="ea-modal-frame-wrap">
+      <iframe id="ea-modal-frame" title="Early access — Nerds Alpha" src="about:blank"></iframe>
+    </div>
+  </div>
+</div>
+
+<script>
+  /* ── LOADER ─────────────────────────── */
+  (function () {
+    function hideLoader() {
+      try {
+        var loader = document.getElementById("loader");
+        if (loader) loader.classList.add("hide");
+      } catch (e) {}
+    }
+
+    try {
+      var bar = document.getElementById("lbar");
+      var loader = document.getElementById("loader");
+      if (!bar || !loader) {
+        hideLoader();
+        return;
+      }
+      var p = 0;
+      var t = setInterval(function () {
+        p += Math.random() * 18 + 8;
+        if (p >= 100) {
+          p = 100;
+          bar.style.width = "100%";
+          clearInterval(t);
+          setTimeout(hideLoader, 280);
+          return;
+        }
+        bar.style.width = p + "%";
+      }, 80);
+    } catch (e) {
+      hideLoader();
+    }
+
+    // Failsafes: never get stuck behind loader
+    window.addEventListener("DOMContentLoaded", function () {
+      setTimeout(hideLoader, 900);
+    });
+    setTimeout(hideLoader, 2200);
+  })();
+
+  /* ── TICKER ─────────────────────────── */
+  (function () {
+    var items = [
+      "Token Alerts","ATH Leaderboard","Mint Pipeline","Top Movers",
+      "Research Briefs","Tokens Tracker","24/7 Monitoring","Solana Native",
+      "Website Alpha","Access Code","Live Feed","Nerds Alpha"
+    ];
+    var track = document.getElementById("ticker");
+    var html = "";
+    for (var r = 0; r < 2; r++) {
+      items.forEach(function (item) {
+        html += '<span class="t-item">' + item +
+          '<span class="t-sep" aria-hidden="true">◆</span></span>';
+      });
+    }
+    track.innerHTML = html;
+  })();
+
+  /* ── EARLY ACCESS MODAL ───────────────── */
+  (function () {
+    var modal = document.getElementById("ea-modal");
+    var frame = document.getElementById("ea-modal-frame");
+    if (!modal || !frame) return;
+
+    function getEarlyAccessSrc() {
+      if (window.location.protocol === "file:") {
+        try {
+          return new URL("early_access.html", window.location.href).href;
+        } catch (e) {
+          return "early_access.html";
+        }
+      }
+      return "/early-access";
+    }
+
+    function openEa() {
+      var target = getEarlyAccessSrc();
+      var cur = frame.getAttribute("src") || "";
+      if (cur === "about:blank" || !cur || cur !== target) {
+        frame.setAttribute("src", target);
+      }
+      modal.classList.add("is-open");
+      modal.setAttribute("aria-hidden", "false");
+      document.body.style.overflow = "hidden";
+    }
+    function closeEa() {
+      modal.classList.remove("is-open");
+      modal.setAttribute("aria-hidden", "true");
+      document.body.style.overflow = "";
+    }
+
+    document.querySelectorAll(".ea-open").forEach(function (el) {
+      el.addEventListener("click", function (e) {
+        e.preventDefault();
+        openEa();
+      });
+    });
+    modal.querySelectorAll("[data-ea-close]").forEach(function (el) {
+      el.addEventListener("click", closeEa);
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && modal.classList.contains("is-open")) closeEa();
+    });
+  })();
+
+  /* ── TWEET GATE ───────────────────────── */
+  (function(){
+    // Change this to your daily tweet URL whenever you want.
+    var TWEET_URL = (window.NERDS_TWEET_URL || "https://x.com/Degensultan/status/0");
+    var modal = document.getElementById("tg-modal");
+    var btns = [document.getElementById("openFeedBtn"), document.getElementById("openFeedNav"), document.getElementById("openFeedFoot")].filter(Boolean);
+    var closeBtn = document.getElementById("tg-close");
+    var backdrop = document.getElementById("tg-backdrop");
+    var openTweet = document.getElementById("tg-openTweet");
+    var replyInp = document.getElementById("tg-reply");
+    var submitBtn = document.getElementById("tg-submit");
+    var err = document.getElementById("tg-err");
+    if (openTweet) openTweet.href = TWEET_URL;
+
+    function open(){
+      if (!modal) return;
+      if (err) { err.style.display="none"; err.textContent=""; }
+      if (replyInp) replyInp.value = "";
+      modal.classList.add("is-open");
+      modal.setAttribute("aria-hidden","false");
+      setTimeout(function(){ try{ replyInp && replyInp.focus(); }catch(e){} }, 50);
+    }
+    function close(){
+      if (!modal) return;
+      modal.classList.remove("is-open");
+      modal.setAttribute("aria-hidden","true");
+    }
+    btns.forEach(function(b){
+      b.addEventListener("click", function(e){ e.preventDefault(); open(); });
+    });
+    // Extra safety: capture clicks even if individual listeners fail to attach
+    try {
+      window.__naOpenGate = open;
+      document.addEventListener("click", function(e){
+        var t = e.target;
+        if (!t) return;
+        var a = (t.closest && t.closest("#openFeedBtn, #openFeedNav, #openFeedFoot")) || null;
+        if (!a) return;
+        e.preventDefault();
+        open();
+      }, true);
+    } catch (e) {}
+    if (closeBtn) closeBtn.addEventListener("click", close);
+    if (backdrop) backdrop.addEventListener("click", close);
+    document.addEventListener("keydown", function(e){ if (e.key === "Escape") close(); });
+
+    function looksLikeStatus(u){
+      u = String(u||"").trim();
+      return /https?:\\/\\/(www\\.)?(x\\.com|twitter\\.com)\\/[^\\/]+\\/status\\/\\d+/.test(u);
+    }
+    async function submit(){
+      var replyUrl = String(replyInp && replyInp.value || "").trim();
+      if (!looksLikeStatus(TWEET_URL) || !looksLikeStatus(replyUrl)){
+        if (err){ err.style.display="block"; err.textContent="Please paste a valid X reply link (x.com/.../status/ID)."; }
+        return;
+      }
+      if (submitBtn) submitBtn.disabled = true;
+      if (submitBtn) submitBtn.textContent = "Submitting…";
+      try{
+        var r = await fetch("/api/access/tweet", {
+          method: "POST",
+          credentials: "include",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({tweet_url: TWEET_URL, reply_url: replyUrl})
+        });
+        if (!r.ok){
+          var t = ""; try{ t = await r.text(); }catch(e){}
+          if (err){ err.style.display="block"; err.textContent = ("Failed: HTTP "+r.status+" "+(t||"")).slice(0,180); }
+          return;
+        }
+        close();
+        window.location.href = "/projects";
+      } catch(ex){
+        if (err){ err.style.display="block"; err.textContent = "Network error. Try again."; }
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+        if (submitBtn) submitBtn.textContent = "Submit";
+      }
+    }
+    if (submitBtn) submitBtn.addEventListener("click", submit);
+    if (replyInp) replyInp.addEventListener("keydown", function(e){ if (e.key === "Enter") submit(); });
+  })();
+
+  // Live feed moved to dedicated pages.
+</script>
+
+</body>
+</html>

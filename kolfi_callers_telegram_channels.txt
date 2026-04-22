@@ -1,0 +1,22 @@
+callers_in_registry=390
+unique_usernames_in_links=6
+unique_c_ids_in_links=427
+resolved_public_usernames=6
+resolved_c_chats=5
+
+## Joinable channels (resolved)
+(Only channels with @username are joinable by link. Private groups need an invite link.)
+
+- Brommy’s Bags 💰 — @brommysbags — https://t.me/brommysbags
+- Cold’s Calls 🧊 — @coldsdiary — https://t.me/coldsdiary
+- FLAME'S COOKS! — @allflamecall — https://t.me/allflamecall
+- Geery Gambles — @GeeryGambles — https://t.me/GeeryGambles
+- LUMEN DEGENS LAB — @LumenGambles — https://t.me/LumenGambles
+- Yeezus’ Prophets — @cryptoyeezuscalls — https://t.me/cryptoyeezuscalls
+
+## TELEGRAM_CALLS_SOURCES suggestion
+TELEGRAM_CALLS_SOURCES=@GeeryGambles, @LumenGambles, @allflamecall, @brommysbags, @coldsdiary, @cryptoyeezuscalls
+
+## Notes
+- If a link is like https://t.me/c/<id>/<msg>, it often points to a private channel/group.
+- To resolve those, your Telegram account must be able to access the chat (joined / has invite).
