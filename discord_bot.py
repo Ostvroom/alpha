@@ -1086,11 +1086,7 @@ class BlockBrainBot(commands.Bot):
 
         def get_section_text(limit=10, min_age=0, max_age=9999):
             if not ranked:
-                return (
-                    "Ranked pool is empty: no Discord-alerted projects in this worker's SQLite yet. "
-                    "On Render, mount persistent storage and point DATA_DIR at it so `block_brain.db` survives redeploys; "
-                    "then let discovery scans post alerts."
-                )
+                return "📡 Scanning the market — first ranked projects will appear here shortly."
             lines = []
             count = 0
             seen_ids = set()
@@ -1124,7 +1120,7 @@ class BlockBrainBot(commands.Bot):
 
         embed.add_field(name="🚀 New Projects (≤30d)", value=get_section_text(10, min_age=0, max_age=30), inline=False)
         embed.add_field(name="📈 Established Projects (30-100d)", value=get_section_text(10, min_age=31, max_age=100), inline=False)
-        foot = f"{BRAND_NAME} • Created by Sultan • {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        foot = f"{BRAND_NAME} Trending Report • {datetime.now().strftime('%d %b %Y')} • by Sultan"
         if BRAND_LOGO_FILE:
             embed.set_footer(text=foot, icon_url=f"attachment://{BRAND_LOGO_FILE}")
         else:
