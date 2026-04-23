@@ -11,8 +11,12 @@ Twitter's JS no longer containing the expected index patterns:
 Both are fixed by:
   - Returning safe fallback values (0, []) when no indices are found
   - Adding 1 as the reduce() initial value so an empty list doesn't crash
+
+Also applies regex fallbacks when upstream twikit changes whitespace/layout so
+string-replace patches miss (common on Render with newer twikit wheels).
 """
 import os
+import re
 import sys
 
 
@@ -107,6 +111,24 @@ def apply_patch():
     )
     if old3 in content:
         content = content.replace(old3, new3)
+        changed = True
+
+    # ── Fix 1b: any twikit layout — replace KEY_BYTE raise with safe return ──
+    if "Couldn't get KEY_BYTE indices" in content:
+        new_content, n = re.subn(
+            r"\braise Exception\(\s*[\"']Couldn't get KEY_BYTE indices[\"']\s*\)",
+            "return 0, []  # patched KEY_BYTE drift",
+            content,
+        )
+        if n:
+            content = new_content
+            changed = True
+
+    # ── Fix 2b: single-line reduce() without initializer (some twikit versions) ─
+    old_reduce = "[key_bytes[index] % 16 for index in self.DEFAULT_KEY_BYTES_INDICES])"
+    new_reduce = "[key_bytes[index] % 16 for index in self.DEFAULT_KEY_BYTES_INDICES], 1)"
+    if old_reduce in content and new_reduce not in content:
+        content = content.replace(old_reduce, new_reduce, 1)
         changed = True
 
     if changed:
