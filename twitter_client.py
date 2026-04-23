@@ -85,7 +85,7 @@ class TwitterClient:
                 'proxy_fails': 0
             })
             proxy_msg = f" (Proxy: {current_proxy})" if current_proxy else ""
-            print(f"Primary session: cookies.json{proxy_msg}")
+            print(f"Primary session: cookies.json{proxy_msg}", flush=True)
         
         # Backup cookies (data/ or project root)
         for backup_name in ("cookies_backup.json", "cookies_backup2.json"):
@@ -136,13 +136,19 @@ class TwitterClient:
                 print(f"WARN: Error loading accounts.json: {e}")
         
         if not self._sessions:
-            print("ERROR: No sessions available! Need cookies.json or account cookies.")
-            print(f"   TIP Put cookies here (recommended): {os.path.join(self._cookies_dir, 'cookies.json')}")
-            print(f"   TIP Or next to main.py (legacy): {os.path.join(self._base_dir, 'cookies.json')}")
-            print("   TIP Render Secret Files: upload as cookies.json → available at /etc/secrets/cookies.json")
-            print("   TIP Or set TWIKIT_COOKIES_FILE=/absolute/path/to/cookies.json")
+            print("ERROR: No sessions available! Need cookies.json or account cookies.", flush=True)
+            print(f"   TIP Put cookies here (recommended): {os.path.join(self._cookies_dir, 'cookies.json')}", flush=True)
+            print(f"   TIP Or next to main.py (legacy): {os.path.join(self._base_dir, 'cookies.json')}", flush=True)
+            print(
+                "   TIP Render Secret Files: upload as cookies.json → available at /etc/secrets/cookies.json",
+                flush=True,
+            )
+            print("   TIP Or set TWIKIT_COOKIES_FILE=/absolute/path/to/cookies.json", flush=True)
         else:
-            print(f"Total sessions available: {len(self._sessions)} | Proxies loaded: {len(self._all_proxies)}")
+            print(
+                f"Total sessions available: {len(self._sessions)} | Proxies loaded: {len(self._all_proxies)}",
+                flush=True,
+            )
         self._normalize_session_idx()
 
     def _normalize_session_idx(self):
@@ -308,7 +314,7 @@ class TwitterClient:
 
     async def verify_all_sessions(self):
         """Verify all sessions and proxies on startup."""
-        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Checking session health...")
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Checking session health...", flush=True)
         valid_count = 0
         for i, session in enumerate(self._sessions):
             username = session['account']['username'] if session['account'] else 'default'

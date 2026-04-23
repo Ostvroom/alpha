@@ -39,7 +39,7 @@ def _materialize_cookies_from_env() -> None:
         try:
             raw = base64.b64decode(b64).decode("utf-8")
         except Exception as e:
-            print(f"[Velcor3] TWIKIT_COOKIES_B64 set but decode failed: {e}")
+            print(f"[Velcor3] TWIKIT_COOKIES_B64 set but decode failed: {e}", flush=True)
             return
     if not raw:
         raw = (os.getenv("TWIKIT_COOKIES_JSON") or "").strip()
@@ -48,13 +48,16 @@ def _materialize_cookies_from_env() -> None:
     try:
         json.loads(raw)
     except json.JSONDecodeError as e:
-        print(f"[Velcor3] Cookie env payload is not valid JSON: {e}")
+        print(f"[Velcor3] Cookie env payload is not valid JSON: {e}", flush=True)
         return
     try:
         dest.write_text(raw, encoding="utf-8")
-        print(f"[Velcor3] Wrote {dest} from environment (TWIKIT_COOKIES_B64 / TWIKIT_COOKIES_JSON).")
+        print(
+            f"[Velcor3] Wrote {dest} from environment (TWIKIT_COOKIES_B64 / TWIKIT_COOKIES_JSON).",
+            flush=True,
+        )
     except OSError as e:
-        print(f"[Velcor3] Could not write cookies.json: {e}")
+        print(f"[Velcor3] Could not write cookies.json: {e}", flush=True)
 
 
 def _print_startup_paths() -> None:
@@ -67,13 +70,16 @@ def _print_startup_paths() -> None:
         f"[Velcor3] DATA_DIR={DATA_DIR} "
         f"(env DATA_DIR={'set' if (os.environ.get('DATA_DIR') or '').strip() else 'unset'}) "
         f"| cookies.json={'yes' if cookie.is_file() else 'no'} "
-        f"| block_brain.db={'yes' if db_bb.is_file() else 'no'}"
+        f"| block_brain.db={'yes' if db_bb.is_file() else 'no'} "
+        f"| etc_secrets_cookies={'yes' if Path('/etc/secrets/cookies.json').is_file() else 'no'}",
+        flush=True,
     )
     if getattr(config, "VELCOR3_VERBOSE_LOGS", False):
-        print(f"[Velcor3] BASE_DIR={BASE_DIR} | CWD={os.getcwd()}")
+        print(f"[Velcor3] BASE_DIR={BASE_DIR} | CWD={os.getcwd()}", flush=True)
         print(
             f"[Velcor3] brain_scan_interval_s={getattr(config, 'CHECK_INTERVAL_SECONDS', '?')} "
-            f"| DISCORD_CHANNEL_ID={getattr(config, 'DISCORD_CHANNEL_ID', 0)}"
+            f"| DISCORD_CHANNEL_ID={getattr(config, 'DISCORD_CHANNEL_ID', 0)}",
+            flush=True,
         )
         logging.getLogger("discord").setLevel(logging.INFO)
         logging.getLogger("discord.gateway").setLevel(logging.INFO)
@@ -85,17 +91,29 @@ def main():
     try:
         if hasattr(sys.stdout, "reconfigure"):
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            # Render/containers: default full buffering hides prints until buffer fills; line-buffer for logs.
+            try:
+                sys.stdout.reconfigure(line_buffering=True)
+            except Exception:
+                pass
         if hasattr(sys.stderr, "reconfigure"):
             sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+            try:
+                sys.stderr.reconfigure(line_buffering=True)
+            except Exception:
+                pass
     except Exception:
         pass
 
     if not config.DISCORD_TOKEN:
-        print("Error: DISCORD_TOKEN not found in environment variables.")
+        print("Error: DISCORD_TOKEN not found in environment variables.", flush=True)
         sys.exit(1)
     
     if config.DISCORD_CHANNEL_ID == 0:
-        print("Warning: DISCORD_CHANNEL_ID is not set. The bot will not be able to send alerts.")
+        print(
+            "Warning: DISCORD_CHANNEL_ID is not set. The bot will not be able to send alerts.",
+            flush=True,
+        )
 
     _materialize_cookies_from_env()
     _print_startup_paths()
@@ -103,10 +121,10 @@ def main():
     bot = BlockBrainBot()
     
     try:
-        print("Starting Velcor3...")
+        print("Starting Velcor3...", flush=True)
         bot.run(config.DISCORD_TOKEN)
     except Exception as e:
-        print(f"Fatal error running bot: {e}")
+        print(f"Fatal error running bot: {e}", flush=True)
         sys.exit(1)
 
 if __name__ == "__main__":
