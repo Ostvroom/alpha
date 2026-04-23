@@ -1013,7 +1013,12 @@ class BlockBrainBot(commands.Bot):
         
         def get_section_text(hours, limit=10, min_age=0, max_age=9999):
             results = database.get_trending_projects(hours=hours, limit=50)
-            if not results: return "No data available."
+            if not results:
+                return (
+                    "No projects in this age bucket yet. "
+                    "If the worker DB was just reset (e.g. Render without a persistent disk), "
+                    "run discovery scans until alerts populate `projects` / `follows`."
+                )
             lines = []
             count = 0
             seen_ids = set()

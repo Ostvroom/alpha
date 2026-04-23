@@ -655,23 +655,6 @@ def was_project_alerted(twitter_id):
     conn.close()
     return res is not None and res[0] is not None
 
-def get_trending_projects(hours=24, limit=30):
-    """Get trending projects (only alerted ones) for Trending report."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT p.twitter_id, p.handle, p.name, p.description, p.created_at, p.last_posted_smarts
-        FROM projects p
-        WHERE p.alerted_at IS NOT NULL AND COALESCE(p.alerted_discord, 0) = 1
-        AND p.first_seen_at >= datetime('now', ? || ' hours')
-        ORDER BY p.last_posted_smarts DESC
-        LIMIT ?
-    """, (-hours, limit))
-    res = cursor.fetchall()
-    conn.close()
-    return res
-
-
 def get_trending_projects_30d(limit: int = 30):
     """
     Trending projects by DISTINCT HVA count in the last 30 days.
@@ -984,11 +967,14 @@ def get_trending_projects(hours=24, limit=20):
             COALESCE(ts.count, 0) as total,
             p.ai_summary, p.ai_category
         FROM projects p
-        JOIN TotalSmarts ts ON p.twitter_id = ts.project_id
+        LEFT JOIN TotalSmarts ts ON p.twitter_id = ts.project_id
         LEFT JOIN Smarts7d s7 ON p.twitter_id = s7.project_id
         LEFT JOIN Smarts24h s24 ON p.twitter_id = s24.project_id
         WHERE p.alerted_at IS NOT NULL
-        ORDER BY ts.count DESC
+          AND COALESCE(p.alerted_discord, 0) = 1
+        ORDER BY COALESCE(ts.count, 0) DESC,
+                 COALESCE(p.last_posted_smarts, 0) DESC,
+                 datetime(p.alerted_at) DESC
         LIMIT ?
     """, (limit,))
     
