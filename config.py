@@ -68,8 +68,9 @@ if not ESTABLISHED_PROJECTS_CHANNEL_IDS:
 # Dedicated Reporting Channels
 TRENDING_REPORT_CHANNELS = TRENDING_CHANNEL_IDS
 
-# Large embed banner on the periodic trending report (set 0 if it reads as a solid bar on dark Discord).
-TRENDING_REPORT_SHOW_BANNER = os.getenv("TRENDING_REPORT_SHOW_BANNER", "1").strip().lower() in (
+# Large embed banner on the periodic trending report (default off — wide banners often read as a black bar on dark Discord).
+# Set TRENDING_REPORT_SHOW_BANNER=1 when you ship a proper banner asset.
+TRENDING_REPORT_SHOW_BANNER = os.getenv("TRENDING_REPORT_SHOW_BANNER", "0").strip().lower() in (
     "1",
     "true",
     "yes",
