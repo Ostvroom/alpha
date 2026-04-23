@@ -338,7 +338,21 @@ class TwitterClient:
                     
                 except Exception as e:
                     err_msg = str(e)
-                    is_network_err = any(
+                    # KEY_BYTE / ClientTransaction errors are Twitter-side JS drift,
+                    # NOT auth failures. Treat them like transient network errors so
+                    # we don't wrongly kill the session pool.
+                    is_twikit_internal = any(
+                        kw in err_msg
+                        for kw in [
+                            "KEY_BYTE",
+                            "key_byte",
+                            "ClientTransaction",
+                            "Couldn't get key",
+                            "invalid response",
+                            "twitter-site-verification",
+                        ]
+                    )
+                    is_network_err = is_twikit_internal or any(
                         code in err_msg
                         for code in [
                             "522",
@@ -350,7 +364,7 @@ class TwitterClient:
                             "Timeout",
                         ]
                     )
-                    is_blocked_err = "403" in err_msg
+                    is_blocked_err = "403" in err_msg and not is_twikit_internal
                     
                     # If network/proxy error and we have more proxies, rotate and retry
                     max_proxy_fails = min(len(self._all_proxies), 3) if self._all_proxies else 0
@@ -373,7 +387,13 @@ class TwitterClient:
                     else:
                         # Permanent failure or out of retries
                         reason = f"[{type(e).__name__}] {err_msg}" if err_msg else f"[{type(e).__name__}] (Empty error)"
-                        if "403" in err_msg:
+                        if is_twikit_internal:
+                            print(f"   WARN Session @{username} twikit-internal error (Twitter JS drift): {reason}{proxy_str}")
+                            print(
+                                "      TIP This is usually temporary — monkey-patch should handle it. "
+                                "If persistent, re-export cookies or update twikit."
+                            )
+                        elif "403" in err_msg:
                             print(f"   WARN Session @{username} is BLOCKED (403): {reason}{proxy_str}")
                         else:
                             print(f"   ERROR Session @{username} failure: {reason}{proxy_str}")

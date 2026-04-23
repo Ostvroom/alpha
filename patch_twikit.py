@@ -1,5 +1,5 @@
 """
-Patches the installed twikit library to fix two related bugs caused by
+Patches the installed twikit library to fix bugs caused by
 Twitter's JS no longer containing the expected index patterns:
 
   Bug 1 (0 indices found):
@@ -8,28 +8,45 @@ Twitter's JS no longer containing the expected index patterns:
   Bug 2 (1 index found, empty tail list):
     TypeError: reduce() of empty iterable with no initial value
 
-Both are fixed by:
-  - Returning safe fallback values (0, []) when no indices are found
-  - Adding 1 as the reduce() initial value so an empty list doesn't crash
+  Bug 3: get_animation_key crash when DEFAULT_KEY_BYTES_INDICES is []
+    because reduce() over empty list even WITH initial value=1 still
+    fails when key_bytes list-comp produces [] and row_index becomes 0
+    but frames may be empty.
 
-Also applies regex fallbacks when upstream twikit changes whitespace/layout so
-string-replace patches miss (common on Render with newer twikit wheels).
+Strategy — TWO-LAYER defence so pycache issues on Render can't bypass us:
+  Layer 1 (file patch): rewrite transaction.py on disk + wipe ALL pycache.
+  Layer 2 (monkey-patch): replace the live Python objects in memory so
+    even if the file patch is skipped the running process is fixed.
 """
 import os
 import re
 import sys
+import shutil
 
 
-def _clear_pycache(py_path):
-    cache_dir = os.path.join(os.path.dirname(py_path), "__pycache__")
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+def _clear_pycache_dir(directory):
+    """Nuke the entire __pycache__ dir so stale .pyc can't shadow our patch."""
+    cache_dir = os.path.join(directory, "__pycache__")
     if os.path.isdir(cache_dir):
-        for fname in os.listdir(cache_dir):
-            if "transaction" in fname:
+        try:
+            shutil.rmtree(cache_dir)
+        except Exception:
+            # fallback: delete file by file
+            for fname in os.listdir(cache_dir):
                 try:
                     os.remove(os.path.join(cache_dir, fname))
                 except Exception:
                     pass
 
+
+def _clear_pycache(py_path):
+    """Clear pycache next to a specific .py file."""
+    _clear_pycache_dir(os.path.dirname(py_path))
+
+
+# ── Layer 1: file-level patch ─────────────────────────────────────────────────
 
 def apply_patch():
     try:
@@ -46,6 +63,7 @@ def apply_patch():
 
     if not os.path.exists(path):
         print(f"    [PATCH] transaction.py not found at: {path}")
+        _apply_monkey_patch()
         return
 
     with open(path, "r", encoding="utf-8") as f:
@@ -54,7 +72,7 @@ def apply_patch():
     original = content
     changed = False
 
-    # ── Fix 1: "Couldn't get KEY_BYTE indices" (0 indices found) ─────────────
+    # ── Fix 1: "Couldn't get KEY_BYTE indices" (original raise, pre-2.3.3) ──
     old1 = (
         "        if not key_byte_indices:\n"
         "            raise Exception(\"Couldn't get KEY_BYTE indices\")\n"
@@ -71,18 +89,25 @@ def apply_patch():
         content = content.replace(old1, new1)
         changed = True
 
-    # ── Fix 2: reduce() on empty list (1 index found, tail is []) ────────────
-    old2 = (
-        "[key_bytes[index] % 16 for index in self.DEFAULT_KEY_BYTES_INDICES])"
-    )
-    new2 = (
-        "[key_bytes[index] % 16 for index in self.DEFAULT_KEY_BYTES_INDICES], 1)"
-    )
-    if old2 in content:
-        content = content.replace(old2, new2)
+    # ── Fix 1b: regex fallback for any whitespace/layout variant ─────────────
+    if "Couldn't get KEY_BYTE indices" in content:
+        new_content, n = re.subn(
+            r"\braise Exception\(\s*[\"']Couldn't get KEY_BYTE indices[\"']\s*\)",
+            "return 0, []  # patched KEY_BYTE drift",
+            content,
+        )
+        if n:
+            content = new_content
+            changed = True
+
+    # ── Fix 2: reduce() without initializer (pre-2.3.3 single-line form) ─────
+    old_reduce = "[key_bytes[index] % 16 for index in self.DEFAULT_KEY_BYTES_INDICES])"
+    new_reduce = "[key_bytes[index] % 16 for index in self.DEFAULT_KEY_BYTES_INDICES], 1)"
+    if old_reduce in content and new_reduce not in content:
+        content = content.replace(old_reduce, new_reduce, 1)
         changed = True
 
-    # ── Fix 3: Remove DEBUG print statements from the JS-fetching loop ───────
+    # ── Fix 3: Remove leftover DEBUG print statements ─────────────────────────
     old3 = (
         "                print(f\"DEBUG: Fetching {on_demand_file_url}\")\n"
         "                on_demand_file_response = await session.request(method=\"GET\", url=on_demand_file_url, headers=headers)\n"
@@ -113,34 +138,99 @@ def apply_patch():
         content = content.replace(old3, new3)
         changed = True
 
-    # ── Fix 1b: any twikit layout — replace KEY_BYTE raise with safe return ──
-    if "Couldn't get KEY_BYTE indices" in content:
-        new_content, n = re.subn(
-            r"\braise Exception\(\s*[\"']Couldn't get KEY_BYTE indices[\"']\s*\)",
-            "return 0, []  # patched KEY_BYTE drift",
-            content,
-        )
-        if n:
-            content = new_content
-            changed = True
-
-    # ── Fix 2b: single-line reduce() without initializer (some twikit versions) ─
-    old_reduce = "[key_bytes[index] % 16 for index in self.DEFAULT_KEY_BYTES_INDICES])"
-    new_reduce = "[key_bytes[index] % 16 for index in self.DEFAULT_KEY_BYTES_INDICES], 1)"
-    if old_reduce in content and new_reduce not in content:
-        content = content.replace(old_reduce, new_reduce, 1)
-        changed = True
-
     if changed:
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
+        # Wipe the ENTIRE __pycache__ for x_client_transaction so stale .pyc
+        # can't shadow the freshly written .py file on next import.
         _clear_pycache(path)
-        print("    [PATCH] twikit fixes applied successfully.")
+        print("    [PATCH] twikit transaction.py fixes applied + pycache cleared.")
     else:
-        print("    [PATCH] Already up to date.")
+        print("    [PATCH] transaction.py already up to date (file layer).")
 
     apply_patch_user_entities()
 
+    # Always apply the in-memory monkey-patch on top.
+    _apply_monkey_patch()
+
+
+# ── Layer 2: in-memory monkey-patch ──────────────────────────────────────────
+
+def _apply_monkey_patch():
+    """
+    Replace the live ClientTransaction.get_indices and get_animation_key
+    with safe versions — works even when pycache hides the file-level patch.
+
+    Handles:
+      • get_indices returning (0, []) when Twitter JS has no matching indices
+      • get_animation_key not crashing when DEFAULT_KEY_BYTES_INDICES is []
+    """
+    try:
+        from twikit.x_client_transaction.transaction import ClientTransaction
+    except Exception as e:
+        print(f"    [PATCH] monkey-patch: could not import ClientTransaction: {e}")
+        return
+
+    # ── patch get_indices ───────────────────────────────────────────────────
+    original_get_indices = ClientTransaction.get_indices
+
+    async def _safe_get_indices(self, home_page_response, session, headers):
+        try:
+            result = await original_get_indices(self, home_page_response, session, headers)
+            return result
+        except Exception as e:
+            msg = str(e)
+            if "KEY_BYTE" in msg or "reduce" in msg or "indices" in msg.lower():
+                print(f"    [PATCH] get_indices suppressed: {msg} → using (0, [])")
+                return 0, []
+            raise
+
+    ClientTransaction.get_indices = _safe_get_indices
+
+    # ── patch get_animation_key ─────────────────────────────────────────────
+    original_get_animation_key = ClientTransaction.get_animation_key
+
+    def _safe_get_animation_key(self, key_bytes, response):
+        try:
+            # If DEFAULT_KEY_BYTES_INDICES is empty/None, frame_time would be 1
+            # (safe: reduce with initial=1 over [] = 1). But row_index from
+            # key_bytes[0] % 16 could still index an empty frames list —
+            # so we guard the whole call.
+            return original_get_animation_key(self, key_bytes, response)
+        except Exception as e:
+            msg = str(e)
+            # Swallow errors from empty index lists or empty animation frames
+            print(f"    [PATCH] get_animation_key suppressed: {msg} → using '0'")
+            return "0"
+
+    ClientTransaction.get_animation_key = _safe_get_animation_key
+
+    # ── patch init to survive fully broken responses ────────────────────────
+    original_init = ClientTransaction.init
+
+    async def _safe_init(self, session, headers):
+        try:
+            await original_init(self, session, headers)
+        except Exception as e:
+            msg = str(e)
+            # Allow partial init — set safe defaults so the client can still work
+            if not getattr(self, "DEFAULT_KEY_BYTES_INDICES", None):
+                self.DEFAULT_ROW_INDEX = 0
+                self.DEFAULT_KEY_BYTES_INDICES = []
+            if not getattr(self, "key", None):
+                self.key = ""
+            if not getattr(self, "key_bytes", None):
+                self.key_bytes = []
+            if not getattr(self, "animation_key", None):
+                self.animation_key = "0"
+            print(f"    [PATCH] ClientTransaction.init recovered from: {msg}")
+
+    ClientTransaction.init = _safe_init
+
+    print("    [PATCH] In-memory monkey-patch applied (get_indices, get_animation_key, init).")
+
+
+# ── user.py safe-guards ───────────────────────────────────────────────────────
 
 def apply_patch_user_entities():
     """
@@ -159,6 +249,8 @@ def apply_patch_user_entities():
             continue
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
+        changed = False
+
         old = (
             "        self.description_urls: list = legacy['entities']['description']['urls']\n"
             "        self.urls: list = legacy['entities'].get('url', {}).get('urls')"
@@ -170,7 +262,6 @@ def apply_patch_user_entities():
             "        _url_block = _ent.get('url')\n"
             "        self.urls: list = (_url_block.get('urls') if isinstance(_url_block, dict) else None) or []"
         )
-        changed = False
         if old in content:
             content = content.replace(old, new, 1)
             changed = True
