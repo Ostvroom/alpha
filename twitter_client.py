@@ -137,12 +137,23 @@ class TwitterClient:
             print(f"   TIP Or next to main.py (legacy): {os.path.join(self._base_dir, 'cookies.json')}")
         else:
             print(f"Total sessions available: {len(self._sessions)} | Proxies loaded: {len(self._all_proxies)}")
-    
+        self._normalize_session_idx()
+
+    def _normalize_session_idx(self):
+        """Keep _current_session_idx in range (e.g. after deploy / pool changes)."""
+        if not self._sessions:
+            self._current_session_idx = 0
+            return
+        n = len(self._sessions)
+        if self._current_session_idx < 0 or self._current_session_idx >= n:
+            self._current_session_idx %= n
+
     def _get_current_session(self):
         """Get current active session, rotating if rate limited."""
         if not self._sessions:
             self.is_rate_limited = False
             return None
+        self._normalize_session_idx()
         attempts = 0
         while attempts < len(self._sessions):
             session = self._sessions[self._current_session_idx]
@@ -151,22 +162,14 @@ class TwitterClient:
             # Try next session
             self._rotate_session()
             attempts += 1
-        
+
         # All sessions rate limited
         self.is_rate_limited = True
         if not self._sessions:
             return None
+        self._normalize_session_idx()
         return self._sessions[self._current_session_idx]
-    
-    def _rotate_session(self):
-        """Rotate to next available session."""
-        old_idx = self._current_session_idx
-        self._current_session_idx = (self._current_session_idx + 1) % len(self._sessions)
-        if len(self._sessions) > 1:
-            new_user = self._sessions[self._current_session_idx]['account']
-            username = new_user['username'] if new_user else 'default'
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Session Rotation: Switched to @{username}")
-    
+
     def check_cooldown(self):
         """Checks if the cooldown period has expired and resets flags."""
         if self.cooldown_ends:
@@ -196,13 +199,15 @@ class TwitterClient:
         """Get the username of the current session."""
         if not self._sessions:
             return "default"
+        self._normalize_session_idx()
         session = self._sessions[self._current_session_idx]
         return session['account']['username'] if session.get('account') else 'default'
 
     def _rotate_session(self):
-        """Rotate to the next session."""
+        """Rotate to the next non-rate-limited session, or full circle."""
         if not self._sessions:
             return False
+        self._normalize_session_idx()
         original_idx = self._current_session_idx
         while True:
             self._current_session_idx = (self._current_session_idx + 1) % len(self._sessions)
@@ -217,6 +222,7 @@ class TwitterClient:
         if not self._sessions:
             self.is_rate_limited = False
             return
+        self._normalize_session_idx()
         session = self._sessions[self._current_session_idx]
         username = session['account']['username'] if session['account'] else 'default'
         
