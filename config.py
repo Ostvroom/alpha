@@ -68,6 +68,14 @@ if not ESTABLISHED_PROJECTS_CHANNEL_IDS:
 # Dedicated Reporting Channels
 TRENDING_REPORT_CHANNELS = TRENDING_CHANNEL_IDS
 
+# Large embed banner on the periodic trending report (set 0 if it reads as a solid bar on dark Discord).
+TRENDING_REPORT_SHOW_BANNER = os.getenv("TRENDING_REPORT_SHOW_BANNER", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+
 # Sniper Filter Channel (Usually established projects or a dedicated feed)
 SNIPER_CHANNEL_ID = parse_channel_ids("OLDER_ACCS_CHANNEL_ID")[0] if parse_channel_ids("OLDER_ACCS_CHANNEL_ID") else (DISCORD_CHANNEL_IDS[0] if DISCORD_CHANNEL_IDS else 0)
 SNIPER_MAX_AGE_DAYS = 100

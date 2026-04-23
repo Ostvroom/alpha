@@ -110,6 +110,39 @@ ensure_dirs()
 _DAILY_FINDS_DIGEST_STATE = os.path.join(DATA_DIR, "daily_finds_digest_state.json")
 
 
+def _parse_twitter_created_at(created_at) -> Optional[datetime]:
+    """Normalize X `created_at` (several string shapes + datetime) to timezone-aware datetime."""
+    if created_at is None:
+        return None
+    if isinstance(created_at, datetime):
+        dt = created_at
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    s = str(created_at).strip()
+    if not s:
+        return None
+    if s.endswith("Z") and "T" in s:
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except ValueError:
+        pass
+    try:
+        return datetime.strptime(s, "%a %b %d %H:%M:%S %z %Y")
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+        try:
+            return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
 def _embed_has_image(e: Optional[discord.Embed]) -> bool:
     if not e:
         return False
@@ -1010,19 +1043,29 @@ class BlockBrainBot(commands.Bot):
         await asyncio.sleep(2)
 
         embed = self._create_premium_embed(f"🔥 {BRAND_NAME} Trending Report", color=discord.Color.orange())
-        
-        def get_section_text(hours, limit=10, min_age=0, max_age=9999):
-            results = database.get_trending_projects(hours=hours, limit=50)
-            if not results:
+
+        try:
+            total_p, any_alert, disc_alert = database.get_trending_report_db_snapshot()
+            print(
+                f"{self._get_log_prefix()} 📊 [REPORT] DB snapshot: "
+                f"projects={total_p}, alerted_at={any_alert}, discord_alerted={disc_alert}, data_dir={DATA_DIR}"
+            )
+        except Exception as e:
+            print(f"{self._get_log_prefix()} 📊 [REPORT] DB snapshot error: {e}")
+
+        ranked = database.get_trending_projects(hours=24, limit=50)
+
+        def get_section_text(limit=10, min_age=0, max_age=9999):
+            if not ranked:
                 return (
-                    "No projects in this age bucket yet. "
-                    "If the worker DB was just reset (e.g. Render without a persistent disk), "
-                    "run discovery scans until alerts populate `projects` / `follows`."
+                    "Ranked pool is empty: no Discord-alerted projects in this worker's SQLite yet. "
+                    "On Render, mount persistent storage and point DATA_DIR at it so `block_brain.db` survives redeploys; "
+                    "then let discovery scans post alerts."
                 )
             lines = []
             count = 0
             seen_ids = set()
-            for p_id, handle, name, description, created_at, s24h, s7d, total, ai_summary, ai_category in results:
+            for p_id, handle, name, description, created_at, s24h, s7d, total, ai_summary, ai_category in ranked:
                 if p_id in seen_ids: continue
                 age = self.get_account_age_days(created_at)
                 if age < min_age or age > max_age: continue
@@ -1043,10 +1086,15 @@ class BlockBrainBot(commands.Bot):
                 seen_ids.add(p_id)
                 count += 1
                 if count >= limit: break
-            return "\n".join(lines) if lines else "No trending projects found."
+            if lines:
+                return "\n".join(lines)
+            return (
+                f"No projects in this age slice ({min_age}–{max_age}d). "
+                f"{len(ranked)} account(s) ranked overall — others fall outside this bucket."
+            )
 
-        embed.add_field(name="🚀 New Projects (≤30d)", value=get_section_text(24, 10, min_age=0, max_age=30), inline=False)
-        embed.add_field(name="📈 Established Projects (30-100d)", value=get_section_text(24, 10, min_age=31, max_age=100), inline=False)
+        embed.add_field(name="🚀 New Projects (≤30d)", value=get_section_text(10, min_age=0, max_age=30), inline=False)
+        embed.add_field(name="📈 Established Projects (30-100d)", value=get_section_text(10, min_age=31, max_age=100), inline=False)
         foot = f"{BRAND_NAME} • Created by Sultan • {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         if BRAND_LOGO_FILE:
             embed.set_footer(text=foot, icon_url=f"attachment://{BRAND_LOGO_FILE}")
@@ -1055,15 +1103,14 @@ class BlockBrainBot(commands.Bot):
 
         if BRAND_LOGO_PATH:
             embed.set_thumbnail(url=f"attachment://{BRAND_LOGO_FILE}")
-        if BRAND_BANNER_PATH:
+        if BRAND_BANNER_PATH and getattr(config, "TRENDING_REPORT_SHOW_BANNER", True):
             embed.set_image(url=f"attachment://{BRAND_BANNER_FILE}")
 
         for ch in report_channels:
             current_files = []
             if BRAND_LOGO_PATH:
                 current_files.append(discord.File(BRAND_LOGO_PATH, filename=BRAND_LOGO_FILE))
-            # Trending report always wants the banner; also ensures the attachment exists.
-            if BRAND_BANNER_PATH:
+            if BRAND_BANNER_PATH and getattr(config, "TRENDING_REPORT_SHOW_BANNER", True):
                 current_files.append(discord.File(BRAND_BANNER_PATH, filename=BRAND_BANNER_FILE))
                 
             try: 
@@ -1595,10 +1642,9 @@ class BlockBrainBot(commands.Bot):
         await self.wait_until_ready()
 
     def format_age(self, created_at):
-        if isinstance(created_at, str):
-            try: dt = datetime.strptime(created_at, "%a %b %d %H:%M:%S %z %Y")
-            except: return "Unknown"
-        else: dt = created_at
+        dt = _parse_twitter_created_at(created_at)
+        if not dt:
+            return "Unknown"
         now = datetime.now(dt.tzinfo)
         diff = now - dt
         if diff.days == 0: return "today"
@@ -1606,12 +1652,11 @@ class BlockBrainBot(commands.Bot):
         else: return f"{diff.days} days ago"
 
     def get_account_age_days(self, created_at):
-        if isinstance(created_at, str):
-            try: dt = datetime.strptime(created_at, "%a %b %d %H:%M:%S %z %Y")
-            except: return 999
-        else: dt = created_at
+        dt = _parse_twitter_created_at(created_at)
+        if not dt:
+            return 0
         now = datetime.now(dt.tzinfo)
-        return (now - dt).days
+        return max(0, (now - dt).days)
 
     def classify_project(self, account):
         text = f"{getattr(account, 'name', '')} {getattr(account, 'description', '')}".lower()

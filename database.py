@@ -933,6 +933,28 @@ def get_top_hvas_24h():
     conn.close()
     return res
 
+
+def get_trending_report_db_snapshot():
+    """
+    Operator/debug counts for the Discord trending report.
+    Returns: (total_projects, alerted_any, alerted_discord_on)
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT
+          (SELECT COUNT(*) FROM projects),
+          (SELECT COUNT(*) FROM projects WHERE alerted_at IS NOT NULL),
+          (SELECT COUNT(*) FROM projects WHERE alerted_at IS NOT NULL
+             AND COALESCE(alerted_discord, 0) = 1)
+        """
+    )
+    row = cursor.fetchone() or (0, 0, 0)
+    conn.close()
+    return int(row[0] or 0), int(row[1] or 0), int(row[2] or 0)
+
+
 def get_trending_projects(hours=24, limit=20):
     """Returns top projects ranked by total smart followers (HVAs) in the last 30 days.
     Simple, easy-to-understand ranking of the most followed projects.
