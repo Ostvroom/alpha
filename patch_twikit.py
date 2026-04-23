@@ -172,7 +172,10 @@ def _apply_monkey_patch():
         return
 
     # ── patch get_indices ───────────────────────────────────────────────────
-    original_get_indices = ClientTransaction.get_indices
+    if getattr(ClientTransaction.get_indices, "_is_patched", False):
+        pass # Already patched
+    else:
+        original_get_indices = ClientTransaction.get_indices
 
     async def _safe_get_indices(self, home_page_response, session, headers):
         try:
@@ -185,10 +188,14 @@ def _apply_monkey_patch():
                 return 0, []
             raise
 
-    ClientTransaction.get_indices = _safe_get_indices
+        _safe_get_indices._is_patched = True
+        ClientTransaction.get_indices = _safe_get_indices
 
     # ── patch get_animation_key ─────────────────────────────────────────────
-    original_get_animation_key = ClientTransaction.get_animation_key
+    if getattr(ClientTransaction.get_animation_key, "_is_patched", False):
+        pass
+    else:
+        original_get_animation_key = ClientTransaction.get_animation_key
 
     def _safe_get_animation_key(self, key_bytes, response):
         try:
@@ -203,10 +210,14 @@ def _apply_monkey_patch():
             print(f"    [PATCH] get_animation_key suppressed: {msg} → using '0'")
             return "0"
 
-    ClientTransaction.get_animation_key = _safe_get_animation_key
+        _safe_get_animation_key._is_patched = True
+        ClientTransaction.get_animation_key = _safe_get_animation_key
 
     # ── patch init to survive fully broken responses ────────────────────────
-    original_init = ClientTransaction.init
+    if getattr(ClientTransaction.init, "_is_patched", False):
+        pass
+    else:
+        original_init = ClientTransaction.init
 
     async def _safe_init(self, session, headers):
         try:
@@ -225,7 +236,8 @@ def _apply_monkey_patch():
                 self.animation_key = "0"
             print(f"    [PATCH] ClientTransaction.init recovered from: {msg}")
 
-    ClientTransaction.init = _safe_init
+        _safe_init._is_patched = True
+        ClientTransaction.init = _safe_init
 
     print("    [PATCH] In-memory monkey-patch applied (get_indices, get_animation_key, init).")
 
@@ -277,6 +289,9 @@ def _patch_user_class(module_path: str, class_name: str):
         UserClass = getattr(mod, class_name, None)
         if UserClass is None:
             return
+            
+        if getattr(UserClass.__init__, "_is_patched", False):
+            return
 
         _orig_init = UserClass.__init__
 
@@ -292,6 +307,7 @@ def _patch_user_class(module_path: str, class_name: str):
                 pass
             _orig_init(self, *args, **kwargs)
 
+        _safe_user_init._is_patched = True
         UserClass.__init__ = _safe_user_init
         print(f"    [PATCH] {module_path}.{class_name}.__init__ safe-guarded (pre-process).")
     except Exception as e:
