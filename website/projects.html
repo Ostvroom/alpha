@@ -108,6 +108,54 @@
     }
     .gate-help{font-family:"JetBrains Mono",monospace;font-size:10.5px;color:rgba(240,232,192,.42);margin-top:8px}
     .gate-err{font-family:"JetBrains Mono",monospace;font-size:11px;color:rgba(255,150,150,.92);margin-top:10px;display:none}
+
+    /* Escalations modal */
+    .modal{position:fixed;inset:0;z-index:9998;display:none;align-items:center;justify-content:center}
+    .modal.on{display:flex}
+    .modal-back{position:absolute;inset:0;background:rgba(0,0,0,.62)}
+    .modal-card{
+      position:relative;
+      width:min(980px, 94vw);
+      max-height:min(86vh, 860px);
+      background:#0b0b0d;
+      border:1px solid rgba(255,204,0,.26);
+      border-radius:14px;
+      box-shadow:0 28px 120px rgba(0,0,0,.78);
+      overflow:hidden;
+    }
+    .modal-head{
+      padding:12px 14px;
+      border-bottom:1px solid rgba(255,204,0,.14);
+      display:flex;align-items:center;justify-content:space-between;gap:12px
+    }
+    .modal-title{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,204,0,.92)}
+    .modal-sub{font-family:"JetBrains Mono",monospace;font-size:10px;color:rgba(240,232,192,.42)}
+    .modal-close{border:1px solid rgba(255,204,0,.35);background:rgba(255,204,0,.06);color:#ffcc00;width:36px;height:36px;font-size:22px;cursor:pointer;border-radius:8px}
+    .modal-close:hover{background:rgba(255,204,0,.12)}
+    .modal-body{padding:10px 14px;overflow:auto;max-height:calc(min(86vh, 860px) - 58px)}
+    .modal-err{padding:12px 14px;color:rgba(255,150,150,.88);font-family:"JetBrains Mono",monospace;font-size:11px}
+    .modal-wait{padding:14px 14px;color:rgba(240,232,192,.55);font-family:"JetBrains Mono",monospace;font-size:11px;line-height:1.6}
+
+    /* In-panel scrollbars (match Token Alerts style) */
+    .pb, .modal-body{
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,204,0,.40) rgba(0,0,0,.18);
+    }
+    .pb::-webkit-scrollbar, .modal-body::-webkit-scrollbar{width:10px;height:10px}
+    .pb::-webkit-scrollbar-track, .modal-body::-webkit-scrollbar-track{
+      background:rgba(0,0,0,.18);
+      border-radius:999px;
+    }
+    .pb::-webkit-scrollbar-thumb, .modal-body::-webkit-scrollbar-thumb{
+      background:rgba(255,204,0,.22);
+      border:1px solid rgba(255,204,0,.20);
+      border-radius:999px;
+    }
+    .pb::-webkit-scrollbar-thumb:hover, .modal-body::-webkit-scrollbar-thumb:hover{
+      background:rgba(255,204,0,.34);
+      border-color:rgba(255,204,0,.28);
+    }
+    .pb::-webkit-scrollbar-corner, .modal-body::-webkit-scrollbar-corner{background:transparent}
   </style>
 </head>
 <body>
@@ -118,6 +166,7 @@
         <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
           <a class="btn" href="/kol-alerts">Token Alerts</a>
           <a class="btn" href="/daily-finds">Daily Finds</a>
+          <a class="btn" href="/account">Account</a>
         </div>
       </div>
 
@@ -149,23 +198,34 @@
     </div>
   </div>
 
+  <div class="modal" id="escModal" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Escalations">
+    <div class="modal-back" id="escModalBack"></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">⚡ Escalations · last 72h</div>
+          <div class="modal-sub" id="escModalStat">—</div>
+        </div>
+        <button class="modal-close" type="button" id="escModalClose" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body" id="escModalBody"></div>
+    </div>
+  </div>
+
   <div class="gate" id="gate">
     <div class="gate-back" id="gateBack"></div>
     <div class="gate-card" role="dialog" aria-modal="true" aria-label="Access gate">
       <div class="gate-head">
-        <div class="gate-title">Access gate · like + RT + reply</div>
+        <div class="gate-title">Access gate · connect Discord</div>
         <button class="gate-close" type="button" id="gateClose" aria-label="Close">&times;</button>
       </div>
       <div class="gate-steps">
-        1) Open the tweet and <b>Like</b> + <b>RT</b> + <b>Reply</b><br/>
-        2) Paste your <b>reply link</b> and submit to unlock.
+        Connect your Discord to unlock the website.
       </div>
       <div class="gate-row">
-        <a class="btn" id="gateOpenTweet" href="#" target="_blank" rel="noreferrer">Open Tweet</a>
-        <input id="gateReply" class="gate-inp" placeholder="Paste your reply link (x.com/.../status/ID)" />
-        <button class="btn" id="gateSubmit" type="button">Submit</button>
+        <a class="btn" id="gateConnectDiscord" href="#">Connect Discord</a>
       </div>
-      <div class="gate-help">Tip: `https://x.com/yourname/status/123...`</div>
+      <div class="gate-help">We only request basic identity (scope: <b>identify</b>).</div>
       <div class="gate-err" id="gateErr"></div>
     </div>
   </div>
@@ -271,6 +331,83 @@
       el.innerHTML=html;
     }
 
+    function _openEscModal(){
+      var m = document.getElementById("escModal");
+      if (!m) return;
+      m.classList.add("on");
+      m.setAttribute("aria-hidden","false");
+      try { document.body.style.overflow="hidden"; } catch(e) {}
+    }
+    function _closeEscModal(){
+      var m = document.getElementById("escModal");
+      if (!m) return;
+      m.classList.remove("on");
+      m.setAttribute("aria-hidden","true");
+      try { document.body.style.overflow=""; } catch(e) {}
+    }
+
+    function _withinHours(tsIso, hours){
+      try{
+        var t = new Date(tsIso);
+        if (isNaN(t.getTime())) return false;
+        return (Date.now() - t.getTime()) <= (hours*3600*1000);
+      }catch(e){ return false; }
+    }
+
+    function _renderEscModal(events){
+      var body = document.getElementById("escModalBody");
+      var stat = document.getElementById("escModalStat");
+      if (!body) return;
+      var items = (events||[]).filter(function(ev){ return ev && _withinHours(ev.ts, 72); });
+      if (stat) stat.textContent = (items.length||0) + " items · newest first";
+      if (!items.length){
+        body.innerHTML = '<div class="modal-wait">No escalations in the last 72h.</div>';
+        return;
+      }
+      var html="";
+      items.forEach(function(p){
+        var url = p.id ? ("/alert/" + encodeURIComponent(p.id)) : (p.url || "");
+        var extra = p.extra || {};
+        var av = _img(extra.pfp_url);
+        html+='<div class="projRow">';
+        html+='<div class="av">'+(av?('<img src="'+esc(av)+'" loading="lazy" />'):'')+'</div>';
+        html+='<div>';
+        html+='<div class="titleLine"><a class="handle" href="'+esc(url)+'">'+esc(p.title||"Escalation")+'</a></div>';
+        if (p.body) html+='<div class="desc">'+esc(p.body).slice(0,260)+'</div>';
+        html+='<div class="sub">'
+          +badge("TYPE", (extra.interaction||"signal").toString(), "p")
+          +badge("AT", fmtTime(p.ts||""), "k")
+          +'</div>';
+        html+='</div>';
+        html+='</div>';
+      });
+      body.innerHTML = html;
+    }
+
+    async function openEscalations72h(){
+      // If access gate is active, don't open (keeps UX consistent with locked state)
+      if (document.body.classList.contains("locked")) return;
+      _openEscModal();
+      var body = document.getElementById("escModalBody");
+      var stat = document.getElementById("escModalStat");
+      if (body) body.innerHTML = '<div class="modal-wait"><span class="livePill" style="padding:5px 9px;"><i></i>LIVE</span><span class="ps" style="margin-left:8px;">Loading 72h escalations…</span></div>';
+      if (stat) stat.textContent = "Loading…";
+      try{
+        var r = await fetch("/api/feed/events?limit=250&kinds=escalation",{credentials:"include"});
+        if (!r.ok){
+          var t=""; try{ t = await r.text(); }catch(e){}
+          if (body) body.innerHTML = '<div class="modal-err">Failed to load: HTTP '+esc(r.status)+'<br/>'+esc((t||"").slice(0,240))+'</div>';
+          if (stat) stat.textContent = "Error";
+          return;
+        }
+        var d = await r.json();
+        _renderEscModal((d&&d.events)||[]);
+      } catch(e){
+        if (body) body.innerHTML = '<div class="modal-err">Failed to load: '+esc(String(e||""))+'</div>';
+        if (stat) stat.textContent = "Error";
+      }
+    }
+
     async function refresh(){
       try{
         var tr = await fetch("/api/projects/trending?limit=15",{credentials:"include"});
@@ -288,63 +425,29 @@
 
     // Gate flow: prefer live check via /api/debug/access (more reliable than HTML injection).
     (function(){
-      function looksLikeStatus(u){
-        u = String(u||"").trim();
-        return /https?:\/\/(www\.)?(x\.com|twitter\.com)\/[^\/]+\/status\/\d+/.test(u);
-      }
       function lockUi(){
         document.body.classList.add("locked");
         document.getElementById("trending").innerHTML = '<div class="ps">Locked — complete tweet gate to view.</div>';
         document.getElementById("newProjects").innerHTML = '<div class="ps">Locked — complete tweet gate to view.</div>';
         document.getElementById("list").innerHTML = '<div class="ps">Locked — complete tweet gate to view.</div>';
         document.getElementById("stat").textContent = "Locked";
-        var TWEET_URL = (window.NERDS_TWEET_URL || "https://x.com/Degensultan/status/0");
-        var openTweet = document.getElementById("gateOpenTweet");
-        if (openTweet) openTweet.href = TWEET_URL;
-
         var closeBtn = document.getElementById("gateClose");
         var back = document.getElementById("gateBack");
-        var replyInp = document.getElementById("gateReply");
-        var submitBtn = document.getElementById("gateSubmit");
+        var connectBtn = document.getElementById("gateConnectDiscord");
         var err = document.getElementById("gateErr");
 
-        function close(){
-          try { replyInp && replyInp.focus(); } catch(e) {}
-        }
+        function close(){ return; }
         if (closeBtn) closeBtn.addEventListener("click", close);
         if (back) back.addEventListener("click", close);
         document.addEventListener("keydown", function(e){ if (e.key === "Escape") close(); });
-
-        async function submit(){
-          var replyUrl = String(replyInp && replyInp.value || "").trim();
-          if (!looksLikeStatus(TWEET_URL) || !looksLikeStatus(replyUrl)){
-            if (err){ err.style.display="block"; err.textContent="Please paste a valid X reply link (x.com/.../status/ID)."; }
-            return;
-          }
-          if (submitBtn) submitBtn.disabled = true;
-          if (err){ err.style.display="none"; err.textContent=""; }
-          try{
-            var r = await fetch("/api/access/tweet", {
-              method: "POST",
-              credentials: "include",
-              headers: {"Content-Type":"application/json"},
-              body: JSON.stringify({tweet_url: TWEET_URL, reply_url: replyUrl})
-            });
-            if (!r.ok){
-              var t=""; try{ t = await r.text(); }catch(e){}
-              if (err){ err.style.display="block"; err.textContent=("Failed: HTTP "+r.status+" "+(t||"")).slice(0,180); }
-              return;
-            }
-            window.location.reload();
-          } catch(ex){
-            if (err){ err.style.display="block"; err.textContent="Network error. Try again."; }
-          } finally {
-            if (submitBtn) submitBtn.disabled = false;
-          }
+        if (connectBtn){
+          connectBtn.addEventListener("click", function(e){
+            e.preventDefault();
+            if (err){ err.style.display="none"; err.textContent=""; }
+            var next = window.location.pathname + window.location.search + window.location.hash;
+            window.location.href = "/api/access/discord/start?next=" + encodeURIComponent(next);
+          });
         }
-        if (submitBtn) submitBtn.addEventListener("click", submit);
-        if (replyInp) replyInp.addEventListener("keydown", function(e){ if (e.key === "Enter") submit(); });
-        setTimeout(function(){ try{ replyInp && replyInp.focus(); }catch(e){} }, 60);
       }
 
       async function init(){
@@ -360,6 +463,18 @@
             }
           }
         } catch(e){}
+
+        // Escalations "More" modal wiring
+        (function(){
+          var more = document.getElementById("moreNew");
+          var closeBtn = document.getElementById("escModalClose");
+          var back = document.getElementById("escModalBack");
+          if (more) more.addEventListener("click", function(e){ e.preventDefault(); openEscalations72h(); });
+          if (closeBtn) closeBtn.addEventListener("click", function(){ _closeEscModal(); });
+          if (back) back.addEventListener("click", function(){ _closeEscModal(); });
+          document.addEventListener("keydown", function(e){ if (e.key === "Escape") _closeEscModal(); });
+        })();
+
         refresh(); setInterval(refresh,7000);
       }
       init();

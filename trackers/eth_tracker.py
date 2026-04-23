@@ -146,6 +146,23 @@ _alchemy_429_last_warn: float = 0.0  # epoch seconds
 _etherscan_warn_at: Dict[str, float] = {}
 _ETHERSCAN_WARN_COOLDOWN_S = 120.0
 
+# Etherscan v2 hard rate limits can be as low as 3 req/sec depending on key/tier.
+# Use a single global scheduler so ALL Etherscan calls share the same budget.
+try:
+    # Safe default: ~1.8 req/sec total (below 3/sec hard cap).
+    _ETHERSCAN_MIN_INTERVAL_S = float(os.getenv("ETHERSCAN_MIN_INTERVAL", "0.55") or 0.55)
+except Exception:
+    _ETHERSCAN_MIN_INTERVAL_S = 0.55
+_ETHERSCAN_MIN_INTERVAL_S = max(0.20, _ETHERSCAN_MIN_INTERVAL_S)  # keep sane
+try:
+    _ETHERSCAN_MAX_RETRIES = int(os.getenv("ETHERSCAN_MAX_RETRIES", "3") or 3)
+except Exception:
+    _ETHERSCAN_MAX_RETRIES = 3
+_ETHERSCAN_MAX_RETRIES = max(0, min(8, _ETHERSCAN_MAX_RETRIES))
+_etherscan_lock = asyncio.Lock()
+_etherscan_next_at = 0.0  # epoch seconds
+_etherscan_cooldown_until = 0.0  # epoch seconds (when rate-limited, pause all Etherscan calls)
+
 
 def _throttled_etherscan_warn(kind: str, message: str) -> None:
     now = time_module.time()
@@ -154,6 +171,73 @@ def _throttled_etherscan_warn(kind: str, message: str) -> None:
         return
     _etherscan_warn_at[kind] = now
     print(f"\033[91m[ETHERSCAN]\033[0m {message}")
+
+
+async def _etherscan_acquire_slot() -> None:
+    """Global pacing for Etherscan HTTP requests."""
+    global _etherscan_next_at
+    async with _etherscan_lock:
+        now = time_module.time()
+        cd = float(_etherscan_cooldown_until or 0.0)
+        if cd > now:
+            # Don't burn a slot while cooling down; just sleep outside lock.
+            wait_cd = cd - now
+            # schedule next slot after cooldown ends
+            _etherscan_next_at = max(cd, _etherscan_next_at)
+        else:
+            wait_cd = 0.0
+        wait_s = max(0.0, float(_etherscan_next_at) - now)
+        # schedule next slot before sleeping so other waiters queue properly
+        _etherscan_next_at = max(now, _etherscan_next_at) + float(_ETHERSCAN_MIN_INTERVAL_S)
+    if wait_cd > 0:
+        await asyncio.sleep(wait_cd)
+    if wait_s > 0:
+        await asyncio.sleep(wait_s)
+
+
+async def _etherscan_fetch_json(session: aiohttp.ClientSession, url: str, kind: str, wallet: str) -> Tuple[Optional[dict], Optional[str]]:
+    """Fetch Etherscan JSON with backoff on rate limits. Returns (payload, error)."""
+    last_err: Optional[str] = None
+    for attempt in range(max(1, _ETHERSCAN_MAX_RETRIES + 1)):
+        await _etherscan_acquire_slot()
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=14)) as r:
+                if r.status != 200:
+                    # 429/5xx: backoff + retry
+                    if r.status in (429, 500, 502, 503, 504):
+                        backoff = min(8.0, 0.8 * (2 ** (attempt - 1)))
+                        last_err = f"HTTP {r.status}"
+                        await asyncio.sleep(backoff)
+                        continue
+                    return None, f"HTTP {r.status}"
+                try:
+                    payload = await r.json()
+                except Exception as ex:
+                    return None, f"invalid JSON: {ex}"
+        except Exception as ex:
+            last_err = f"request failed: {ex}"
+            backoff = min(8.0, 0.8 * (2 ** (attempt - 1)))
+            await asyncio.sleep(backoff)
+            continue
+
+        # Etherscan error payloads are still HTTP 200 with status != "1"
+        rows, err = _etherscan_account_tx_rows(payload)
+        if err:
+            low = str(err).lower()
+            if "max calls per sec" in low or "rate limit" in low:
+                # Global cooldown so we stop scanning wallets for a bit.
+                global _etherscan_cooldown_until
+                _etherscan_cooldown_until = max(float(_etherscan_cooldown_until or 0.0), time_module.time() + 20.0)
+                backoff = min(8.0, 1.0 * (2 ** (attempt - 1)))
+                if attempt == 1:
+                    _throttled_etherscan_warn(kind, f"{kind} ({wallet[:10]}…): {err}")
+                await asyncio.sleep(backoff)
+                last_err = err
+                continue
+            return payload, err
+        return payload, None
+
+    return None, last_err or "rate limited"
 
 
 def _etherscan_account_tx_rows(payload: Any) -> Tuple[Optional[List[dict]], Optional[str]]:
@@ -588,6 +672,10 @@ async def check_eth_block(client, token_channel_id: int, nft_channel_id: int):
             scan_interval_s = max(10, int(os.getenv("ETH_SCAN_INTERVAL", "30")))
         except Exception:
             scan_interval_s = 30
+        try:
+            wallet_batch_size = max(1, int(os.getenv("ETH_WALLET_BATCH_SIZE", "5")))
+        except Exception:
+            wallet_batch_size = 5
         if not enable_erc20:
             print("[ETH] ERC20 tracking disabled via ENABLE_ETH_ERC20=0")
         if not enable_erc721:
@@ -601,12 +689,25 @@ async def check_eth_block(client, token_channel_id: int, nft_channel_id: int):
         else:
             print(f"\033[92m[ETHERSCAN]\033[0m API key loaded ({len(ETHSCAN_API_KEY)} characters).")
 
+        scan_idx = 0
         while True:
             if not tracked_eth_wallets:
                 await asyncio.sleep(10)
                 continue
 
-            for wallet, label in list(tracked_eth_wallets.items()):
+            wallets = list(tracked_eth_wallets.items())
+            if not wallets:
+                await asyncio.sleep(10)
+                continue
+            # Scan a small batch per interval to reduce API usage.
+            n = len(wallets)
+            start = scan_idx % n
+            end = min(start + wallet_batch_size, n)
+            batch = wallets[start:end]
+            # if we hit the end, wrap next cycle
+            scan_idx = (end % n) if end < n else 0
+
+            for wallet, label in batch:
                 try:
                     _ekey = f"&apikey={ETHSCAN_API_KEY}" if ETHSCAN_API_KEY else ""
                     erc20_url = f"https://api.etherscan.io/v2/api?chainid=1&module=account&action=tokentx&address={wallet}&page=1&offset={etherscan_offset}&sort=desc{_ekey}"
@@ -614,75 +715,52 @@ async def check_eth_block(client, token_channel_id: int, nft_channel_id: int):
                     
                     # Fetch ERC20
                     if enable_erc20 and token_channel_id:
-                        async with session.get(erc20_url) as r:
-                            if r.status != 200:
-                                _throttled_etherscan_warn(
-                                    "http20",
-                                    f"tokentx HTTP {r.status} for {wallet[:10]}… — no ERC20 data.",
-                                )
-                            else:
-                                try:
-                                    d = await r.json()
-                                except Exception as ex:
-                                    _throttled_etherscan_warn("json20", f"tokentx invalid JSON: {ex}")
-                                    d = None
-                                if d is not None:
-                                    rows, err = _etherscan_account_tx_rows(d)
-                                    if err:
-                                        _throttled_etherscan_warn(
-                                            "tokentx",
-                                            f"tokentx ({wallet[:10]}…): {err}",
-                                        )
-                                    elif rows:
-                                        for tx in rows:
-                                            await process_api_tx(
-                                                tx,
-                                                wallet,
-                                                "ERC20",
-                                                client,
-                                                session,
-                                                token_channel_id,
-                                                nft_channel_id,
-                                            )
+                        d, err0 = await _etherscan_fetch_json(session, erc20_url, "tokentx", wallet)
+                        if err0 and not d:
+                            _throttled_etherscan_warn("tokentx", f"tokentx ({wallet[:10]}…): {err0}")
+                        elif d is not None:
+                            rows, err = _etherscan_account_tx_rows(d)
+                            if err:
+                                _throttled_etherscan_warn("tokentx", f"tokentx ({wallet[:10]}…): {err}")
+                            elif rows:
+                                for tx in rows:
+                                    await process_api_tx(
+                                        tx,
+                                        wallet,
+                                        "ERC20",
+                                        client,
+                                        session,
+                                        token_channel_id,
+                                        nft_channel_id,
+                                    )
 
                     # Fetch ERC721 (group by tx+contract for bulk buy/sell quantity)
                     if enable_erc721 and (nft_channel_id or token_channel_id):
-                        async with session.get(erc721_url) as r:
-                            if r.status != 200:
-                                _throttled_etherscan_warn(
-                                    "http721",
-                                    f"tokennfttx HTTP {r.status} for {wallet[:10]}… — no NFT data.",
-                                )
-                            else:
-                                try:
-                                    d = await r.json()
-                                except Exception as ex:
-                                    _throttled_etherscan_warn("json721", f"tokennfttx invalid JSON: {ex}")
-                                    d = None
-                                if d is not None:
-                                    rows, err = _etherscan_account_tx_rows(d)
-                                    if err:
-                                        _throttled_etherscan_warn(
-                                            "tokennfttx",
-                                            f"tokennfttx ({wallet[:10]}…): {err}",
-                                        )
-                                    elif rows:
-                                        for group in _group_erc721_transactions(rows, wallet):
-                                            await process_erc721_group(
-                                                group,
-                                                wallet,
-                                                client,
-                                                session,
-                                                token_channel_id,
-                                                nft_channel_id,
-                                            )
+                        d, err0 = await _etherscan_fetch_json(session, erc721_url, "tokennfttx", wallet)
+                        if err0 and not d:
+                            _throttled_etherscan_warn("tokennfttx", f"tokennfttx ({wallet[:10]}…): {err0}")
+                        elif d is not None:
+                            rows, err = _etherscan_account_tx_rows(d)
+                            if err:
+                                _throttled_etherscan_warn("tokennfttx", f"tokennfttx ({wallet[:10]}…): {err}")
+                            elif rows:
+                                for group in _group_erc721_transactions(rows, wallet):
+                                    await process_erc721_group(
+                                        group,
+                                        wallet,
+                                        client,
+                                        session,
+                                        token_channel_id,
+                                        nft_channel_id,
+                                    )
 
                 except Exception as e:
                     print(f"\033[91m[ETH ERROR]\033[0m API Polling failed for \033[93m{wallet}\033[0m: {e}")
                 
-                await asyncio.sleep(0.4) # Rate limit protection (Etherscan 5 req/s)
+                # Small gap between wallets (real pacing handled by global Etherscan limiter)
+                await asyncio.sleep(0.05)
                 
-            print(f"\033[94m[ETH]\033[0m Scan complete for \033[93m{len(tracked_eth_wallets)}\033[0m wallets. Waiting...")
+            print(f"\033[94m[ETH]\033[0m Scan complete for \033[93m{len(batch)}\033[0m wallets. Waiting...")
             await asyncio.sleep(scan_interval_s)
 
 

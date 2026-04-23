@@ -600,11 +600,22 @@ def update_project_followers_count(twitter_id, followers_count) -> None:
 
 
 def mark_alerted(project_id):
-    """Mark a project as alerted (for Trending filter)."""
+    """
+    Mark a project as alerted.
+
+    IMPORTANT: `alerted_at` should represent the *first time* we alerted on the project.
+    Escalations/momentum updates should not move a project into today's Daily Finds.
+    """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE projects SET alerted_at = CURRENT_TIMESTAMP, alerted_discord = 1 WHERE twitter_id = ?",
+        """
+        UPDATE projects
+        SET
+            alerted_at = COALESCE(alerted_at, CURRENT_TIMESTAMP),
+            alerted_discord = 1
+        WHERE twitter_id = ?
+        """,
         (project_id,),
     )
     conn.commit()
@@ -656,6 +667,39 @@ def get_trending_projects(hours=24, limit=30):
         ORDER BY p.last_posted_smarts DESC
         LIMIT ?
     """, (-hours, limit))
+    res = cursor.fetchall()
+    conn.close()
+    return res
+
+
+def get_trending_projects_30d(limit: int = 30):
+    """
+    Trending projects by DISTINCT HVA count in the last 30 days.
+    Returns rows: (twitter_id, handle, name, description, created_at, hva_30d)
+    """
+    limit = max(1, min(200, int(limit or 30)))
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        WITH Smarts30d AS (
+            SELECT f.project_id, COUNT(DISTINCT f.hva_id) AS count
+            FROM follows f
+            WHERE f.followed_at >= datetime('now', '-30 days')
+            GROUP BY f.project_id
+        )
+        SELECT
+            p.twitter_id, p.handle, p.name, p.description, p.created_at,
+            COALESCE(s30.count, 0) AS hva_30d
+        FROM projects p
+        LEFT JOIN Smarts30d s30 ON p.twitter_id = s30.project_id
+        WHERE p.alerted_at IS NOT NULL
+          AND COALESCE(p.alerted_discord, 0) = 1
+        ORDER BY COALESCE(s30.count, 0) DESC, datetime(p.alerted_at) DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
     res = cursor.fetchall()
     conn.close()
     return res

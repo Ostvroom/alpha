@@ -26,12 +26,13 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
+import requests
 import aiohttp
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -68,6 +69,283 @@ _ACCESS_SECRET = (os.getenv("WEBSITE_ACCESS_SECRET") or DISCORD_TOKEN or "dev-se
 # Set DEV_PREVIEW=1 in .env or environment to bypass the early-access gate (for local testing only)
 _DEV_PREVIEW = os.getenv("DEV_PREVIEW", "0").strip() == "1"
 
+# Discord OAuth (website gate)
+DISCORD_OAUTH_CLIENT_ID = (os.getenv("DISCORD_OAUTH_CLIENT_ID") or "").strip()
+DISCORD_OAUTH_CLIENT_SECRET = (os.getenv("DISCORD_OAUTH_CLIENT_SECRET") or "").strip()
+DISCORD_OAUTH_REDIRECT_URI = (os.getenv("DISCORD_OAUTH_REDIRECT_URI") or "").strip()
+_DISCORD_STATE_COOKIE = "na_discord_state"
+
+# ---------------------------------------------------------------------------
+# Account DB (Discord profile + points + task claims)
+# ---------------------------------------------------------------------------
+_ACCOUNT_DB = str(DATA_DIR / "account.db")
+
+# Supabase (PostgREST) — optional. If configured, accounts/points/claims use Supabase instead of SQLite.
+_SUPABASE_URL = (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
+_SUPABASE_SERVICE_ROLE_KEY = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
+
+
+def _sb_enabled() -> bool:
+    return bool(_SUPABASE_URL and _SUPABASE_SERVICE_ROLE_KEY)
+
+
+def _sb_headers(*, prefer: str = "") -> dict[str, str]:
+    h = {
+        "apikey": _SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {_SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+    }
+    if prefer:
+        h["Prefer"] = prefer
+    return h
+
+
+def _sb_url(path: str) -> str:
+    p = str(path or "").strip()
+    if not p.startswith("/"):
+        p = "/" + p
+    return _SUPABASE_URL + "/rest/v1" + p
+
+
+def _acct_init() -> None:
+    if _sb_enabled():
+        return
+    conn = sqlite3.connect(_ACCOUNT_DB)
+    c = conn.cursor()
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            global_name TEXT,
+            avatar_url TEXT,
+            points INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+        """
+    )
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_claims (
+            user_id INTEGER NOT NULL,
+            task_id TEXT NOT NULL,
+            day TEXT NOT NULL,
+            points INTEGER DEFAULT 0,
+            ts TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, task_id, day)
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def _discord_avatar_url(user_id: int, avatar_hash: str | None) -> str:
+    # Discord CDN avatar; if missing, use embed avatar (default)
+    if avatar_hash:
+        return f"https://cdn.discordapp.com/avatars/{int(user_id)}/{avatar_hash}.png?size=128"
+    # fallback (stable default icon)
+    return f"https://cdn.discordapp.com/embed/avatars/{int(user_id) % 5}.png"
+
+
+def _acct_upsert_user(*, user_id: int, username: str, global_name: str, avatar_url: str) -> None:
+    if _sb_enabled():
+        payload = {
+            "user_id": int(user_id),
+            "username": (username or "")[:80],
+            "global_name": (global_name or "")[:80],
+            "avatar_url": (avatar_url or "")[:300],
+        }
+        # Prefer merge-duplicates when PostgREST is configured for upserts; fall back to PATCH/POST.
+        r = requests.post(
+            _sb_url("/users"),
+            headers=_sb_headers(prefer="resolution=merge-duplicates"),
+            data=json.dumps(payload),
+            timeout=12,
+        )
+        if r.status_code in (200, 201, 204):
+            return
+        if r.status_code in (400, 409):
+            r2 = requests.patch(
+                _sb_url(f"/users?user_id=eq.{int(user_id)}"),
+                headers=_sb_headers(),
+                data=json.dumps(
+                    {
+                        "username": payload["username"],
+                        "global_name": payload["global_name"],
+                        "avatar_url": payload["avatar_url"],
+                    }
+                ),
+                timeout=12,
+            )
+            if r2.status_code in (200, 204):
+                return
+            if r2.status_code == 404:
+                r3 = requests.post(_sb_url("/users"), headers=_sb_headers(), data=json.dumps(payload), timeout=12)
+                if r3.status_code in (200, 201, 204):
+                    return
+                raise RuntimeError(f"Supabase insert user failed: HTTP {r3.status_code}: {r3.text[:240]}")
+            raise RuntimeError(f"Supabase patch user failed: HTTP {r2.status_code}: {r2.text[:240]}")
+        raise RuntimeError(f"Supabase upsert user failed: HTTP {r.status_code}: {r.text[:240]}")
+    _acct_init()
+    conn = sqlite3.connect(_ACCOUNT_DB)
+    c = conn.cursor()
+    c.execute(
+        """
+        INSERT INTO users (user_id, username, global_name, avatar_url, points)
+        VALUES (?, ?, ?, ?, 0)
+        ON CONFLICT(user_id) DO UPDATE SET
+            username = excluded.username,
+            global_name = excluded.global_name,
+            avatar_url = excluded.avatar_url,
+            updated_at = datetime('now')
+        """,
+        (int(user_id), (username or "")[:80], (global_name or "")[:80], (avatar_url or "")[:300]),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _acct_get_user(user_id: int) -> Optional[dict]:
+    if _sb_enabled():
+        r = requests.get(
+            _sb_url(f"/users?user_id=eq.{int(user_id)}&select=user_id,username,global_name,avatar_url,points"),
+            headers=_sb_headers(),
+            timeout=12,
+        )
+        if r.status_code != 200:
+            return None
+        rows = r.json()
+        if not isinstance(rows, list) or not rows:
+            return None
+        row = rows[0] if isinstance(rows[0], dict) else {}
+        try:
+            return {
+                "user_id": int(row.get("user_id") or 0),
+                "username": str(row.get("username") or ""),
+                "global_name": str(row.get("global_name") or ""),
+                "avatar_url": str(row.get("avatar_url") or ""),
+                "points": int(row.get("points") or 0),
+            }
+        except Exception:
+            return None
+    _acct_init()
+    conn = sqlite3.connect(_ACCOUNT_DB)
+    c = conn.cursor()
+    c.execute("SELECT user_id, username, global_name, avatar_url, points FROM users WHERE user_id = ?", (int(user_id),))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {"user_id": int(row[0]), "username": row[1] or "", "global_name": row[2] or "", "avatar_url": row[3] or "", "points": int(row[4] or 0)}
+
+
+def _acct_add_points(user_id: int, points: int) -> None:
+    if not points:
+        return
+    if _sb_enabled():
+        u = _acct_get_user(int(user_id))
+        if not u:
+            # Ensure row exists, then apply points delta.
+            _acct_upsert_user(user_id=int(user_id), username="", global_name="", avatar_url="")
+            u = _acct_get_user(int(user_id)) or {"points": 0}
+        new_pts = int(u.get("points") or 0) + int(points)
+        r = requests.patch(
+            _sb_url(f"/users?user_id=eq.{int(user_id)}"),
+            headers=_sb_headers(),
+            data=json.dumps({"points": int(new_pts)}),
+            timeout=12,
+        )
+        if r.status_code not in (200, 204):
+            raise RuntimeError(f"Supabase add points failed: HTTP {r.status_code}: {r.text[:240]}")
+        return
+    _acct_init()
+    conn = sqlite3.connect(_ACCOUNT_DB)
+    c = conn.cursor()
+    c.execute(
+        "UPDATE users SET points = COALESCE(points,0) + ?, updated_at = datetime('now') WHERE user_id = ?",
+        (int(points), int(user_id)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _today_utc() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+_TASKS = [
+    {"id": "connect_discord", "title": "Connect Discord", "points": 50, "type": "once"},
+    {"id": "daily_checkin", "title": "Daily check-in", "points": 10, "type": "daily"},
+    {"id": "visit_token_alerts", "title": "Visit Token Alerts", "points": 5, "type": "daily"},
+]
+
+# X reply points (format-only validation; no API verification)
+X_REPLY_POINTS = int(os.getenv("X_REPLY_POINTS", "20") or 20)
+X_TWEET_AUTHOR_ALLOW = (os.getenv("X_TWEET_AUTHOR_ALLOW", "") or "").strip().lower()  # optional: enforce author handle
+
+
+def _looks_like_x_status(url: str) -> bool:
+    s = (url or "").strip()
+    if not s:
+        return False
+    return bool(re.search(r"https?://(www\.)?(x\.com|twitter\.com)/[^/]+/status/\d+", s))
+
+
+def _extract_x_handle_and_status_id(url: str) -> tuple[Optional[str], Optional[str]]:
+    try:
+        m = re.search(r"https?://(www\.)?(x\.com|twitter\.com)/([^/]+)/status/(\d+)", (url or "").strip())
+        if not m:
+            return None, None
+        handle = (m.group(3) or "").strip().lstrip("@")
+        sid = (m.group(4) or "").strip()
+        return (handle.lower() if handle else None), (sid if sid else None)
+    except Exception:
+        return None, None
+
+
+def _acct_claim_task(user_id: int, task_id: str) -> tuple[bool, str, int]:
+    tid = str(task_id or "").strip()
+    if not tid:
+        return False, "Missing task_id", 0
+    task = next((t for t in _TASKS if t.get("id") == tid), None)
+    if not task:
+        return False, "Unknown task", 0
+    day = _today_utc()
+    ttype = str(task.get("type") or "once")
+    scope_day = day if ttype == "daily" else "once"
+    pts = int(task.get("points") or 0)
+    if pts <= 0:
+        return False, "Task has no points", 0
+    if _sb_enabled():
+        payload = {"user_id": int(user_id), "task_id": tid, "day": scope_day, "points": int(pts)}
+        r = requests.post(_sb_url("/task_claims"), headers=_sb_headers(), data=json.dumps(payload), timeout=12)
+        if r.status_code in (200, 201, 204):
+            _acct_add_points(int(user_id), int(pts))
+            return True, "Claimed", int(pts)
+        txt = (r.text or "").lower()
+        if r.status_code == 409 or "duplicate" in txt or "unique" in txt:
+            return False, "Already claimed", 0
+        return False, f"Claim failed: HTTP {r.status_code}", 0
+    _acct_init()
+    conn = sqlite3.connect(_ACCOUNT_DB)
+    c = conn.cursor()
+    try:
+        c.execute(
+            "INSERT INTO task_claims (user_id, task_id, day, points) VALUES (?, ?, ?, ?)",
+            (int(user_id), tid, scope_day, int(pts)),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.close()
+        return False, "Already claimed", 0
+    conn.close()
+    _acct_add_points(int(user_id), int(pts))
+    return True, "Claimed", int(pts)
+
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
@@ -86,6 +364,149 @@ if WEBSITE_DIR.exists():
 
 # Serve image assets — check website/ first, fall back to project root
 _ROOT_DIR = Path(__file__).parent
+
+# ---------------------------------------------------------------------------
+# Simple in-memory caching (website endpoints can be expensive)
+# ---------------------------------------------------------------------------
+_CACHE: dict[str, tuple[float, object]] = {}
+_CACHE_LOCK = asyncio.Lock()
+_THUMB_CACHE: dict[str, tuple[float, str]] = {}
+_FIRST_CALLS_PATH = str(DATA_DIR / "kolfi_first_calls.json")
+_FIRST_CALLS: dict[str, dict] = {}
+_FIRST_CALLS_LOADED = False
+
+
+def _load_first_calls() -> dict[str, dict]:
+    global _FIRST_CALLS_LOADED, _FIRST_CALLS
+    if _FIRST_CALLS_LOADED:
+        return _FIRST_CALLS
+    _FIRST_CALLS_LOADED = True
+    try:
+        p = Path(_FIRST_CALLS_PATH)
+        if p.exists():
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and isinstance(raw.get("by_mint"), dict):
+                _FIRST_CALLS = dict(raw["by_mint"])
+    except Exception:
+        _FIRST_CALLS = {}
+    return _FIRST_CALLS
+
+
+def _save_first_calls(by_mint: dict[str, dict], max_mints: int = 6000) -> None:
+    try:
+        # trim if huge (drop entries missing ts first; else keep most recent)
+        if len(by_mint) > max_mints:
+            items = sorted(by_mint.items(), key=lambda kv: str((kv[1] or {}).get("messageTs") or ""))
+            for k, _ in items[: max(0, len(by_mint) - max_mints)]:
+                by_mint.pop(k, None)
+        payload = {"version": 1, "by_mint": by_mint, "updated_at": int(time.time())}
+        Path(_FIRST_CALLS_PATH).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        return
+
+
+def _first_call_pick(a: Optional[dict], b: Optional[dict]) -> Optional[dict]:
+    """Pick earlier of two call dicts by messageTs."""
+    if not isinstance(a, dict):
+        return b if isinstance(b, dict) else None
+    if not isinstance(b, dict):
+        return a
+    try:
+        ta = str(a.get("messageTs") or "")
+        tb = str(b.get("messageTs") or "")
+        if ta and tb:
+            return a if ta <= tb else b
+    except Exception:
+        pass
+    return a
+
+
+def _persist_first_call_for_mint(mint: str, call: Optional[dict]) -> Optional[dict]:
+    """
+    Persist the earliest call we've ever seen for this mint.
+    NOTE: this is earliest in OUR history (not necessarily global if upstream omits old calls).
+    """
+    mint = (mint or "").strip()
+    if not mint or not isinstance(call, dict):
+        return call if isinstance(call, dict) else None
+    by_mint = _load_first_calls()
+    prev = by_mint.get(mint)
+    prev_call = prev.get("call") if isinstance(prev, dict) else None
+    chosen = _first_call_pick(prev_call if isinstance(prev_call, dict) else None, call)
+    if chosen is None:
+        return None
+    # store minimal stable fields only
+    by_mint[mint] = {
+        "call": {
+            "messageTs": chosen.get("messageTs"),
+            "callMarketCap": chosen.get("callMarketCap"),
+            "kolXId": chosen.get("kolXId") or chosen.get("kol_x_id"),
+            "kolUsername": chosen.get("kolUsername") or chosen.get("channelName") or chosen.get("kol_name"),
+        }
+    }
+    _FIRST_CALLS = by_mint
+    _save_first_calls(by_mint)
+    return by_mint[mint]["call"]
+
+
+def _get_persisted_first_call(mint: str) -> Optional[dict]:
+    mint = (mint or "").strip()
+    if not mint:
+        return None
+    by_mint = _load_first_calls()
+    ent = by_mint.get(mint)
+    if isinstance(ent, dict) and isinstance(ent.get("call"), dict):
+        return ent["call"]
+    return None
+
+
+async def _cache_get_or_set(key: str, ttl_sec: float, builder):
+    now = time.time()
+    hit = _CACHE.get(key)
+    if hit:
+        ts, val = hit
+        if now - ts <= float(ttl_sec):
+            return val
+    async with _CACHE_LOCK:
+        hit = _CACHE.get(key)
+        if hit:
+            ts, val = hit
+            if now - ts <= float(ttl_sec):
+                return val
+        val = await builder()
+        _CACHE[key] = (now, val)
+        return val
+
+
+async def _thumb_url_cached(session: aiohttp.ClientSession, item: dict, mint: str, ttl_sec: float = 3600.0) -> str:
+    if not mint:
+        return ""
+    now = time.time()
+    hit = _THUMB_CACHE.get(mint)
+    if hit:
+        ts, url = hit
+        if now - ts <= float(ttl_sec):
+            return url or ""
+    # Deterministic fallback (no extra HTTP): Dexscreener CDN icon for Solana mints.
+    # Even if it 404s for some tokens, the browser will handle it and we avoid blocking the server.
+    dex_cdn = f"https://dd.dexscreener.com/ds-data/tokens/solana/{mint}.png"
+    # Prefer URL already in payload (free)
+    for k in ("logo", "iconUrl", "image", "tokenImage", "icon_url", "imageUrl", "thumb_url"):
+        v = (item or {}).get(k)
+        if v and isinstance(v, str) and v.startswith("http"):
+            _THUMB_CACHE[mint] = (now, v)
+            return v
+    try:
+        url = await kolfi.resolve_token_thumbnail(session, item or {}, mint)
+    except Exception:
+        url = None
+    u = str(url or "").strip()
+    # Avoid caching empty forever; use a short TTL for failures.
+    if not u:
+        _THUMB_CACHE[mint] = (now - (float(ttl_sec) - 45.0), dex_cdn)  # expires in ~45s
+        return dex_cdn
+    _THUMB_CACHE[mint] = (now, u)
+    return u
 
 
 def _serve_image(filename: str, media_type: str):
@@ -161,6 +582,336 @@ def _verify_access_token(token: str) -> Optional[dict]:
 def _has_access(req: Request) -> bool:
     tok = req.cookies.get(ACCESS_COOKIE, "")
     return _verify_access_token(tok) is not None
+
+
+def _rand_state(n: int = 20) -> str:
+    try:
+        import secrets
+
+        return secrets.token_urlsafe(max(8, int(n)))
+    except Exception:
+        return _b64url(os.urandom(18))
+
+
+def _discord_redirect_uri(request: Request) -> str:
+    # Prefer explicit config; else derive from request.
+    if DISCORD_OAUTH_REDIRECT_URI:
+        return DISCORD_OAUTH_REDIRECT_URI
+    # Best-effort based on current host.
+    try:
+        base = str(request.base_url).rstrip("/")
+    except Exception:
+        base = "http://127.0.0.1:8000"
+    return base + "/api/access/discord/callback"
+
+
+def _is_https(request: Request) -> bool:
+    """Detect HTTPS behind reverse proxies (Render sets X-Forwarded-Proto)."""
+    try:
+        xf = (request.headers.get("x-forwarded-proto", "") or "").split(",")[0].strip().lower()
+        if xf:
+            return xf == "https"
+    except Exception:
+        pass
+    try:
+        return str(getattr(request.url, "scheme", "") or "").lower() == "https"
+    except Exception:
+        return False
+
+
+def _discord_oauth_enabled() -> bool:
+    return bool(DISCORD_OAUTH_CLIENT_ID and DISCORD_OAUTH_CLIENT_SECRET)
+
+
+@app.get("/api/access/discord/start")
+async def api_access_discord_start(request: Request, next: str = "/projects"):
+    """
+    Start Discord OAuth flow for website access gate.
+    Sets a short-lived state cookie and redirects to Discord authorize URL.
+    """
+    if not _discord_oauth_enabled():
+        raise HTTPException(400, "Discord OAuth not configured (set DISCORD_OAUTH_CLIENT_ID/SECRET).")
+    # sanitize next (same-origin paths only)
+    nxt = (next or "/projects").strip()
+    if not nxt.startswith("/"):
+        nxt = "/projects"
+    if nxt.startswith("//"):
+        nxt = "/projects"
+
+    state = _rand_state()
+    redir = _discord_redirect_uri(request)
+    params = {
+        "client_id": DISCORD_OAUTH_CLIENT_ID,
+        "redirect_uri": redir,
+        "response_type": "code",
+        "scope": "identify",
+        "state": state,
+    }
+    from urllib.parse import urlencode
+
+    url = "https://discord.com/oauth2/authorize?" + urlencode(params)
+    res = RedirectResponse(url=url, status_code=302)
+    # Store state + next in a cookie (httpOnly) so callback can validate and redirect.
+    body = json.dumps({"s": state, "n": nxt}, separators=(",", ":")).encode("utf-8")
+    res.set_cookie(
+        key=_DISCORD_STATE_COOKIE,
+        value=_b64url(body) + "." + _sign(body),
+        httponly=True,
+        secure=_is_https(request),
+        samesite="lax",
+        max_age=10 * 60,
+        path="/",
+    )
+    return res
+
+
+def _verify_state_cookie(req: Request) -> Optional[dict]:
+    tok = req.cookies.get(_DISCORD_STATE_COOKIE, "")
+    try:
+        parts = (tok or "").split(".")
+        if len(parts) != 2:
+            return None
+        body_b64, sig = parts
+        body = _b64url_decode(body_b64)
+        if not hmac.compare_digest(sig, _sign(body)):
+            return None
+        payload = json.loads(body.decode("utf-8"))
+        return payload if isinstance(payload, dict) else None
+    except Exception:
+        return None
+
+
+@app.get("/api/access/discord/callback")
+async def api_access_discord_callback(request: Request, code: str = "", state: str = ""):
+    """
+    Discord OAuth callback: exchange code for token, fetch /users/@me, then set access cookie.
+    """
+    if not _discord_oauth_enabled():
+        raise HTTPException(400, "Discord OAuth not configured.")
+    st = _verify_state_cookie(request) or {}
+    expected = str(st.get("s") or "")
+    nxt = str(st.get("n") or "/projects")
+    if not nxt.startswith("/"):
+        nxt = "/projects"
+    if not code or not state or not expected or state != expected:
+        # Clear state cookie and send to projects with an error flag.
+        res = RedirectResponse(url="/projects?gate=discord_error", status_code=302)
+        res.delete_cookie(_DISCORD_STATE_COOKIE, path="/")
+        return res
+
+    redir = _discord_redirect_uri(request)
+    token_url = "https://discord.com/api/oauth2/token"
+    data = {
+        "client_id": DISCORD_OAUTH_CLIENT_ID,
+        "client_secret": DISCORD_OAUTH_CLIENT_SECRET,
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": redir,
+    }
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    access_token = ""
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.post(token_url, data=data, headers=headers, timeout=aiohttp.ClientTimeout(total=12)) as r:
+                js = await r.json()
+                access_token = str(js.get("access_token") or "")
+        except Exception:
+            access_token = ""
+        if not access_token:
+            res = RedirectResponse(url="/projects?gate=discord_error", status_code=302)
+            res.delete_cookie(_DISCORD_STATE_COOKIE, path="/")
+            return res
+        user_id = None
+        user_profile = None
+        try:
+            async with session.get(
+                "https://discord.com/api/v10/users/@me",
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                js = await r.json()
+                uid = js.get("id")
+                if uid:
+                    user_id = int(uid)
+                    user_profile = js
+        except Exception:
+            user_id = None
+
+    if not user_id:
+        res = RedirectResponse(url="/projects?gate=discord_error", status_code=302)
+        res.delete_cookie(_DISCORD_STATE_COOKIE, path="/")
+        return res
+
+    # Save Discord profile (best-effort)
+    try:
+        prof = user_profile if isinstance(user_profile, dict) else {}
+        uname = str(prof.get("username") or "")
+        gname = str(prof.get("global_name") or prof.get("globalName") or "")
+        avh = prof.get("avatar")
+        av_url = _discord_avatar_url(user_id, str(avh) if avh else None)
+        _acct_upsert_user(user_id=user_id, username=uname, global_name=gname, avatar_url=av_url)
+        # Auto-claim connect task once
+        _acct_claim_task(user_id, "connect_discord")
+    except Exception:
+        pass
+
+    tok = _make_access_token(user_id=user_id)
+    res = RedirectResponse(url=nxt, status_code=302)
+    res.set_cookie(
+        key=ACCESS_COOKIE,
+        value=tok,
+        httponly=True,
+        secure=_is_https(request),
+        samesite="lax",
+        max_age=int(ACCESS_TOKEN_TTL_SECONDS),
+        path="/",
+    )
+    res.delete_cookie(_DISCORD_STATE_COOKIE, path="/")
+    return res
+
+
+@app.get("/account", response_class=HTMLResponse)
+async def page_account(request: Request):
+    return _serve_page(request, "account.html")
+
+
+@app.get("/api/me")
+async def api_me(request: Request):
+    if not _DEV_PREVIEW and not _has_access(request):
+        raise HTTPException(401, "Unauthorized")
+    tok = request.cookies.get(ACCESS_COOKIE, "")
+    payload = _verify_access_token(tok) or {}
+    uid = int(payload.get("uid") or 0)
+    if uid <= 0:
+        raise HTTPException(401, "Unauthorized")
+    u = _acct_get_user(uid) or {"user_id": uid, "username": "", "global_name": "", "avatar_url": "", "points": 0}
+    return u
+
+
+@app.get("/api/tasks")
+async def api_tasks(request: Request):
+    if not _DEV_PREVIEW and not _has_access(request):
+        raise HTTPException(401, "Unauthorized")
+    tok = request.cookies.get(ACCESS_COOKIE, "")
+    payload = _verify_access_token(tok) or {}
+    uid = int(payload.get("uid") or 0)
+    if uid <= 0:
+        raise HTTPException(401, "Unauthorized")
+    # compute claimed
+    day = _today_utc()
+    rows = []
+    if _sb_enabled():
+        r = requests.get(
+            _sb_url(f"/task_claims?user_id=eq.{int(uid)}&select=task_id,day"),
+            headers=_sb_headers(),
+            timeout=12,
+        )
+        if r.status_code != 200:
+            raise HTTPException(502, f"Supabase task_claims read failed: HTTP {r.status_code}")
+        js = r.json()
+        rows = js if isinstance(js, list) else []
+        claimed_once = {str((row or {}).get("task_id") or "") for row in rows if isinstance(row, dict) and str((row or {}).get("day") or "") == "once"}
+        claimed_today = {str((row or {}).get("task_id") or "") for row in rows if isinstance(row, dict) and str((row or {}).get("day") or "") == day}
+    else:
+        _acct_init()
+        conn = sqlite3.connect(_ACCOUNT_DB)
+        c = conn.cursor()
+        c.execute("SELECT task_id, day FROM task_claims WHERE user_id = ?", (uid,))
+        rows = c.fetchall() or []
+        conn.close()
+        claimed_once = {r[0] for r in rows if r and str(r[1]) == "once"}
+        claimed_today = {r[0] for r in rows if r and str(r[1]) == day}
+    out = []
+    for t in _TASKS:
+        tid = str(t.get("id") or "")
+        ttype = str(t.get("type") or "once")
+        claimed = (tid in claimed_today) if ttype == "daily" else (tid in claimed_once)
+        out.append({**t, "claimed": bool(claimed)})
+    return {"tasks": out, "day": day}
+
+
+class TaskClaimRequest(BaseModel):
+    task_id: str
+
+
+@app.post("/api/tasks/claim")
+async def api_tasks_claim(request: Request, body: TaskClaimRequest):
+    if not _DEV_PREVIEW and not _has_access(request):
+        raise HTTPException(401, "Unauthorized")
+    tok = request.cookies.get(ACCESS_COOKIE, "")
+    payload = _verify_access_token(tok) or {}
+    uid = int(payload.get("uid") or 0)
+    if uid <= 0:
+        raise HTTPException(401, "Unauthorized")
+    ok, msg, pts = _acct_claim_task(uid, str(body.task_id or ""))
+    if not ok:
+        raise HTTPException(400, msg)
+    u = _acct_get_user(uid) or {"points": 0}
+    return {"success": True, "message": msg, "points_awarded": pts, "total_points": int(u.get("points") or 0)}
+
+
+class XReplyClaimRequest(BaseModel):
+    tweet_url: str
+    reply_url: str
+
+
+@app.post("/api/x/claim")
+async def api_x_claim(request: Request, body: XReplyClaimRequest):
+    """
+    Earn points by replying to one of our tweets on X.
+    Validation is format-only; awards once per (user, tweet_id).
+    """
+    if not _DEV_PREVIEW and not _has_access(request):
+        raise HTTPException(401, "Unauthorized")
+    tok = request.cookies.get(ACCESS_COOKIE, "")
+    payload = _verify_access_token(tok) or {}
+    uid = int(payload.get("uid") or 0)
+    if uid <= 0:
+        raise HTTPException(401, "Unauthorized")
+
+    tweet_url = (body.tweet_url or "").strip()
+    reply_url = (body.reply_url or "").strip()
+    if not _looks_like_x_status(tweet_url):
+        raise HTTPException(400, "Invalid tweet_url (expected x.com/.../status/ID)")
+    if not _looks_like_x_status(reply_url):
+        raise HTTPException(400, "Invalid reply_url (expected x.com/.../status/ID)")
+
+    th, tid = _extract_x_handle_and_status_id(tweet_url)
+    rh, rid = _extract_x_handle_and_status_id(reply_url)
+    if not tid or not rid:
+        raise HTTPException(400, "Could not parse tweet/reply status IDs")
+    if X_TWEET_AUTHOR_ALLOW and th and th != X_TWEET_AUTHOR_ALLOW:
+        raise HTTPException(400, "tweet_url is not from the allowed author")
+
+    # Claim once per tweet ID
+    if _sb_enabled():
+        payload = {"user_id": int(uid), "task_id": f"x_reply:{tid}", "day": "once", "points": int(X_REPLY_POINTS)}
+        r = requests.post(_sb_url("/task_claims"), headers=_sb_headers(), data=json.dumps(payload), timeout=12)
+        if r.status_code not in (200, 201, 204):
+            txt = (r.text or "").lower()
+            if r.status_code == 409 or "duplicate" in txt or "unique" in txt:
+                raise HTTPException(400, "Already claimed for this tweet")
+            raise HTTPException(502, f"Supabase claim insert failed: HTTP {r.status_code}: {r.text[:240]}")
+        _acct_add_points(int(uid), int(X_REPLY_POINTS))
+        u = _acct_get_user(uid) or {"points": 0}
+        return {"success": True, "points_awarded": int(X_REPLY_POINTS), "total_points": int(u.get("points") or 0)}
+
+    _acct_init()
+    conn = sqlite3.connect(_ACCOUNT_DB)
+    c = conn.cursor()
+    try:
+        c.execute(
+            "INSERT INTO task_claims (user_id, task_id, day, points) VALUES (?, ?, ?, ?)",
+            (int(uid), f"x_reply:{tid}", "once", int(X_REPLY_POINTS)),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.close()
+        raise HTTPException(400, "Already claimed for this tweet")
+    conn.close()
+    _acct_add_points(int(uid), int(X_REPLY_POINTS))
+    u = _acct_get_user(uid) or {"points": 0}
+    return {"success": True, "points_awarded": int(X_REPLY_POINTS), "total_points": int(u.get("points") or 0)}
 
 
 def _min_amount(tier: str, chain: str) -> float:
@@ -390,6 +1141,50 @@ def _age_days_from_created_at(created_at: Optional[str]) -> Optional[int]:
         return None
 
 
+def _parse_event_ts(ts: Optional[str]):
+    if not ts:
+        return None
+    try:
+        from datetime import datetime, timezone
+
+        s = str(ts).replace("Z", "+00:00").strip()
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _recent_escalation_handles(*, hours: float = 24.0, limit: int = 400) -> set[str]:
+    """
+    Collect handles that appeared in recent escalation events.
+    Used to avoid duplicating escalation projects in the Finds list.
+    """
+    hs: set[str] = set()
+    try:
+        evs = feed_events.list_events(limit=max(50, min(900, int(limit or 400))), kinds=["escalation"])
+        from datetime import datetime, timezone, timedelta
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=float(hours or 24.0))
+        for ev in evs or []:
+            ts = _parse_event_ts((ev or {}).get("ts"))
+            if ts and ts < cutoff:
+                continue
+            extra = (ev or {}).get("extra") or {}
+            h = (extra.get("handle") or "").strip().lstrip("@").lower()
+            if not h:
+                title = str((ev or {}).get("title") or "")
+                m = re.search(r"@([A-Za-z0-9_]{1,20})", title)
+                if m:
+                    h = (m.group(1) or "").strip().lower()
+            if h:
+                hs.add(h)
+    except Exception:
+        return set()
+    return hs
+
+
 def _latest_profile_map(*, limit: int = 400) -> dict[str, dict]:
     """
     Best-effort lookup for avatar/banner urls by handle from recent feed events.
@@ -421,7 +1216,8 @@ async def api_projects_trending(request: Request, limit: int = 5):
     if not _DEV_PREVIEW and not _has_access(request):
         raise HTTPException(401, "Unauthorized")
     limit = max(1, min(20, int(limit or 5)))
-    rows = database.get_trending_projects(hours=24, limit=limit)
+    # Trending: distinct HVAs over the last 30 days (computed from follows table).
+    rows = database.get_trending_projects_30d(limit=limit)
     if not rows:
         # Fallback: some DBs don't populate first_seen_at reliably, which makes
         # database.get_trending_projects() return empty. Use alerted+smarts directly.
@@ -449,9 +1245,7 @@ async def api_projects_trending(request: Request, limit: int = 5):
     out = []
     max_age_days = int(getattr(config, "SNIPER_MAX_AGE_DAYS", 90) or 90)
     for row in rows:
-        # database.get_trending_projects is defined twice in database.py; one version returns 6 cols,
-        # another returns 10 cols. Normalize to the first 6:
-        # (twitter_id, handle, name, desc, created_at, smarts)
+        # Normalize to: (twitter_id, handle, name, desc, created_at, smarts_30d)
         if isinstance(row, (list, tuple)):
             r = list(row) + [None] * 10
             twitter_id, handle, name, desc, created_at, smarts = r[0], r[1], r[2], r[3], r[4], r[5]
@@ -487,50 +1281,7 @@ async def api_projects_trending(request: Request, limit: int = 5):
                 "banner_url": p.get("banner_url") or "",
             }
         )
-    # If filtering removed many rows, try to top up by grabbing more from DB.
-    if len(out) < limit and limit < 10:
-        # This endpoint already caps limit<=10, so we can safely retry once with a larger pull.
-        try:
-            more_rows = database.get_trending_projects(hours=24, limit=10)
-            for row in more_rows:
-                if len(out) >= limit:
-                    break
-                if isinstance(row, (list, tuple)):
-                    r = list(row) + [None] * 10
-                    twitter_id, handle, name, desc, created_at, smarts = r[0], r[1], r[2], r[3], r[4], r[5]
-                else:
-                    continue
-                hkey = str(handle or "").strip().lstrip("@").lower()
-                if any((it.get("handle") or "").strip().lower() == str(handle or "").strip().lower() for it in out):
-                    continue
-                p = prof.get(hkey) or {}
-                age_days = _age_days_from_created_at(created_at)
-                if age_days is None:
-                    try:
-                        age_days = int(p.get("age_days")) if p.get("age_days") is not None else None
-                    except Exception:
-                        age_days = None
-                if isinstance(age_days, int) and age_days > max_age_days:
-                    continue
-                pfp_url = p.get("pfp_url") or ""
-                if not pfp_url and handle:
-                    pfp_url = f"https://unavatar.io/twitter/{str(handle).lstrip('@')}"
-                out.append(
-                    {
-                        "twitter_id": str(twitter_id),
-                        "handle": str(handle or ""),
-                        "name": str(name or ""),
-                        "description": str(desc or ""),
-                        "created_at": str(created_at or ""),
-                        "age_days": age_days,
-                        "hva_smarts": int(smarts or 0),
-                        "url": f"https://x.com/{handle}" if handle else "",
-                        "pfp_url": pfp_url,
-                        "banner_url": p.get("banner_url") or "",
-                    }
-                )
-        except Exception:
-            pass
+    # No need to top-up: DB query already returns enough rows for limit<=20.
     return {"items": out[:limit]}
 
 
@@ -562,15 +1313,19 @@ async def api_projects_new(request: Request, limit: int = 5):
 
 
 @app.get("/api/projects/finds")
-async def api_projects_finds(request: Request, limit: int = 50):
+async def api_projects_finds(request: Request, limit: int = 50, exclude_escalations: int = 1):
     """Main finds list for the Projects page (alerted only, last 24h)."""
     if not _DEV_PREVIEW and not _has_access(request):
         raise HTTPException(401, "Unauthorized")
     limit = max(10, min(200, int(limit or 50)))
     rows = database.get_projects_finds_24h(limit=limit)
+    esc_handles = _recent_escalation_handles(hours=24.0, limit=400) if int(exclude_escalations or 0) else set()
     prof = _latest_profile_map()
     out = []
     for twitter_id, handle, name, desc, created_at, alerted_at, cat, summ, followers in rows:
+        hnorm = str(handle or "").strip().lstrip("@").lower()
+        if esc_handles and hnorm and hnorm in esc_handles:
+            continue
         hkey = str(handle or "").strip().lstrip("@").lower()
         p = prof.get(hkey) or {}
         age_days = _age_days_from_created_at(created_at)
@@ -675,16 +1430,20 @@ async def api_kol_dashboard(
     top = max(1, min(25, int(top or 5)))
     per_bucket = max(1, min(25, int(per_bucket or 5)))
 
-    async with aiohttp.ClientSession() as session:
-        items, err = await kolfi.fetch_tokens_overview(
-            session,
-            api_key,
-            limit=100,
-            include_calls=50,
-            max_pages=15,
-        )
-        if err and not items:
-            raise HTTPException(502, err)
+    cache_key = f"kol_dashboard:{hours:.2f}:{top}:{per_bucket}"
+
+    async def _build():
+        async with aiohttp.ClientSession() as session:
+            items, err = await kolfi.fetch_tokens_overview(
+                session,
+                api_key,
+                limit=100,
+                include_calls=50,
+                # Dashboard buckets need broad coverage; cache + slower frontend refresh keeps this cheap.
+                max_pages=15,
+            )
+            if err and not items:
+                raise HTTPException(502, err)
 
         # Map mint -> item (latest snapshot)
         by_mint: dict[str, dict] = {}
@@ -731,7 +1490,7 @@ async def api_kol_dashboard(
             caller_x = str((bc or {}).get("kolXId") or "").strip()
             chart = f"https://gmgn.ai/sol/token/{mint}" if mint else ""
             dex = str(it.get("dexscreener_url") or it.get("dexUrl") or "")
-            thumb = await kolfi.resolve_token_thumbnail(session, it, mint) if mint else None
+            thumb = await _thumb_url_cached(session, it, mint) if mint else ""
             top_rows.append(
                 {
                     "ticker": ticker,
@@ -769,7 +1528,9 @@ async def api_kol_dashboard(
                     bucket = "low"
 
             it = by_mint.get(mint) or {}
-            fc = kolfi._first_call_with_mc(it) if it else None  # type: ignore[attr-defined]
+            fc_raw = kolfi._first_call_with_mc(it) if it else None  # type: ignore[attr-defined]
+            # Persist earliest-ever call we've seen; if current snapshot missing, fall back to stored one.
+            fc = _persist_first_call_for_mint(mint, fc_raw) or fc_raw or _get_persisted_first_call(mint)
             call_mc = kolfi._safe_float((fc or {}).get("callMarketCap")) if isinstance(fc, dict) else None  # type: ignore[attr-defined]
             cur_mc = kolfi._safe_float(it.get("last_market_cap"))  # type: ignore[attr-defined]
             ath_mc = kolfi._safe_float(it.get("ath_market_cap"))  # type: ignore[attr-defined]
@@ -777,14 +1538,24 @@ async def api_kol_dashboard(
             ath_x = (ath_mc / call_mc) if (call_mc and call_mc > 0 and ath_mc and ath_mc > 0) else None
             dex = str(it.get("dexscreener_url") or it.get("dexUrl") or ev.get("url") or "")
             chart = f"https://gmgn.ai/sol/token/{mint}" if mint else ""
+            caller_label = kolfi._call_label(fc) if isinstance(fc, dict) else ""  # type: ignore[attr-defined]
+            caller_x = str((fc or {}).get("kolXId") or (fc or {}).get("kol_x_id") or "").strip()
+            thumb_url = str(extra.get("thumb_url") or "") or (await _thumb_url_cached(session, it, mint) if mint else "")
+            call_ts = ""
+            if isinstance(fc, dict):
+                call_ts = str(fc.get("messageTs") or fc.get("ts") or fc.get("callTs") or "") or ""
+            if not call_ts:
+                call_ts = str(ev.get("ts") or "") or ""
             buckets[bucket].append(
                 {
                     "event_id": ev.get("id"),
                     "ts": ev.get("ts"),
+                    "call_ts": call_ts,
                     "title": ev.get("title"),
                     "mint": mint,
                     "ticker": str(extra.get("symbol") or extra.get("name") or "").strip() or kolfi._item_ticker(it),  # type: ignore[attr-defined]
-                    "caller": str((fc or {}).get("kolXId") or "") if isinstance(fc, dict) else "",
+                    "caller": caller_label or (caller_x or ""),
+                    "caller_x": caller_x,
                     "call_mc": call_mc,
                     "cur_mc": cur_mc,
                     "ath_mc": ath_mc,
@@ -792,6 +1563,7 @@ async def api_kol_dashboard(
                     "ath_x": ath_x,
                     "chart_url": chart,
                     "dex_url": dex,
+                    "thumb_url": thumb_url,
                 }
             )
             if len(buckets[bucket]) >= per_bucket:
@@ -807,6 +1579,255 @@ async def api_kol_dashboard(
                 "1m": buckets["1m"][:per_bucket],
             },
         }
+    # Cache for 20 seconds; frontend refresh is also throttled.
+    return await _cache_get_or_set(cache_key, 20.0, _build)
+
+
+@app.get("/api/kol/top-performers")
+async def api_kol_top_performers(request: Request, days: int = 30, top: int = 10):
+    """
+    Top performing coins within a rolling window (default 30d), ranked by ATH multiple
+    from first call MC → ATH MC (ATHx).
+    """
+    if not _DEV_PREVIEW and not _has_access(request):
+        raise HTTPException(401, "Unauthorized")
+    api_key = str(getattr(config, "KOLFI_API_KEY", "") or "").strip()
+    if not api_key:
+        raise HTTPException(400, "Missing KOLFI_API_KEY")
+    days = max(1, min(180, int(days or 30)))
+    top = max(1, min(25, int(top or 10)))
+    hours = float(days) * 24.0
+
+    cache_key = f"kol_top_performers:{days}:{top}"
+
+    async def _build():
+        async with aiohttp.ClientSession() as session:
+            items, err = await kolfi.fetch_tokens_overview(
+                session,
+                api_key,
+                limit=100,
+                include_calls=50,
+                max_pages=8,
+            )
+            if err and not items:
+                raise HTTPException(502, err)
+
+        scored = []
+        for it in items or []:
+            if not isinstance(it, dict):
+                continue
+            row = kolfi._entry_for_leaderboard(it, max_call_age_hours=hours)  # type: ignore[attr-defined]
+            if row:
+                scored.append(row)
+
+        def _athx_key(x: dict) -> float:
+            try:
+                ath = float(x.get("ath_usd") or 0)
+                call = float(x.get("call_mc") or 0)
+                if ath > 0 and call > 0:
+                    return ath / call
+            except Exception:
+                pass
+            return 0.0
+
+        scored.sort(key=_athx_key, reverse=True)
+        scored = [s for s in scored if _athx_key(s) > 0][:top]
+
+        out = []
+        for r in scored:
+            it = r.get("item") or {}
+            bc = r.get("best_call") or {}
+            mint = str(r.get("mint") or "")
+            ticker = str(r.get("ticker") or "—")
+            call_mc = kolfi._safe_float(r.get("call_mc"))  # type: ignore[attr-defined]
+            cur_mc = kolfi._safe_float(r.get("cur_mc"))  # type: ignore[attr-defined]
+            ath_mc = kolfi._safe_float(r.get("ath_usd"))  # type: ignore[attr-defined]
+            since = (cur_mc / call_mc) if (call_mc and call_mc > 0 and cur_mc and cur_mc > 0) else None
+            ath_x = (ath_mc / call_mc) if (call_mc and call_mc > 0 and ath_mc and ath_mc > 0) else None
+            caller = kolfi._call_label(bc) if isinstance(bc, dict) else ""  # type: ignore[attr-defined]
+            caller_x = str((bc or {}).get("kolXId") or "").strip()
+            chart = f"https://gmgn.ai/sol/token/{mint}" if mint else ""
+            dex = str(it.get("dexscreener_url") or it.get("dexUrl") or "")
+            thumb = await _thumb_url_cached(session, it, mint) if mint else ""
+            out.append(
+                {
+                    "ticker": ticker,
+                    "mint": mint,
+                    "caller": caller,
+                    "caller_x": caller_x,
+                    "call_mc": call_mc,
+                    "cur_mc": cur_mc,
+                    "ath_mc": ath_mc,
+                    "since_x": since,
+                    "ath_x": ath_x,
+                    "call_ts": (bc or {}).get("messageTs") or "",
+                    "chart_url": chart,
+                    "dex_url": dex,
+                    "thumb_url": thumb or "",
+                }
+            )
+        return {"days": days, "items": out}
+
+    return await _cache_get_or_set(cache_key, 60.0, _build)
+
+
+def _parse_iso_dt(s: str):
+    try:
+        from datetime import datetime, timezone
+
+        if not s:
+            return None
+        dt = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+
+@app.get("/api/kol/alerts/top-performers")
+async def api_kol_alerts_top_performers(request: Request, days: int = 30, top: int = 10):
+    """
+    Top performers among tokens we alerted (watchlist), within a rolling window (default 30d),
+    ranked by ATHx (ATH MC / call MC).
+    """
+    if not _DEV_PREVIEW and not _has_access(request):
+        raise HTTPException(401, "Unauthorized")
+    api_key = str(getattr(config, "KOLFI_API_KEY", "") or "").strip()
+    if not api_key:
+        raise HTTPException(400, "Missing KOLFI_API_KEY")
+    days = max(1, min(180, int(days or 30)))
+    top = max(1, min(25, int(top or 10)))
+
+    # Load watchlist (tokens we alerted)
+    watch = {}
+    try:
+        p = getattr(kolfi, "ALERT_WATCHLIST_PATH", "")
+        if p:
+            watch_path = Path(str(p))
+        else:
+            watch_path = DATA_DIR / "kolfi_alert_watchlist.json"
+        if watch_path.exists():
+            watch = json.loads(watch_path.read_text(encoding="utf-8"))
+    except Exception:
+        watch = {}
+
+    by_mint = watch.get("by_mint") if isinstance(watch, dict) else None
+    if not isinstance(by_mint, dict) or not by_mint:
+        return {"days": days, "items": []}
+
+    from datetime import datetime, timezone, timedelta
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days)
+
+    # Include mints whose most recent alert is within window.
+    # Using first_alert_ts here made the list too small once the watchlist aged.
+    entries = []
+    for mint, ent in by_mint.items():
+        if not isinstance(ent, dict):
+            continue
+        last_ts = ent.get("last_alert_ts") or ent.get("first_alert_ts")
+        dt = _parse_iso_dt(str(last_ts or ""))
+        if not dt or dt < cutoff:
+            continue
+        mint_s = str(ent.get("mint") or mint or "").strip()
+        if not mint_s:
+            continue
+        entries.append(ent)
+
+    if not entries:
+        return {"days": days, "items": []}
+
+    cache_key = f"kol_alerts_top:{days}:{top}"
+
+    async def _build():
+        async with aiohttp.ClientSession() as session:
+            # Current snapshots for ATH + thumbnail
+            items, err = await kolfi.fetch_tokens_overview(
+                session,
+                api_key,
+                limit=100,
+                include_calls=30,
+                max_pages=8,
+            )
+            if err and not items:
+                raise HTTPException(502, err)
+        by_snap: dict[str, dict] = {}
+        for it in items or []:
+            if not isinstance(it, dict):
+                continue
+            m = kolfi._item_mint(it)  # type: ignore[attr-defined]
+            if m:
+                by_snap[m] = it
+
+        rows = []
+        for ent in entries:
+            mint = str(ent.get("mint") or "").strip()
+            if not mint:
+                continue
+            tick = str(ent.get("ticker") or "—")
+
+            snap = by_snap.get(mint) or {}
+            ath_mc = kolfi._safe_float((snap or {}).get("ath_market_cap"))  # type: ignore[attr-defined]
+            if ath_mc is None or ath_mc <= 0:
+                ath_mc = kolfi._safe_float(ent.get("last_kolfi_ath_usd"))  # type: ignore[attr-defined]
+
+            # Call context: ALWAYS use earliest-ever call we've seen for this mint.
+            # This keeps MC@call and call time stable, even if there are later calls.
+            fc_raw = None
+            if snap:
+                try:
+                    fc_raw = kolfi._first_call_with_mc(snap)  # type: ignore[attr-defined]
+                except Exception:
+                    fc_raw = None
+            call = _persist_first_call_for_mint(mint, fc_raw) or fc_raw or _get_persisted_first_call(mint)
+            if not isinstance(call, dict):
+                continue
+
+            call_mc = kolfi._safe_float(call.get("callMarketCap"))  # type: ignore[attr-defined]
+            if call_mc is None or call_mc <= 0:
+                continue
+
+            cur_mc = kolfi._safe_float((snap or {}).get("last_market_cap"))  # type: ignore[attr-defined]
+            since = (cur_mc / call_mc) if (cur_mc and cur_mc > 0) else None
+            ath_x = (ath_mc / call_mc) if (ath_mc and ath_mc > 0) else None
+            if ath_x is None or ath_x <= 0:
+                continue
+
+            caller = ""
+            try:
+                caller = kolfi._call_label(call)  # type: ignore[attr-defined]
+            except Exception:
+                caller = str(call.get("who") or call.get("kolUsername") or "caller")
+            caller_x = str(call.get("kolXId") or call.get("kol_x_id") or "").strip()
+
+            chart = f"https://gmgn.ai/sol/token/{mint}" if mint else ""
+            dex = str((snap or {}).get("dexscreener_url") or (snap or {}).get("dexUrl") or "")
+            thumb = await _thumb_url_cached(session, snap or {}, mint) if mint else ""
+
+            rows.append(
+                {
+                    "ticker": tick,
+                    "mint": mint,
+                    "caller": caller,
+                    "caller_x": caller_x,
+                    "call_mc": call_mc,
+                    "cur_mc": cur_mc,
+                    "ath_mc": ath_mc,
+                    "since_x": since,
+                    "ath_x": ath_x,
+                    "call_ts": (call or {}).get("messageTs") or (call or {}).get("ts") or "",
+                    "chart_url": chart,
+                    "dex_url": dex,
+                    "thumb_url": thumb or "",
+                }
+            )
+
+        rows.sort(key=lambda r: float(r.get("ath_x") or 0), reverse=True)
+        return {"days": days, "items": rows[:top]}
+
+    return await _cache_get_or_set(cache_key, 60.0, _build)
 
 
 @app.get("/api/feed/event/{event_id}")
@@ -1041,7 +2062,7 @@ async def api_access_tweet(request: Request, body: TweetGateRequest):
         key=ACCESS_COOKIE,
         value=tok,
         httponly=True,
-        secure=False,
+        secure=_is_https(request),
         samesite="lax",
         max_age=int(ACCESS_TOKEN_TTL_SECONDS),
         path="/",
@@ -1055,7 +2076,12 @@ async def api_access_tweet(request: Request, body: TweetGateRequest):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8000)
+    # Render provides PORT; default to 8000 locally.
+    try:
+        _default_port = int(os.getenv("PORT", "8000") or 8000)
+    except Exception:
+        _default_port = 8000
+    parser.add_argument("--port", type=int, default=_default_port)
     parser.add_argument("--reload", action="store_true")
     args = parser.parse_args()
     print(f"[Velcor3] Website server starting on http://{args.host}:{args.port}")

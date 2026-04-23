@@ -29,21 +29,68 @@
     }
     .card.accent{border-color:rgba(var(--acc,255,204,0), .28); box-shadow:0 0 0 1px rgba(var(--acc,255,204,0), .06) inset}
     .card.span12{grid-column:span 12}
+    .card.span6{grid-column:span 6}
     .card.span4{grid-column:span 4}
-    @media (max-width: 980px){ .card.span4{grid-column:span 12} }
+    @media (max-width: 980px){ .card.span4{grid-column:span 12} .card.span6{grid-column:span 12} }
     .ph{padding:12px 14px;border-bottom:1px solid rgba(255,204,0,.12);display:flex;justify-content:space-between;align-items:center}
     .pt{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:rgba(240,232,192,.70)}
     .ps{font-family:"JetBrains Mono",monospace;font-size:10px;color:rgba(240,232,192,.45)}
-    .pb{padding:10px 14px;max-height:74vh;overflow:auto}
+    /* Panel body scroll: vertical only; tables can scroll horizontally inside */
+    .pb{padding:10px 14px;max-height:74vh;overflow-y:auto;overflow-x:hidden}
+
+    /* Horizontal scroller (inside the box) for the table */
+    .tableScroll{
+      overflow-x:auto;
+      overflow-y:hidden;
+      padding-bottom:6px; /* room for scrollbar */
+      margin:0 -2px;      /* keep edges flush */
+    }
+    .tableScroll::-webkit-scrollbar{height:10px}
+    .tableScroll::-webkit-scrollbar-track{
+      background:rgba(0,0,0,.25);
+      border:1px solid rgba(255,204,0,.10);
+      border-radius:999px;
+    }
+    .tableScroll::-webkit-scrollbar-thumb{
+      background:rgba(255,204,0,.18);
+      border:1px solid rgba(255,204,0,.28);
+      border-radius:999px;
+    }
+    .tableScroll::-webkit-scrollbar-thumb:hover{
+      background:rgba(255,204,0,.26);
+      border-color:rgba(255,204,0,.40);
+    }
+    /* Firefox */
+    .tableScroll{scrollbar-color: rgba(255,204,0,.35) rgba(0,0,0,.25); scrollbar-width: thin;}
     .item{padding:10px 0;border-bottom:1px solid rgba(255,204,0,.10)}
     .row{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
     .ttl{font-weight:900;color:#ffcc00}
     .tmeta{white-space:nowrap;color:rgba(240,232,192,.45);font-family:"JetBrains Mono",monospace;font-size:10px}
     .body{margin-top:6px;color:rgba(240,232,192,.78);font-size:13px;line-height:1.35;white-space:pre-wrap}
-    /* Table-like layout (like your screenshot) */
-    .topHeader{display:grid;grid-template-columns:46px 1fr 165px 140px 140px 110px 170px 140px;gap:12px;align-items:center;
+    /* Table-like layout (responsive; may scroll horizontally inside .tableScroll) */
+    .topHeader{display:grid;
+      grid-template-columns:
+        46px
+        minmax(220px, 1.6fr)
+        minmax(120px, 1fr)
+        minmax(110px, 1fr)
+        minmax(110px, 1fr)
+        minmax(80px, .9fr)
+        minmax(140px, 1.1fr)
+        minmax(90px, .9fr);
+      gap:10px;align-items:center;
       padding:10px 0;border-bottom:1px solid rgba(255,204,0,.16)}
-    .tokRow{display:grid;grid-template-columns:46px 1fr 165px 140px 140px 110px 170px 140px;gap:12px;align-items:center;
+    .tokRow{display:grid;
+      grid-template-columns:
+        46px
+        minmax(220px, 1.6fr)
+        minmax(120px, 1fr)
+        minmax(110px, 1fr)
+        minmax(110px, 1fr)
+        minmax(80px, .9fr)
+        minmax(140px, 1.1fr)
+        minmax(90px, .9fr);
+      gap:10px;align-items:center;
       padding:10px 0;border-bottom:1px solid rgba(255,204,0,.10)}
     .colH{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:rgba(240,232,192,.45)}
     @media (max-width: 1020px){
@@ -51,6 +98,25 @@
       .topHeader .colH{display:none}
       .tokRow .colTime,.tokRow .colCall,.tokRow .colAth,.tokRow .colAthx,.tokRow .colCaller,.tokRow .colLinks{display:none}
     }
+    /* Mid-size screens: keep all columns but tighten them */
+    @media (max-width: 1320px){
+      .topHeader,.tokRow{
+        grid-template-columns:
+          46px
+          minmax(190px, 1.5fr)
+          minmax(110px, 1fr)
+          minmax(100px, 1fr)
+          minmax(100px, 1fr)
+          minmax(76px, .9fr)
+          minmax(120px, 1.1fr)
+          minmax(86px, .9fr);
+        gap:8px;
+      }
+    }
+    /* Prevent any child from forcing horizontal overflow */
+    .tokRow > *{min-width:0}
+    .colCaller,.colLinks{min-width:0}
+    .colCaller a,.colLinks a{display:inline-flex;max-width:100%;overflow:hidden;text-overflow:ellipsis}
     .av{width:40px;height:40px;border-radius:12px;border:1px solid rgba(255,204,0,.22);background:rgba(255,204,0,.06);overflow:hidden}
     .av img{width:100%;height:100%;object-fit:cover;display:block}
     .badge{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:999px;
@@ -89,20 +155,82 @@
     .accLow .badge.k{background:rgba(120,180,255,.14);border-color:rgba(120,180,255,.30)}
     .acc100k .badge.k{background:rgba(255,220,120,.14);border-color:rgba(255,220,120,.30)}
     .acc1m .badge.k{background:rgba(120,255,180,.14);border-color:rgba(120,255,180,.30)}
+
+    /* Full-page loader (shown on first load only) */
+    .pageLoader{
+      position:fixed; inset:0;
+      display:flex; align-items:center; justify-content:center;
+      background:rgba(9,9,9,.88);
+      backdrop-filter: blur(6px);
+      z-index:9999;
+    }
+    .pageLoader.hidden{display:none}
+    .loaderCard{
+      width:min(520px, calc(100% - 44px));
+      border:1px solid rgba(255,204,0,.18);
+      border-radius:14px;
+      background:rgba(0,0,0,.28);
+      padding:16px 16px 14px 16px;
+      box-shadow:0 0 0 1px rgba(255,204,0,.06) inset;
+    }
+    .loaderTitle{
+      font-family:"JetBrains Mono",monospace;
+      font-size:11px;
+      letter-spacing:.14em;
+      text-transform:uppercase;
+      color:rgba(240,232,192,.70);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+    }
+    .loaderBar{
+      margin-top:12px;
+      height:10px;
+      border-radius:999px;
+      border:1px solid rgba(255,204,0,.16);
+      background:rgba(0,0,0,.25);
+      overflow:hidden;
+    }
+    .loaderBar > i{
+      display:block;
+      height:100%;
+      width:38%;
+      background:linear-gradient(90deg, rgba(90,255,160,.0), rgba(255,204,0,.24), rgba(90,255,160,.18), rgba(255,204,0,.10), rgba(90,255,160,.0));
+      transform:translateX(-120%);
+      animation:loaderMove 1.05s ease-in-out infinite;
+    }
+    @keyframes loaderMove{
+      0%{transform:translateX(-120%)}
+      55%{transform:translateX(120%)}
+      100%{transform:translateX(120%)}
+    }
   </style>
 </head>
 <body>
+  <div class="pageLoader" id="pageLoader" aria-live="polite" aria-busy="true">
+    <div class="loaderCard">
+      <div class="loaderTitle">
+        <span>Loading token alerts</span>
+        <span class="livePill" style="padding:5px 9px;"><i></i>LIVE</span>
+      </div>
+      <div class="loaderBar" role="progressbar" aria-label="Loading">
+        <i></i>
+      </div>
+    </div>
+  </div>
   <div class="wrap">
     <div class="top">
       <a class="brand" href="/"><img src="/logo.png" alt="Nerds Alpha" /><span>Nerds Alpha · Token Alerts</span></a>
       <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
         <a class="btn" href="/projects">Projects</a>
         <a class="btn" href="/daily-finds">Daily Finds</a>
+        <a class="btn" href="/account">Account</a>
       </div>
     </div>
 
     <div class="grid">
-      <div class="card span12">
+      <div class="card span6">
         <div class="ph">
           <div class="pt">Top performed coins (24h) · ranked by ATHx</div>
           <div class="loadWrap">
@@ -111,6 +239,17 @@
           </div>
         </div>
         <div class="pb" id="top"></div>
+      </div>
+
+      <div class="card span6">
+        <div class="ph">
+          <div class="pt">Top performed coins (30d) · from our alerts · ranked by ATHx</div>
+          <div class="loadWrap">
+            <span class="livePill" title="Live feed"><i></i>LIVE</span>
+            <div class="ps" id="stat30">—</div>
+          </div>
+        </div>
+        <div class="pb" id="top30"></div>
       </div>
 
       <div class="card accent accLow span4">
@@ -139,7 +278,39 @@
 
   <script>
     function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;").replace(/'/g,"&#39;");}
-    function fmtTime(iso){try{var d=new Date(iso);if(!isNaN(d.getTime()))return d.toLocaleString();}catch(e){}return iso||"";}
+    function _pad2(n){ n = Number(n||0); return (n<10?("0"+n):(""+n)); }
+    function _fmtUTC(d){
+      return _pad2(d.getUTCDate())+"/"+_pad2(d.getUTCMonth()+1)+"/"+d.getUTCFullYear()
+        +" "+_pad2(d.getUTCHours())+":"+_pad2(d.getUTCMinutes())+":"+_pad2(d.getUTCSeconds());
+    }
+    function fmtTime(v){
+      try{
+        if(v===null||v===undefined) return "";
+        var s = String(v).trim();
+        if(!s) return "";
+        // epoch seconds or ms
+        if(/^\d{10,13}$/.test(s)){
+          var n = parseInt(s,10);
+          if(s.length===10) n = n*1000;
+          var d0 = new Date(n);
+          if(!isNaN(d0.getTime())) return _fmtUTC(d0);
+        }
+        // ISO
+        var d = new Date(s);
+        if(!isNaN(d.getTime())) return _fmtUTC(d);
+        // dd/mm/yyyy (optionally with time)
+        var m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+        if(m){
+          var dd = parseInt(m[1],10), mm = parseInt(m[2],10), yy = parseInt(m[3],10);
+          var hh = parseInt(m[4]||"0",10), mi = parseInt(m[5]||"0",10), ss = parseInt(m[6]||"0",10);
+          var d2 = new Date(Date.UTC(yy, mm-1, dd, hh, mi, ss));
+          if(!isNaN(d2.getTime())) return _fmtUTC(d2);
+        }
+        return s;
+      }catch(e){
+        return String(v||"");
+      }
+    }
     function fmtMc(n){
       if (n === null || n === undefined) return "—";
       var v = Number(n);
@@ -159,10 +330,11 @@
       var v = (value===null||value===undefined||value==="") ? "—" : String(value);
       return '<span class="badge '+esc(cls||"")+'"><b>'+esc(label)+'</b> '+esc(v)+'</span>';
     }
-    function renderTop(items){
-      var el=document.getElementById("top");
+    function renderTop(elId, items){
+      var el=document.getElementById(elId);
       if(!items||!items.length){el.innerHTML='<div class="ps">No leaderboard yet.</div>';return;}
       var html="";
+      html+='<div class="tableScroll">';
       html+='<div class="topHeader">'
         +'<div></div>'
         +'<div class="colH">Top performing calls</div>'
@@ -197,6 +369,7 @@
           +'</div>';
         html+='</div>';
       });
+      html+='</div>';
       el.innerHTML=html;
     }
     function renderBucket(elId, items){
@@ -209,15 +382,22 @@
       items.forEach(function(r){
         var detail = r.event_id ? ("/alert/"+encodeURIComponent(r.event_id)) : "";
         var chart = r.chart_url || "";
+        var callerLink = r.caller_x ? ("https://x.com/" + String(r.caller_x).replace(/^@/,"")) : "";
+        var av = (r.thumb_url||"").trim();
         html+='<div class="item">';
-        html+='<div class="row"><div class="ttl">'+(detail?('<a href="'+esc(detail)+'">'+esc(r.ticker||r.title||"Token")+'</a>'):esc(r.ticker||r.title||"Token"))+'</div>'
-          +'<div class="tmeta">'+esc(fmtTime(r.ts||""))+'</div></div>';
+        html+='<div class="row"><div class="ttl" style="display:flex;align-items:center;gap:10px;min-width:0;">'
+          +'<span class="av" style="width:32px;height:32px;border-radius:10px;flex:0 0 auto;">'+(av?('<img src="'+esc(av)+'" loading="lazy" />'):'')+'</span>'
+          +'<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+          +(detail?('<a href="'+esc(detail)+'">'+esc(r.ticker||r.title||"Token")+'</a>'):esc(r.ticker||r.title||"Token"))
+          +'</span></div>'
+          +'<div class="tmeta">'+esc(fmtTime(r.call_ts||r.ts||""))+'</div></div>';
         html+='<div class="sub">'
           +badge("MC@call", fmtMc(r.call_mc), "k")
           +badge("ATH", fmtMc(r.ath_mc), "g")
           +badge("ATHx", fmtX(r.ath_x), "g")
           +'</div>';
         html+='<div class="sub">'
+          +(callerLink?('<a class="badge r" target="_blank" rel="noreferrer" href="'+esc(callerLink)+'"><b>Caller</b> '+esc(r.caller||"")+'</a>'):(r.caller?badge("Caller", r.caller, "r"):""))
           +(chart?('<a class="badge" target="_blank" rel="noreferrer" href="'+esc(chart)+'"><b>Chart</b> gmgn</a>'):'')
           +(r.dex_url?('<a class="badge" target="_blank" rel="noreferrer" href="'+esc(r.dex_url)+'"><b>Dex</b> link</a>'):'')
           +'</div>';
@@ -225,11 +405,23 @@
       });
       el.innerHTML=html;
     }
+    var _refreshBusy = false;
+    var _firstLoad = true;
     async function refresh(){
+      if (_refreshBusy) return;
+      _refreshBusy = true;
       var stat = document.getElementById("stat");
       if (stat) stat.textContent = "Updating…";
       try{
-        var r=await fetch("/api/kol/dashboard?hours=24&top=10&per_bucket=6",{credentials:"include"});
+        var stat30 = document.getElementById("stat30");
+        if (stat30) stat30.textContent = "Updating…";
+
+        var res = await Promise.all([
+          fetch("/api/kol/dashboard?hours=24&top=10&per_bucket=6",{credentials:"include"}),
+          fetch("/api/kol/alerts/top-performers?days=30&top=10",{credentials:"include"})
+        ]);
+        var r = res[0], r30 = res[1];
+
         if(!r.ok){
           var txt = "";
           try{ txt = (await r.text()) || ""; }catch(e){}
@@ -238,21 +430,43 @@
           document.getElementById("b_100k").innerHTML = '<div class="ps">—</div>';
           document.getElementById("b_1m").innerHTML = '<div class="ps">—</div>';
           if (stat) stat.textContent = "Error";
-          return;
+        } else {
+          var d=await r.json();
+          renderTop("top", (d&&d.top)||[]);
+          var b = (d&&d.buckets)||{};
+          renderBucket("b_low", b.low||[]);
+          renderBucket("b_100k", b["100k"]||[]);
+          renderBucket("b_1m", b["1m"]||[]);
+          if (stat) stat.textContent="Updated " + new Date().toLocaleTimeString();
         }
-        var d=await r.json();
-        renderTop((d&&d.top)||[]);
-        var b = (d&&d.buckets)||{};
-        renderBucket("b_low", b.low||[]);
-        renderBucket("b_100k", b["100k"]||[]);
-        renderBucket("b_1m", b["1m"]||[]);
-        if (stat) stat.textContent="Updated " + new Date().toLocaleTimeString();
+
+        if(!r30.ok){
+          var txt30 = "";
+          try{ txt30 = (await r30.text()) || ""; }catch(e){}
+          document.getElementById("top30").innerHTML = '<div class="err">Failed to load: HTTP '+esc(r30.status)+'<br/>'+esc(txt30.slice(0,220))+'</div>';
+          if (stat30) stat30.textContent = "Error";
+        } else {
+          var d30=await r30.json();
+          renderTop("top30", (d30&&d30.items)||[]);
+          if (stat30) stat30.textContent="Updated " + new Date().toLocaleTimeString();
+        }
       } catch(e){
         document.getElementById("top").innerHTML = '<div class="err">Failed to load: '+esc(String(e||""))+'</div>';
         if (stat) stat.textContent = "Error";
-      } finally {}
+        document.getElementById("top30").innerHTML = '<div class="err">Failed to load: '+esc(String(e||""))+'</div>';
+        var stat30 = document.getElementById("stat30");
+        if (stat30) stat30.textContent = "Error";
+      } finally {
+        _refreshBusy = false;
+        if (_firstLoad){
+          _firstLoad = false;
+          var pl = document.getElementById("pageLoader");
+          if (pl) { pl.classList.add("hidden"); pl.setAttribute("aria-busy","false"); }
+        }
+      }
     }
-    refresh(); setInterval(refresh,7000);
+    // Less aggressive refresh to avoid hammering APIs (each refresh can be expensive).
+    refresh(); setInterval(refresh,20000);
   </script>
 </body>
 </html>

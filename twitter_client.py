@@ -81,7 +81,7 @@ class TwitterClient:
                 'proxy_fails': 0
             })
             proxy_msg = f" (Proxy: {current_proxy})" if current_proxy else ""
-            print(f"📦 Primary session: cookies.json{proxy_msg}")
+            print(f"Primary session: cookies.json{proxy_msg}")
         
         # Backup cookies (data/ or project root)
         for backup_name in ("cookies_backup.json", "cookies_backup2.json"):
@@ -129,14 +129,14 @@ class TwitterClient:
                     cookie_msg = "(with cookies)" if has_cookies else "(new login)"
                     print(f"   + Backup session: @{acc['username']} {cookie_msg} (Proxy: {current_proxy})")
             except Exception as e:
-                print(f"⚠️ Error loading accounts.json: {e}")
+                print(f"WARN: Error loading accounts.json: {e}")
         
         if not self._sessions:
-            print("❌ No sessions available! Need cookies.json or account cookies.")
-            print(f"   💡 Put cookies here (recommended): {os.path.join(self._cookies_dir, 'cookies.json')}")
-            print(f"   💡 Or next to main.py (legacy): {os.path.join(self._base_dir, 'cookies.json')}")
+            print("ERROR: No sessions available! Need cookies.json or account cookies.")
+            print(f"   TIP Put cookies here (recommended): {os.path.join(self._cookies_dir, 'cookies.json')}")
+            print(f"   TIP Or next to main.py (legacy): {os.path.join(self._base_dir, 'cookies.json')}")
         else:
-            print(f"🔄 Total sessions available: {len(self._sessions)} | Proxies loaded: {len(self._all_proxies)}")
+            print(f"Total sessions available: {len(self._sessions)} | Proxies loaded: {len(self._all_proxies)}")
     
     def _get_current_session(self):
         """Get current active session, rotating if rate limited."""
@@ -160,13 +160,13 @@ class TwitterClient:
         if len(self._sessions) > 1:
             new_user = self._sessions[self._current_session_idx]['account']
             username = new_user['username'] if new_user else 'default'
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔄 Session Rotation: Switched to @{username}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Session Rotation: Switched to @{username}")
     
     def check_cooldown(self):
         """Checks if the cooldown period has expired and resets flags."""
         if self.cooldown_ends:
             if datetime.now() > self.cooldown_ends:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔄 Cooldown expired. Resuming operations.")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Cooldown expired. Resuming operations.")
                 self.cooldown_ends = None
                 self.is_rate_limited = False
                 for s in self._sessions:
@@ -198,7 +198,7 @@ class TwitterClient:
         while True:
             self._current_session_idx = (self._current_session_idx + 1) % len(self._sessions)
             if not self._sessions[self._current_session_idx]['rate_limited']:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔄 Session Rotation: Switched to @{self.get_current_username()}")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Session Rotation: Switched to @{self.get_current_username()}")
                 return True
             if self._current_session_idx == original_idx:
                 return False
@@ -233,7 +233,7 @@ class TwitterClient:
             self._proxy_idx += 1
             
             err_type = "Timed Out (522)" if "522" in reason else ("Flagged (403)" if "403" in reason else "Network Error")
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔄 Proxy {err_type} for @{username}. Trying new IP: {new_proxy}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Proxy {err_type} for @{username}. Trying new IP: {new_proxy}")
             
             # Re-initialize client with new proxy but same UA if possible
             import random
@@ -251,7 +251,7 @@ class TwitterClient:
             cap = int(getattr(config, "TWIKIT_429_SOFT_PER_SESSION", 8) or 8)
             if soft < cap:
                 print(
-                    f"[{datetime.now().strftime('%H:%M:%S')}] ⏳ 429 throttle ({soft}/{cap}) @{username} — "
+                    f"[{datetime.now().strftime('%H:%M:%S')}] WAIT 429 throttle ({soft}/{cap}) @{username} — "
                     "rotating session (soft backoff; not hard-blocking yet)."
                 )
                 self._rotate_session()
@@ -271,20 +271,20 @@ class TwitterClient:
         elif len(reason) > 150:
             clean_reason = reason[:147] + "..."
 
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] 🛑 Session @{username} blocked: {clean_reason}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Session @{username} blocked: {clean_reason}")
         self._rotate_session()
         
         if self._sessions and all(s['rate_limited'] for s in self._sessions):
             self.is_rate_limited = True
             cool_m = int(getattr(config, "TWIKIT_ALL_SESSIONS_COOLDOWN_MIN", 45) or 45)
             self.cooldown_ends = datetime.now() + timedelta(minutes=cool_m)
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] ⛔ ALL SESSIONS BLOCKED. Cooldown until {self.cooldown_ends.strftime('%H:%M:%S')} (~{cool_m}m).")
-            print("💤 The bot will automatically retry after cooldown.")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] ALL SESSIONS BLOCKED. Cooldown until {self.cooldown_ends.strftime('%H:%M:%S')} (~{cool_m}m).")
+            print("Bot will automatically retry after cooldown.")
 
 
     async def verify_all_sessions(self):
         """Verify all sessions and proxies on startup."""
-        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] 🩺 Checking session health...")
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Checking session health...")
         valid_count = 0
         for i, session in enumerate(self._sessions):
             username = session['account']['username'] if session['account'] else 'default'
@@ -302,7 +302,7 @@ class TwitterClient:
                     
                     # Test connectivity/auth with a simple call
                     await session['client'].get_user_by_screen_name('Twitter')
-                    print(f"   ✅ Session @{username} is healthy{proxy_str}")
+                    print(f"   OK Session @{username} is healthy{proxy_str}")
                     valid_count += 1
                     break # Success!
                     
@@ -330,7 +330,7 @@ class TwitterClient:
                         self._proxy_idx += 1
                         
                         err_type = "Timed Out (522)" if "522" in err_msg else ("Flagged (403)" if "403" in err_msg else "Network Failure")
-                        print(f"   ⚠️ Session @{username} {err_type}. Rotating proxy and retrying... (Attempt {attempts}/{max_proxy_fails})")
+                        print(f"   WARN Session @{username} {err_type}. Rotating proxy and retrying... (Attempt {attempts}/{max_proxy_fails})")
                         
                         # Re-initialize client
                         import random
@@ -344,12 +344,12 @@ class TwitterClient:
                         # Permanent failure or out of retries
                         reason = f"[{type(e).__name__}] {err_msg}" if err_msg else f"[{type(e).__name__}] (Empty error)"
                         if "403" in err_msg:
-                            print(f"   ⚠️ Session @{username} is BLOCKED (403): {reason}{proxy_str}")
+                            print(f"   WARN Session @{username} is BLOCKED (403): {reason}{proxy_str}")
                         else:
-                            print(f"   ❌ Session @{username} failure: {reason}{proxy_str}")
+                            print(f"   ERROR Session @{username} failure: {reason}{proxy_str}")
                             if "401" in err_msg or "Unauthorized" in err_msg or "Could not authenticate" in err_msg:
                                 print(
-                                    "      💡 Twitter auth failed — export fresh cookies for this account or check proxy/IP."
+                                    "      TIP Twitter auth failed — export fresh cookies for this account or check proxy/IP."
                                 )
                         
                         session['rate_limited'] = True # Disable for now
@@ -358,21 +358,21 @@ class TwitterClient:
         if valid_count == 0:
             if not self._sessions:
                 print(
-                    f"[{datetime.now().strftime('%H:%M:%S')}] ❌ No Twikit cookie sessions configured "
+                    f"[{datetime.now().strftime('%H:%M:%S')}] ERROR No Twikit cookie sessions configured "
                     "(brain scan / X search need cookies.json)."
                 )
-                print(f"   💡 Export cookies to: {os.path.join(self._cookies_dir, 'cookies.json')}")
+                print(f"   TIP Export cookies to: {os.path.join(self._cookies_dir, 'cookies.json')}")
                 # Not the same as “rate limited” — do not set global cooldown when there is no pool.
                 self.is_rate_limited = False
                 self.cooldown_ends = None
                 return
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ NO VALID SESSIONS FOUND. Entering Cooldown Mode.")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR NO VALID SESSIONS FOUND. Entering Cooldown Mode.")
             self.is_rate_limited = True
             cool_m = int(getattr(config, "TWIKIT_ALL_SESSIONS_COOLDOWN_MIN", 45) or 45)
             self.cooldown_ends = datetime.now() + timedelta(minutes=cool_m)
-            print(f"💤 Bot will retry in ~{cool_m} minutes (at {self.cooldown_ends.strftime('%H:%M:%S')}).")
+            print(f"Bot will retry in ~{cool_m} minutes (at {self.cooldown_ends.strftime('%H:%M:%S')}).")
         else:
-            print(f"✨ Startup check complete. {valid_count}/{len(self._sessions)} sessions ready.\n")
+            print(f"Startup check complete. {valid_count}/{len(self._sessions)} sessions ready.\n")
             # Reset current session to first valid one
             for i, s in enumerate(self._sessions):
                 if not s['rate_limited']:
@@ -418,11 +418,11 @@ class TwitterClient:
                     if v is not None and str(v).replace(".", "", 1).isdigit()
                 }
                 print(
-                    f"📦 Loaded {len(ids)} IDs (+{len(neg)} negative) from Resolver Cache "
+                    f"Loaded {len(ids)} IDs (+{len(neg)} negative) from Resolver Cache "
                     f"(prevents re-searching handles)."
                 )
             except Exception:
-                print("⚠️ Error loading User ID cache.")
+                print("WARN: Error loading User ID cache.")
                 ids, neg = {}, {}
         return ids, neg
 
@@ -459,7 +459,7 @@ class TwitterClient:
                     client.set_cookies(cookies_data)
                 
                 username = account['username'] if account else 'default'
-                print(f"✅ Loaded cookies for @{username}")
+                print(f"OK Loaded cookies for @{username}")
                 session['logged_in'] = True
                 return True, None
             
@@ -467,7 +467,7 @@ class TwitterClient:
             if account:
                 # Use auth_token if available (safer)
                 if account.get('auth_token'):
-                    print(f"🔑 Using auth_token for @{account['username']}...")
+                    print(f"Using auth_token for @{account['username']}...")
                     client.set_cookies({'auth_token': account['auth_token']})
                     session['logged_in'] = True
                     return True, None
@@ -481,10 +481,10 @@ class TwitterClient:
                 )
                 client.save_cookies(cookie_path)
                 session['logged_in'] = True
-                print(f"✅ Logged in and saved cookies for @{account['username']}")
+                print(f"OK Logged in and saved cookies for @{account['username']}")
                 return True, None
             else:
-                print("❌ No credentials available for login")
+                print("ERROR No credentials available for login")
                 return False, "No credentials"
                 
         except Exception as e:
@@ -492,11 +492,11 @@ class TwitterClient:
             timestamp = datetime.now().strftime('%H:%M:%S')
             err_msg = str(e)
             if "403" in err_msg:
-                print(f"[{timestamp}] ⛔ Cloudflare Block (403) for @{username}. Sessions may need refresh.")
+                print(f"[{timestamp}] Cloudflare Block (403) for @{username}. Sessions may need refresh.")
             elif "429" in err_msg:
-                print(f"[{timestamp}] ⏳ Rate Limit (429) during login for @{username}")
+                print(f"[{timestamp}] WAIT Rate Limit (429) during login for @{username}")
             else:
-                print(f"[{timestamp}] ❌ Login failed for @{username}: {e}")
+                print(f"[{timestamp}] ERROR Login failed for @{username}: {e}")
             return False, err_msg
 
     async def get_user_id(self, handle):
@@ -539,7 +539,7 @@ class TwitterClient:
                 # 7 days
                 self._user_id_neg[handle] = time.time() + (7 * 24 * 3600)
                 self._save_cache()
-            print(f"      ❌ Lookup error for {handle}: {err_msg}")
+            print(f"      ERROR Lookup error for {handle}: {err_msg}")
             return None
 
     async def get_new_following(self, user_id):
@@ -572,7 +572,7 @@ class TwitterClient:
             if any(code in err_msg for code in ["429", "503", "403", "502", "504"]) or "Empty" in err_msg or "Timeout" in err_msg:
                 self._mark_session_blocked(err_msg)
                 return await self.get_new_following(user_id)
-            print(f"      ❌ Following error (ID: {user_id}): {err_msg}")
+            print(f"      ERROR Following error (ID: {user_id}): {err_msg}")
             return []
 
     async def get_new_following_with_delta(self, user_id, hva_handle):
@@ -614,10 +614,10 @@ class TwitterClient:
                 err_msg = f"Empty {type(e).__name__}"
 
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg:
-                print(f"      🔄 Retrying due to {err_msg}...")
+                print(f"      Retrying due to {err_msg}...")
                 self._mark_session_blocked(err_msg)
                 return await self.get_new_following_with_delta(user_id, hva_handle)
-            print(f"      ❌ Following error (ID: {user_id}): {err_msg}")
+            print(f"      ERROR Following error (ID: {user_id}): {err_msg}")
             return [], 0
 
     async def get_user_timeline(self, user_id, count=20):
@@ -642,7 +642,7 @@ class TwitterClient:
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg:
                 self._mark_session_blocked(err_msg)
                 return await self.get_user_timeline(user_id, count)
-            print(f"      ❌ Timeline error (ID: {user_id}): {err_msg}")
+            print(f"      ERROR Timeline error (ID: {user_id}): {err_msg}")
             return []
 
     async def get_user_info(self, user_id):
@@ -662,7 +662,7 @@ class TwitterClient:
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg:
                 self._mark_session_blocked(err_msg)
                 return await self.get_user_info(user_id)
-            print(f"      ❌ User info error (ID: {user_id}): {err_msg}")
+            print(f"      ERROR User info error (ID: {user_id}): {err_msg}")
             return None
 
     async def get_user_by_handle(self, handle: str):
@@ -785,7 +785,7 @@ class TwitterClient:
                 return fallback_pfp, None
             if "Multiple cookies exist" in err_msg:
                 return fallback_pfp, None
-            print(f"      ⚠️ get_x_profile_art @{handle}: {err_msg[:120]}")
+            print(f"      WARN get_x_profile_art @{handle}: {err_msg[:120]}")
             return fallback_pfp, None
 
     async def create_tweet(self, text):
@@ -797,13 +797,13 @@ class TwitterClient:
         if not session: return False
         
         try:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] 🐦 Posting to X...")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Posting to X...")
             response = await session['client'].create_tweet(text)
-            print(f"   ✅ Tweet posted! ID: {getattr(response, 'id', 'Unknown')}")
+            print(f"   OK Tweet posted! ID: {getattr(response, 'id', 'Unknown')}")
             return True
         except Exception as e:
             err_msg = str(e)
-            print(f"   ❌ Tweet failed: {err_msg}")
+            print(f"   ERROR Tweet failed: {err_msg}")
             if any(code in err_msg for code in ["429", "503", "403"]):
                  self._mark_session_blocked(err_msg)
             return False
@@ -877,7 +877,7 @@ class TwitterClient:
             if any(code in err_msg for code in ["429", "503", "403", "502", "504"]):
                 self._mark_session_blocked(err_msg)
                 # Retry once? No, expensive.
-            print(f"      ❌ First followers error: {err_msg}")
+            print(f"      ERROR First followers error: {err_msg}")
             return all_followers, True
 
 class AIAnalyzer:
@@ -888,20 +888,20 @@ class AIAnalyzer:
         is_openai_model = config.AI_MODEL.startswith('gpt')
         
         if is_openai_model and config.OPENAI_API_KEY:
-            print(f"🤖 AI Analysis: Using OpenAI ({config.AI_MODEL})")
+            print(f"AI Analysis: Using OpenAI ({config.AI_MODEL})")
             self.client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
         elif config.XAI_API_KEY:
-            print(f"🤖 AI Analysis: Using xAI (Grok - {config.AI_MODEL})")
+            print(f"AI Analysis: Using xAI (Grok - {config.AI_MODEL})")
             self.client = AsyncOpenAI(
                 api_key=config.XAI_API_KEY,
                 base_url="https://api.x.ai/v1"
             )
         elif config.OPENAI_API_KEY:
-            print(f"🤖 AI Analysis: Using OpenAI ({config.AI_MODEL})")
+            print(f"AI Analysis: Using OpenAI ({config.AI_MODEL})")
             self.client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
         else:
             self.client = None
-            print("⚠️ No suitable AI API Key found. AI Analysis disabled.")
+            print("WARN No suitable AI API Key found. AI Analysis disabled.")
 
     async def analyze_project(self, account, tweets):
         if not self.client:
