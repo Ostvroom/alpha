@@ -134,7 +134,7 @@ def init_db():
                 UPDATE projects
                 SET alerted_at = first_seen_at
                 WHERE alerted_at IS NULL
-                  AND first_seen_at >= datetime('now', '-7 days')
+                  AND first_seen_at >= datetime('now', '-7 day')
                 """
             )
         except Exception:
@@ -685,7 +685,7 @@ def get_trending_projects_30d(limit: int = 30):
         WITH Smarts30d AS (
             SELECT f.project_id, COUNT(DISTINCT f.hva_id) AS count
             FROM follows f
-            WHERE f.followed_at >= datetime('now', '-30 days')
+            WHERE f.followed_at >= datetime('now', '-30 day')
             GROUP BY f.project_id
         )
         SELECT
@@ -968,13 +968,13 @@ def get_trending_projects(hours=24, limit=20):
         Smarts7d AS (
             SELECT f.project_id, COUNT(DISTINCT f.hva_id) as count
             FROM follows f
-            WHERE f.followed_at >= datetime('now', '-7 days')
+            WHERE f.followed_at >= datetime('now', '-7 day')
             GROUP BY f.project_id
         ),
         TotalSmarts AS (
             SELECT f.project_id, COUNT(DISTINCT f.hva_id) as count
             FROM follows f
-            WHERE f.followed_at >= datetime('now', '-30 days')
+            WHERE f.followed_at >= datetime('now', '-30 day')
             GROUP BY f.project_id
         )
         SELECT 
@@ -1256,14 +1256,14 @@ def get_hva_health_report():
     # Active: Interaction in last 48h
     cursor.execute("""
         SELECT COUNT(DISTINCT hva_id) FROM follows 
-        WHERE followed_at >= datetime('now', '-2 days')
+        WHERE followed_at >= datetime('now', '-2 day')
     """)
     active_count = cursor.fetchone()[0]
     
     # Semi: Interaction in last 7 days
     cursor.execute("""
         SELECT COUNT(DISTINCT hva_id) FROM follows 
-        WHERE followed_at >= datetime('now', '-7 days')
+        WHERE followed_at >= datetime('now', '-7 day')
     """)
     semi_count = cursor.fetchone()[0]
     
