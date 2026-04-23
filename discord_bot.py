@@ -249,7 +249,11 @@ async def _run_daily_mints_post(
         pfp_url = None
         ban_url = None
         if enrich_x_art and x_handle:
-            pfp_url, ban_url = await bot.twitter.get_x_profile_art(x_handle)
+            try:
+                pfp_url, ban_url = await bot.twitter.get_x_profile_art(x_handle)
+            except Exception as ex:
+                # Render workers often run without cookies.json; don't crash the whole task.
+                pfp_url, ban_url = None, None
         embeds = build_daily_mint_embeds(
             d,
             BRAND_NAME,

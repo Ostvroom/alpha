@@ -140,6 +140,9 @@ class TwitterClient:
     
     def _get_current_session(self):
         """Get current active session, rotating if rate limited."""
+        if not self._sessions:
+            self.is_rate_limited = False
+            return None
         attempts = 0
         while attempts < len(self._sessions):
             session = self._sessions[self._current_session_idx]
@@ -151,6 +154,8 @@ class TwitterClient:
         
         # All sessions rate limited
         self.is_rate_limited = True
+        if not self._sessions:
+            return None
         return self._sessions[self._current_session_idx]
     
     def _rotate_session(self):
@@ -189,11 +194,15 @@ class TwitterClient:
 
     def get_current_username(self):
         """Get the username of the current session."""
+        if not self._sessions:
+            return "default"
         session = self._sessions[self._current_session_idx]
         return session['account']['username'] if session.get('account') else 'default'
 
     def _rotate_session(self):
         """Rotate to the next session."""
+        if not self._sessions:
+            return False
         original_idx = self._current_session_idx
         while True:
             self._current_session_idx = (self._current_session_idx + 1) % len(self._sessions)
@@ -205,6 +214,9 @@ class TwitterClient:
 
     def _mark_session_blocked(self, reason):
         """Mark current session as blocked/rate-limited and rotate."""
+        if not self._sessions:
+            self.is_rate_limited = False
+            return
         session = self._sessions[self._current_session_idx]
         username = session['account']['username'] if session['account'] else 'default'
         
@@ -381,9 +393,13 @@ class TwitterClient:
 
     async def _ensure_session(self):
         """Ensure a logged-in session is available, rotating if necessary."""
+        if not self._sessions:
+            return None
         self.check_cooldown()
         while not self.is_rate_limited:
             session = self._get_current_session()
+            if not session:
+                return None
             success, err = await self._login(session)
             if success:
                 return session
