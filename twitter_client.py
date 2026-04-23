@@ -57,15 +57,19 @@ class TwitterClient:
         def get_random_ua():
             return random.choice(self._user_agents)
 
-        # Primary cookies: prefer data/cookies.json, fall back to project root (legacy layouts).
+        # Primary cookies: DATA_DIR, project root, Render "Secret Files" (/etc/secrets/<name>).
         def _pick_cookie_file(name: str):
-            for base in (self._cookies_dir, self._base_dir):
+            for base in (self._cookies_dir, self._base_dir, "/etc/secrets"):
                 p = os.path.join(base, name)
                 if os.path.isfile(p):
                     return p
             return None
 
-        main_cookie_path = _pick_cookie_file("cookies.json")
+        main_cookie_path = (os.getenv("TWIKIT_COOKIES_FILE") or "").strip()
+        if main_cookie_path and not os.path.isfile(main_cookie_path):
+            main_cookie_path = ""
+        if not main_cookie_path:
+            main_cookie_path = _pick_cookie_file("cookies.json")
         if main_cookie_path:
             current_proxy = get_next_proxy()
             client = Client('en-US', proxy=current_proxy)
@@ -135,6 +139,8 @@ class TwitterClient:
             print("ERROR: No sessions available! Need cookies.json or account cookies.")
             print(f"   TIP Put cookies here (recommended): {os.path.join(self._cookies_dir, 'cookies.json')}")
             print(f"   TIP Or next to main.py (legacy): {os.path.join(self._base_dir, 'cookies.json')}")
+            print("   TIP Render Secret Files: upload as cookies.json → available at /etc/secrets/cookies.json")
+            print("   TIP Or set TWIKIT_COOKIES_FILE=/absolute/path/to/cookies.json")
         else:
             print(f"Total sessions available: {len(self._sessions)} | Proxies loaded: {len(self._all_proxies)}")
         self._normalize_session_idx()
