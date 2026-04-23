@@ -188,8 +188,8 @@ def _apply_monkey_patch():
                 return 0, []
             raise
 
-        _safe_get_indices._is_patched = True
-        ClientTransaction.get_indices = _safe_get_indices
+    _safe_get_indices._is_patched = True
+    ClientTransaction.get_indices = _safe_get_indices
 
     # ── patch get_animation_key ─────────────────────────────────────────────
     if getattr(ClientTransaction.get_animation_key, "_is_patched", False):
@@ -210,8 +210,8 @@ def _apply_monkey_patch():
             print(f"    [PATCH] get_animation_key suppressed: {msg} → using '0'")
             return "0"
 
-        _safe_get_animation_key._is_patched = True
-        ClientTransaction.get_animation_key = _safe_get_animation_key
+    _safe_get_animation_key._is_patched = True
+    ClientTransaction.get_animation_key = _safe_get_animation_key
 
     # ── patch init to survive fully broken responses ────────────────────────
     if getattr(ClientTransaction.init, "_is_patched", False):
@@ -236,8 +236,8 @@ def _apply_monkey_patch():
                 self.animation_key = "0"
             print(f"    [PATCH] ClientTransaction.init recovered from: {msg}")
 
-        _safe_init._is_patched = True
-        ClientTransaction.init = _safe_init
+    _safe_init._is_patched = True
+    ClientTransaction.init = _safe_init
 
     print("    [PATCH] In-memory monkey-patch applied (get_indices, get_animation_key, init).")
 
