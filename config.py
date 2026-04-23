@@ -126,8 +126,13 @@ TWITTER_USERNAME = os.getenv("TWITTER_USERNAME")
 TWITTER_EMAIL = os.getenv("TWITTER_EMAIL")
 TWITTER_PASSWORD = os.getenv("TWITTER_PASSWORD")
 
-# Monitoring Settings
-CHECK_INTERVAL_SECONDS = 14400 # Loop interval (4 hours)
+# Monitoring Settings — HVA "brain scan" loop (Twikit + cookies.json).
+# Override on Render for testing, e.g. BRAIN_SCAN_INTERVAL_SECONDS=900 (15m). Clamped 300–86400.
+try:
+    _brain_scan_sec = int((os.getenv("BRAIN_SCAN_INTERVAL_SECONDS") or "14400").strip() or "14400")
+except ValueError:
+    _brain_scan_sec = 14400
+CHECK_INTERVAL_SECONDS = max(300, min(86400, _brain_scan_sec))
 MAX_ACCOUNT_AGE_DAYS = 30      # Consider "newly created" if < 30 days old
 
 # Off-Peak Scanning (Unified to 2 hours as requested)

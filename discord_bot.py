@@ -567,6 +567,20 @@ class BlockBrainBot(commands.Bot):
 
         print(f"📡 Channels loaded: {len(self.active_main_channels)} main, {len(self.active_escalation_channels)} escalation")
         print(f"   Age-based: {len(self.new_projects_channels)} new (≤30d), {len(self.established_projects_channels)} established (30-100d)")
+        n_tw = len(getattr(self.twitter, "_sessions", None) or [])
+        if n_tw == 0:
+            print(
+                f"{self._get_log_prefix()} ⚠️ Twikit: no cookie sessions — HVA brain scan cannot call Twitter/X. "
+                f"Add `cookies.json` under DATA_DIR (`{DATA_DIR}`) on this host (export from a logged-in browser session)."
+            )
+        elif getattr(self.twitter, "is_rate_limited", False):
+            ce = getattr(self.twitter, "cooldown_ends", None)
+            print(
+                f"{self._get_log_prefix()} ⚠️ Twikit: session pool in cooldown until {ce} — "
+                "brain scan will skip until cookies/auth recover or cooldown expires."
+            )
+        else:
+            print(f"{self._get_log_prefix()} ✔ Twikit: {n_tw} cookie session(s) for brain scan (interval {config.CHECK_INTERVAL_SECONDS}s).")
         print(f"👉 Try typing '!velcor3 ping' in your server to test responsiveness.")
         if config.ENABLE_DAILY_MINTS_AUTO and config.DAILY_MINTS_AUTO_CHANNEL_ID:
             print(
@@ -882,6 +896,21 @@ class BlockBrainBot(commands.Bot):
     @tasks.loop(seconds=config.CHECK_INTERVAL_SECONDS)
     async def monitor_twitter(self):
         try:
+            self.twitter.check_cooldown()
+            if not self.twitter._sessions:
+                print(
+                    f"\n{self._get_log_prefix()} ⛔ BRAIN SCAN SKIPPED: no Twikit cookie sessions "
+                    f"(place cookies.json under DATA_DIR={DATA_DIR})."
+                )
+                return
+            if self.twitter.is_rate_limited:
+                ce = self.twitter.cooldown_ends
+                print(
+                    f"\n{self._get_log_prefix()} ⛔ BRAIN SCAN SKIPPED: Twikit cooldown active "
+                    f"(until {ce}). Fix auth/cookies or wait."
+                )
+                return
+
             current_hour = datetime.now().hour
             is_off_peak = config.OFF_PEAK_HOURS[0] <= current_hour < config.OFF_PEAK_HOURS[1]
             scan_mode = "🌙 OFF-PEAK" if is_off_peak else "☀️ PEAK"
