@@ -331,7 +331,15 @@ class TwitterClient:
                             raise Exception(err or "Login failed")
                     
                     # Test connectivity/auth with a simple call
-                    await session['client'].get_user_by_screen_name('Twitter')
+                    try:
+                        await session['client'].get_user_by_screen_name('Twitter')
+                    except KeyError as ke:
+                        # twikit User parsing error (e.g. KeyError: 'urls') —
+                        # cookies ARE valid, the API responded, it's an in-memory
+                        # class mismatch. Count as healthy; will self-heal on restart.
+                        print(f"   OK Session @{username} cookies valid (twikit parse warn: {ke}){proxy_str}")
+                        valid_count += 1
+                        break
                     print(f"   OK Session @{username} is healthy{proxy_str}")
                     valid_count += 1
                     break # Success!
@@ -838,6 +846,9 @@ class TwitterClient:
             if "ClientTransaction" in err_msg and "attribute" in err_msg:
                 return fallback_pfp, None
             if "Multiple cookies exist" in err_msg:
+                return fallback_pfp, None
+            if isinstance(e, KeyError):
+                # twikit User parsing error — API worked, just missing field
                 return fallback_pfp, None
             print(f"      WARN get_x_profile_art @{handle}: {err_msg[:120]}")
             return fallback_pfp, None

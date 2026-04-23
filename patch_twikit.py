@@ -229,6 +229,51 @@ def _apply_monkey_patch():
 
     print("    [PATCH] In-memory monkey-patch applied (get_indices, get_animation_key, init).")
 
+    # ── patch User.__init__ ─────────────────────────────────────────────────
+    # The user.py file patch fixes the source on disk, but the User class is
+    # already loaded in memory on the first deploy. Wrap __init__ so any
+    # KeyError on missing 'urls', 'pinned_tweet_ids_str', etc. is recovered.
+    _patch_user_class("twikit.user", "User")
+    _patch_user_class("twikit.guest.user", "User")
+
+
+def _patch_user_class(module_path: str, class_name: str):
+    """Monkey-patch a twikit User class __init__ to tolerate missing legacy fields."""
+    try:
+        import importlib
+        mod = importlib.import_module(module_path)
+        UserClass = getattr(mod, class_name, None)
+        if UserClass is None:
+            return
+
+        _orig_init = UserClass.__init__
+
+        def _safe_user_init(self, *args, **kwargs):
+            try:
+                _orig_init(self, *args, **kwargs)
+            except (KeyError, TypeError) as e:
+                # Set safe defaults for any field that didn't get initialised
+                for attr, default in [
+                    ("description_urls", []),
+                    ("urls", []),
+                    ("pinned_tweet_ids", []),
+                    ("withheld_in_countries", []),
+                ]:
+                    if not hasattr(self, attr):
+                        setattr(self, attr, default)
+                # Re-raise if it's something completely unrelated
+                if not any(
+                    kw in str(e)
+                    for kw in ["urls", "pinned_tweet", "withheld", "entities", "legacy"]
+                ):
+                    raise
+
+        UserClass.__init__ = _safe_user_init
+        print(f"    [PATCH] {module_path}.{class_name}.__init__ safe-guarded.")
+    except Exception as e:
+        # Non-fatal: file-level patch + twitter_client KeyError handling covers us
+        print(f"    [PATCH] Could not patch {module_path}.{class_name}: {e}")
+
 
 # ── user.py safe-guards ───────────────────────────────────────────────────────
 
