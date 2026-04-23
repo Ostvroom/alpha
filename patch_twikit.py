@@ -237,8 +237,40 @@ def _apply_monkey_patch():
     _patch_user_class("twikit.guest.user", "User")
 
 
+def _fix_user_legacy_data(data):
+    """
+    Pre-process a raw twikit API data dict to inject missing fields that
+    cause KeyError in User.__init__. Mutates in-place (safe: it's a local copy).
+    """
+    if not isinstance(data, dict):
+        return
+    # twikit User data is usually {'legacy': {...}, 'rest_id': ...}
+    legacy = data.get('legacy') if isinstance(data.get('legacy'), dict) else data
+    if not isinstance(legacy, dict):
+        return
+
+    # Fix: legacy['entities']['description']['urls']
+    ent = legacy.get('entities')
+    if isinstance(ent, dict):
+        desc = ent.get('description')
+        if isinstance(desc, dict) and 'urls' not in desc:
+            desc['urls'] = []
+
+    # Fix: legacy['pinned_tweet_ids_str']
+    if 'pinned_tweet_ids_str' not in legacy:
+        legacy['pinned_tweet_ids_str'] = []
+
+    # Fix: legacy['withheld_in_countries']
+    if 'withheld_in_countries' not in legacy:
+        legacy['withheld_in_countries'] = []
+
+
 def _patch_user_class(module_path: str, class_name: str):
-    """Monkey-patch a twikit User class __init__ to tolerate missing legacy fields."""
+    """
+    Monkey-patch a twikit User class __init__ to tolerate missing legacy fields.
+    Strategy: pre-process the raw data dict BEFORE __init__ runs so ALL fields
+    (including followers_count and everything after 'urls') get initialized.
+    """
     try:
         import importlib
         mod = importlib.import_module(module_path)
@@ -249,29 +281,20 @@ def _patch_user_class(module_path: str, class_name: str):
         _orig_init = UserClass.__init__
 
         def _safe_user_init(self, *args, **kwargs):
+            # Pre-process every dict arg to inject missing legacy fields
+            # before __init__ runs, so the full object initializes correctly.
             try:
-                _orig_init(self, *args, **kwargs)
-            except (KeyError, TypeError) as e:
-                # Set safe defaults for any field that didn't get initialised
-                for attr, default in [
-                    ("description_urls", []),
-                    ("urls", []),
-                    ("pinned_tweet_ids", []),
-                    ("withheld_in_countries", []),
-                ]:
-                    if not hasattr(self, attr):
-                        setattr(self, attr, default)
-                # Re-raise if it's something completely unrelated
-                if not any(
-                    kw in str(e)
-                    for kw in ["urls", "pinned_tweet", "withheld", "entities", "legacy"]
-                ):
-                    raise
+                for arg in args:
+                    _fix_user_legacy_data(arg)
+                for v in kwargs.values():
+                    _fix_user_legacy_data(v)
+            except Exception:
+                pass
+            _orig_init(self, *args, **kwargs)
 
         UserClass.__init__ = _safe_user_init
-        print(f"    [PATCH] {module_path}.{class_name}.__init__ safe-guarded.")
+        print(f"    [PATCH] {module_path}.{class_name}.__init__ safe-guarded (pre-process).")
     except Exception as e:
-        # Non-fatal: file-level patch + twitter_client KeyError handling covers us
         print(f"    [PATCH] Could not patch {module_path}.{class_name}: {e}")
 
 
