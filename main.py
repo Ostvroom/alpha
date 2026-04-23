@@ -1,6 +1,11 @@
-import sys
+import base64
+import json
 import logging
+import os
+import sys
 import warnings
+from pathlib import Path
+
 from discord_bot import BlockBrainBot
 import config
 
@@ -14,6 +19,65 @@ logging.getLogger("twikit.utils").setLevel(logging.WARNING)
 
 # Suppress twikit's "Quality Filter" UserWarning (informational, not actionable)
 warnings.filterwarnings("ignore", category=UserWarning, module="twikit")
+
+
+def _materialize_cookies_from_env() -> None:
+    """
+    If cookies.json is missing but TWIKIT_COOKIES_B64 or TWIKIT_COOKIES_JSON is set,
+    write DATA_DIR/cookies.json once. For Render: put JSON in a Secret (env), not in git.
+    Never logs cookie contents.
+    """
+    from app_paths import DATA_DIR, ensure_dirs
+
+    ensure_dirs()
+    dest = Path(DATA_DIR) / "cookies.json"
+    if dest.is_file():
+        return
+    raw = ""
+    b64 = (os.getenv("TWIKIT_COOKIES_B64") or "").strip()
+    if b64:
+        try:
+            raw = base64.b64decode(b64).decode("utf-8")
+        except Exception as e:
+            print(f"[Velcor3] TWIKIT_COOKIES_B64 set but decode failed: {e}")
+            return
+    if not raw:
+        raw = (os.getenv("TWIKIT_COOKIES_JSON") or "").strip()
+    if not raw:
+        return
+    try:
+        json.loads(raw)
+    except json.JSONDecodeError as e:
+        print(f"[Velcor3] Cookie env payload is not valid JSON: {e}")
+        return
+    try:
+        dest.write_text(raw, encoding="utf-8")
+        print(f"[Velcor3] Wrote {dest} from environment (TWIKIT_COOKIES_B64 / TWIKIT_COOKIES_JSON).")
+    except OSError as e:
+        print(f"[Velcor3] Could not write cookies.json: {e}")
+
+
+def _print_startup_paths() -> None:
+    from app_paths import BASE_DIR, DATA_DIR, ensure_dirs
+
+    ensure_dirs()
+    cookie = Path(DATA_DIR) / "cookies.json"
+    db_bb = Path(DATA_DIR) / "block_brain.db"
+    print(
+        f"[Velcor3] DATA_DIR={DATA_DIR} "
+        f"(env DATA_DIR={'set' if (os.environ.get('DATA_DIR') or '').strip() else 'unset'}) "
+        f"| cookies.json={'yes' if cookie.is_file() else 'no'} "
+        f"| block_brain.db={'yes' if db_bb.is_file() else 'no'}"
+    )
+    if getattr(config, "VELCOR3_VERBOSE_LOGS", False):
+        print(f"[Velcor3] BASE_DIR={BASE_DIR} | CWD={os.getcwd()}")
+        print(
+            f"[Velcor3] brain_scan_interval_s={getattr(config, 'CHECK_INTERVAL_SECONDS', '?')} "
+            f"| DISCORD_CHANNEL_ID={getattr(config, 'DISCORD_CHANNEL_ID', 0)}"
+        )
+        logging.getLogger("discord").setLevel(logging.INFO)
+        logging.getLogger("discord.gateway").setLevel(logging.INFO)
+
 
 def main():
     # Windows consoles often default to cp1252, which crashes on emoji logs.
@@ -32,6 +96,9 @@ def main():
     
     if config.DISCORD_CHANNEL_ID == 0:
         print("Warning: DISCORD_CHANNEL_ID is not set. The bot will not be able to send alerts.")
+
+    _materialize_cookies_from_env()
+    _print_startup_paths()
 
     bot = BlockBrainBot()
     

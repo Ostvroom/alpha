@@ -4,6 +4,9 @@ from dotenv import load_dotenv
 # Ensure variables in .env override any system environment variables (to bypass corrupted tokens in memory)
 load_dotenv(override=True)
 
+# Extra startup / scan logging (Render-friendly). Set VELCOR3_VERBOSE_LOGS=1 for more detail.
+VELCOR3_VERBOSE_LOGS = os.getenv("VELCOR3_VERBOSE_LOGS", "0").strip().lower() in ("1", "true", "yes", "on")
+
 # Discord Configuration
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID")  # Optional: For guild-specific commands
