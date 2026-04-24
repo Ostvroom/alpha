@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import warnings
 from pathlib import Path
 
@@ -85,6 +86,26 @@ def _print_startup_paths() -> None:
         logging.getLogger("discord.gateway").setLevel(logging.INFO)
 
 
+def _start_website_server() -> None:
+    """
+    Start the FastAPI website server in a background daemon thread.
+    Runs in the same process as the bot so they share the same SQLite DB.
+    Port is controlled by the PORT env var (Render sets this automatically).
+    """
+    try:
+        port = int(os.getenv("PORT", "8000") or 8000)
+    except Exception:
+        port = 8000
+
+    try:
+        import uvicorn
+        from website_server import app  # import triggers database.init_db()
+        print(f"[Velcor3] Website server starting on port {port}", flush=True)
+        uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
+    except Exception as e:
+        print(f"[Velcor3] Website server failed to start: {e}", flush=True)
+
+
 def main():
     # Windows consoles often default to cp1252, which crashes on emoji logs.
     # Force UTF-8 with replacement to keep the bot running.
@@ -108,7 +129,7 @@ def main():
     if not config.DISCORD_TOKEN:
         print("Error: DISCORD_TOKEN not found in environment variables.", flush=True)
         sys.exit(1)
-    
+
     if config.DISCORD_CHANNEL_ID == 0:
         print(
             "Warning: DISCORD_CHANNEL_ID is not set. The bot will not be able to send alerts.",
@@ -118,14 +139,19 @@ def main():
     _materialize_cookies_from_env()
     _print_startup_paths()
 
+    # Start the website server in a background thread (shares same process = same DB)
+    web_thread = threading.Thread(target=_start_website_server, daemon=True, name="website-server")
+    web_thread.start()
+
     bot = BlockBrainBot()
-    
+
     try:
         print("Starting Velcor3...", flush=True)
         bot.run(config.DISCORD_TOKEN)
     except Exception as e:
         print(f"Fatal error running bot: {e}", flush=True)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
