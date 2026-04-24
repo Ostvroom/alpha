@@ -698,8 +698,8 @@ class TwitterClient:
             return tweets
         except Exception as e:
             err_msg = str(e)
-            if "'value'" in err_msg:
-                print(f"      ℹ️ Timeline: No tweets found (0 tweets or restricted)")
+            if "'value'" in err_msg or "'entries'" in err_msg:
+                print(f"      ℹ️ Timeline: No tweets / empty graph (0 tweets, restricted, or API shape)")
                 return []
 
             if not err_msg:
