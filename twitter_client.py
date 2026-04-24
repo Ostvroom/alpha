@@ -88,7 +88,11 @@ class TwitterClient:
             print(f"Primary session: cookies.json{proxy_msg}", flush=True)
         
         # Backup cookies (data/ or project root)
-        for backup_name in ("cookies_backup.json", "cookies_backup2.json"):
+        # Supports:
+        # - cookies_backup.json
+        # - cookies_backup2.json, cookies_backup3.json, ... cookies_backup20.json
+        backup_names = ["cookies_backup.json"] + [f"cookies_backup{i}.json" for i in range(2, 21)]
+        for backup_name in backup_names:
             backup_cookie_path = _pick_cookie_file(backup_name)
             if not backup_cookie_path:
                 continue
