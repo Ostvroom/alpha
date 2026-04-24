@@ -37,6 +37,26 @@
     .ps{font-family:"JetBrains Mono",monospace;font-size:10px;color:rgba(240,232,192,.45)}
     /* Panel body scroll: vertical only; tables can scroll horizontally inside */
     .pb{padding:10px 14px;max-height:74vh;overflow-y:auto;overflow-x:hidden}
+    /* In-panel vertical scrollbar (match site style) */
+    .pb{
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,204,0,.40) rgba(0,0,0,.18);
+    }
+    .pb::-webkit-scrollbar{width:10px;height:10px}
+    .pb::-webkit-scrollbar-track{
+      background:rgba(0,0,0,.18);
+      border-radius:999px;
+    }
+    .pb::-webkit-scrollbar-thumb{
+      background:rgba(255,204,0,.22);
+      border:1px solid rgba(255,204,0,.20);
+      border-radius:999px;
+    }
+    .pb::-webkit-scrollbar-thumb:hover{
+      background:rgba(255,204,0,.34);
+      border-color:rgba(255,204,0,.28);
+    }
+    .pb::-webkit-scrollbar-corner{background:transparent}
 
     /* Horizontal scroller (inside the box) for the table */
     .tableScroll{
