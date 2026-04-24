@@ -460,6 +460,10 @@ async def fetch_collection_floor_price(session: aiohttp.ClientSession, contract:
 async def refresh_eth_usd_price(session: aiohttp.ClientSession):
     """Background task to keep ETH/USD price fresh."""
     global _cached_eth_usd
+    try:
+        price_refresh_s = max(30, int(os.getenv("ETH_USD_PRICE_INTERVAL_S", "120")))
+    except Exception:
+        price_refresh_s = 120
     while True:
         try:
             async with session.get(
@@ -476,7 +480,7 @@ async def refresh_eth_usd_price(session: aiohttp.ClientSession):
                         print(f"\033[90m[PRICE]\033[0m ETH/USD updated: ${_cached_eth_usd:,.2f}")
         except Exception as e:
             print(f"\033[93m[PRICE WARN]\033[0m ETH/USD refresh failed: {e}")
-        await asyncio.sleep(60)
+        await asyncio.sleep(price_refresh_s)
 
 # Discord only shows embed author icons for direct image URLs (PNG/JPG). SVG and some CDNs don't display.
 EFFIGY_AVATAR = "https://cdn.stamp.fyi/avatar/eth:{address}?s=300"  # Fast reliable CDN mapping ENS and identicons
@@ -664,23 +668,29 @@ async def check_eth_block(client, token_channel_id: int, nft_channel_id: int):
     async with aiohttp.ClientSession() as session:
         enable_erc20 = os.getenv("ENABLE_ETH_ERC20", "0").strip().lower() not in ("0", "false", "no", "off")
         enable_erc721 = os.getenv("ENABLE_ETH_NFT", "1").strip().lower() not in ("0", "false", "no", "off")
+        # Defaults tuned for minimal Etherscan usage while still covering all wallets (round-robin).
+        # One wallet per tick × longer sleep ≈ far fewer calls/sec than batch=5 every 30s.
+        # Raise ETH_WALLET_BATCH_SIZE and/or lower ETH_SCAN_INTERVAL if you need snappier alerts.
         try:
-            etherscan_offset = max(1, int(os.getenv("ETHERSCAN_OFFSET", "5")))
+            etherscan_offset = max(1, int(os.getenv("ETHERSCAN_OFFSET", "3")))
         except Exception:
-            etherscan_offset = 5
+            etherscan_offset = 3
         try:
-            scan_interval_s = max(10, int(os.getenv("ETH_SCAN_INTERVAL", "30")))
+            scan_interval_s = max(10, int(os.getenv("ETH_SCAN_INTERVAL", "60")))
         except Exception:
-            scan_interval_s = 30
+            scan_interval_s = 60
         try:
-            wallet_batch_size = max(1, int(os.getenv("ETH_WALLET_BATCH_SIZE", "5")))
+            wallet_batch_size = max(1, int(os.getenv("ETH_WALLET_BATCH_SIZE", "1")))
         except Exception:
-            wallet_batch_size = 5
+            wallet_batch_size = 1
         if not enable_erc20:
             print("[ETH] ERC20 tracking disabled via ENABLE_ETH_ERC20=0")
         if not enable_erc721:
             print("[ETH] NFT tracking disabled via ENABLE_ETH_NFT=0")
-        print(f"[ETH] Etherscan offset={etherscan_offset}, scan_interval={scan_interval_s}s")
+        print(
+            f"[ETH] Etherscan offset={etherscan_offset}, scan_interval={scan_interval_s}s, "
+            f"wallets_per_tick={wallet_batch_size} (~{len(tracked_eth_wallets) or '?'} tracked)"
+        )
         if not ETHSCAN_API_KEY:
             print(
                 "\033[93m[ETHERSCAN]\033[0m ETHSCAN_API_KEY is missing — v2 account APIs return no "

@@ -1,0 +1,6 @@
+---
+description: Project language — use English for this repository.
+alwaysApply: true
+---
+
+- Use **English** for assistant replies, commit messages, PR descriptions, code comments, and user-facing copy you add in this repo (unless an existing file is intentionally localized).
