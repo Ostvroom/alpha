@@ -140,6 +140,20 @@ def init_db():
         except Exception:
             pass
 
+    # Always backfill alerted_discord=1 for projects that have alerted_at set.
+    # alerted_at is only written when we post to Discord, so this is always safe.
+    try:
+        cursor.execute(
+            """
+            UPDATE projects
+            SET alerted_discord = 1
+            WHERE alerted_at IS NOT NULL
+              AND COALESCE(alerted_discord, 0) = 0
+            """
+        )
+    except Exception:
+        pass
+
     conn.commit()
     conn.close()
 
