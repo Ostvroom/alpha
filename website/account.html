@@ -16,15 +16,16 @@
     .brand{display:flex;align-items:center;gap:10px}
     .brand img{width:30px;height:30px;border:1px solid rgba(255,204,0,.30);border-radius:6px}
     .brand span{font-family:"JetBrains Mono",monospace;letter-spacing:.14em;text-transform:uppercase;color:#ffcc00;font-weight:700;font-size:12px}
-    .btn{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,204,0,.25);color:rgba(240,232,192,.80)}
+    .btn{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,204,0,.25);color:rgba(240,232,192,.80);display:inline-block;cursor:pointer;background:transparent}
     .btn:hover{border-color:rgba(255,204,0,.45);color:#ffcc00}
+    .btn.primary{background:rgba(255,204,0,.12);border-color:rgba(255,204,0,.38);color:#ffcc00}
     .grid{margin-top:14px;display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
     .card{border:1px solid rgba(255,204,0,.18);border-radius:14px;background:rgba(9,9,9,.7);overflow:hidden}
     .card.span12{grid-column:span 12}
     .ph{padding:12px 14px;border-bottom:1px solid rgba(255,204,0,.12);display:flex;justify-content:space-between;align-items:center}
     .pt{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:rgba(240,232,192,.70)}
     .ps{font-family:"JetBrains Mono",monospace;font-size:10px;color:rgba(240,232,192,.45)}
-    .pb{padding:12px 14px}
+    .pb{padding:14px 16px}
     .row{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
     .av{width:56px;height:56px;border-radius:14px;border:1px solid rgba(255,204,0,.22);background:rgba(255,204,0,.06);overflow:hidden}
     .av img{width:100%;height:100%;object-fit:cover;display:block}
@@ -33,12 +34,23 @@
     .badge{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:999px;
       font-family:"JetBrains Mono",monospace;font-size:10px;border:1px solid rgba(255,204,0,.12);background:rgba(255,204,0,.08);color:rgba(240,232,192,.88)}
     .badge b{font-weight:800;color:#ffcc00}
-    .task{padding:10px 0;border-bottom:1px solid rgba(255,204,0,.10);display:flex;align-items:center;justify-content:space-between;gap:12px}
-    .task:last-child{border-bottom:none}
-    .taskTitle{font-weight:800;color:#ffcc00}
-    .taskMeta{margin-top:6px;font-family:"JetBrains Mono",monospace;font-size:10px;color:rgba(240,232,192,.45)}
-    .claimBtn{cursor:pointer}
+    .badge.g{border-color:rgba(120,255,180,.22);background:rgba(120,255,180,.08)}
     .err{padding:12px 14px;color:rgba(255,150,150,.88);font-family:"JetBrains Mono",monospace;font-size:11px}
+    .feat{margin:10px 0 0;padding:0;list-style:none}
+    .feat li{padding:8px 0;border-bottom:1px solid rgba(255,204,0,.08);font-size:14px;color:rgba(240,232,192,.82);display:flex;gap:10px;align-items:flex-start}
+    .feat li:last-child{border-bottom:none}
+    .feat li::before{content:"✓";color:#7dffb0;font-weight:800;flex:0 0 auto}
+    .lead{font-size:13px;line-height:1.55;color:rgba(240,232,192,.68);margin-top:8px}
+    .inp{width:100%;margin-top:8px;padding:11px 12px;border-radius:10px;border:1px solid rgba(255,204,0,.18);background:rgba(0,0,0,.28);color:#f0e8c0;font-family:"JetBrains Mono",monospace;font-size:12px}
+    .modal{position:fixed;inset:0;z-index:9998;display:none;align-items:center;justify-content:center}
+    .modal.on{display:flex}
+    .modal-back{position:absolute;inset:0;background:rgba(0,0,0,.62)}
+    .modal-card{position:relative;width:min(520px,94vw);background:#0b0b0d;border:1px solid rgba(255,204,0,.26);border-radius:14px;box-shadow:0 28px 120px rgba(0,0,0,.78);overflow:hidden}
+    .modal-head{padding:12px 14px;border-bottom:1px solid rgba(255,204,0,.14);display:flex;justify-content:space-between;align-items:center;gap:12px}
+    .modal-title{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,204,0,.92)}
+    .modal-close{border:1px solid rgba(255,204,0,.35);background:rgba(255,204,0,.06);color:#ffcc00;width:36px;height:36px;font-size:22px;cursor:pointer;border-radius:8px}
+    .modal-body{padding:14px 16px 16px;max-height:70vh;overflow:auto}
+    .ok{color:rgba(120,255,180,.92);font-family:"JetBrains Mono",monospace;font-size:11px;margin-top:8px}
   </style>
 </head>
 <body>
@@ -57,7 +69,7 @@
       <div class="card span12">
         <div class="ph">
           <div class="pt">Profile</div>
-          <div class="ps" id="points">—</div>
+          <div class="ps" id="tierPill">—</div>
         </div>
         <div class="pb">
           <div class="row">
@@ -67,7 +79,7 @@
               <div class="meta" id="uid">—</div>
               <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
                 <span class="badge"><b>Points</b> <span id="pointsNum">0</span></span>
-                <span class="badge"><b>Day</b> <span id="day">—</span></span>
+                <span class="badge" id="premBadge" style="display:none"><b>Premium</b> active</span>
               </div>
             </div>
           </div>
@@ -76,134 +88,137 @@
 
       <div class="card span12">
         <div class="ph">
-          <div class="pt">Tasks · earn points</div>
-          <div class="ps">Claim once or daily</div>
+          <div class="pt">Premium</div>
+          <div class="ps">Unlock the full stack</div>
         </div>
-        <div class="pb" id="tasks"></div>
+        <div class="pb">
+          <p class="lead"><b>Nerds Alpha Premium</b> removes interruptions and turns on every live feed, dashboard, and pro tool we ship.</p>
+          <ul class="feat">
+            <li><span><b>No ads</b> — clean UI, no promo modals.</span></li>
+            <li><span><b>All features</b> — full projects, token alerts, daily finds, and future drops.</span></li>
+            <li><span><b>24/7 live feeds</b> — same real-time pipelines as our Discord hunters.</span></li>
+            <li><span><b>Member-first roadmap</b> — early access to new scanners, wallets, and AI signals.</span></li>
+          </ul>
+          <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+            <a class="btn primary" id="joinDiscord" href="https://discord.gg/MDqvrdhFDY" target="_blank" rel="noreferrer">Join Discord · upgrade</a>
+            <a class="btn" href="/early-access">Payment &amp; tiers</a>
+          </div>
+        </div>
       </div>
 
       <div class="card span12">
         <div class="ph">
-          <div class="pt">Earn points on X</div>
-          <div class="ps">Reply to our tweet → paste link</div>
+          <div class="pt">Advertise</div>
+          <div class="ps">Sponsored visibility</div>
         </div>
         <div class="pb">
-          <div class="meta">Tweet URL</div>
-          <input id="tweetUrl" class="btn" style="width:100%;text-transform:none;letter-spacing:.02em;font-family:JetBrains Mono,monospace;background:rgba(0,0,0,.25);text-align:left" placeholder="https://x.com/handle/status/123..." />
-          <div style="height:10px"></div>
-          <div class="meta">Your reply URL</div>
-          <input id="replyUrl" class="btn" style="width:100%;text-transform:none;letter-spacing:.02em;font-family:JetBrains Mono,monospace;background:rgba(0,0,0,.25);text-align:left" placeholder="https://x.com/yourname/status/456..." />
-          <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-            <a href="#" class="btn" id="claimX">Claim X points</a>
-            <span class="ps" id="xStat">—</span>
-          </div>
+          <p class="lead">Put your project <b>at the top</b> of Nerds Alpha: pinned placements, homepage callouts, and co-marketing with our community pulse. We’ll review every request manually.</p>
+          <button type="button" class="btn primary" id="openAd">Advertise your project</button>
         </div>
       </div>
     </div>
   </div>
 
+  <div class="modal" id="adModal" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Advertise">
+    <div class="modal-back" id="adModalBack"></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <div class="modal-title">Advertise · inquiry</div>
+        <button class="modal-close" type="button" id="adModalClose" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="meta">Project name / ticker</div>
+        <input class="inp" id="adName" maxlength="120" placeholder="@YourProject or display name" />
+        <div class="meta" style="margin-top:12px">Link (X, site, or deck)</div>
+        <input class="inp" id="adUrl" maxlength="500" placeholder="https://…" />
+        <div class="meta" style="margin-top:12px">Short pitch</div>
+        <textarea class="inp" id="adPitch" rows="4" maxlength="1200" style="resize:vertical;min-height:88px" placeholder="What you want promoted, budget range, timeline…"></textarea>
+        <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+          <button type="button" class="btn primary" id="adSubmit">Submit inquiry</button>
+          <span class="ps" id="adStat"></span>
+        </div>
+        <div class="ok" id="adOk" style="display:none">Received — we’ll reach out on Discord when possible.</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/community_pulse.js" defer></script>
   <script>
     function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;").replace(/'/g,"&#39;");}
     function setText(id, v){ var el=document.getElementById(id); if(el) el.textContent = String(v||"—"); }
-    function setHtml(id, v){ var el=document.getElementById(id); if(el) el.innerHTML = v; }
 
     async function load(){
       try{
         var meR = await fetch("/api/me",{credentials:"include"});
-        if(!meR.ok){ setHtml("tasks", '<div class="err">Unauthorized. Please connect Discord first.</div>'); return; }
+        if(!meR.ok){
+          document.querySelector(".grid").innerHTML = '<div class="card span12"><div class="pb"><div class="err">Unauthorized. Connect Discord first.</div></div></div>';
+          return;
+        }
         var me = await meR.json();
         var display = (me.global_name||me.username||"Discord user").trim();
         setText("name", display);
         setText("uid", "Discord ID · " + (me.user_id||"—"));
         setText("pointsNum", me.points||0);
-        setText("points", (me.points||0) + " pts");
+        var prem = !!me.is_premium;
+        setText("tierPill", prem ? "Premium" : "Free");
+        var pb = document.getElementById("premBadge");
+        if (pb) pb.style.display = prem ? "inline-flex" : "none";
         var av = document.getElementById("avatar");
         if(av){
           av.src = (me.avatar_url||"");
           av.onerror = function(){ try{ av.style.display="none"; }catch(e){} };
         }
-
-        var tR = await fetch("/api/tasks",{credentials:"include"});
-        if(!tR.ok){ setHtml("tasks", '<div class="err">Could not load tasks.</div>'); return; }
-        var d = await tR.json();
-        setText("day", d.day||"—");
-        var tasks = (d && d.tasks) || [];
-        if(!tasks.length){ setHtml("tasks", '<div class="ps">No tasks yet.</div>'); return; }
-
-        var html = "";
-        tasks.forEach(function(t){
-          var claimed = !!t.claimed;
-          var btn = claimed
-            ? '<span class="badge"><b>Claimed</b></span>'
-            : '<a href="#" class="btn claimBtn" data-task="'+esc(t.id)+'">Claim +'+esc(t.points)+' </a>';
-          html += '<div class="task">'
-            + '<div>'
-              + '<div class="taskTitle">'+esc(t.title||t.id)+'</div>'
-              + '<div class="taskMeta">'+esc((t.type||"once").toUpperCase())+' · +'+esc(t.points||0)+' pts</div>'
-            + '</div>'
-            + '<div>'+btn+'</div>'
-          + '</div>';
-        });
-        setHtml("tasks", html);
-
-        document.querySelectorAll(".claimBtn").forEach(function(a){
-          a.addEventListener("click", async function(e){
-            e.preventDefault();
-            var tid = a.getAttribute("data-task") || "";
-            a.textContent = "Claiming…";
-            try{
-              var r = await fetch("/api/tasks/claim", {
-                method:"POST",
-                credentials:"include",
-                headers: {"Content-Type":"application/json"},
-                body: JSON.stringify({task_id: tid})
-              });
-              if(!r.ok){
-                var txt=""; try{ txt = await r.text(); }catch(e){}
-                alert("Failed: " + (txt || ("HTTP " + r.status)));
-                return;
-              }
-              await load();
-            } finally {}
-          });
-        });
+        try{
+          var inf = await fetch("/api/info");
+          if (inf.ok){
+            var j = await inf.json();
+            var inv = (j && j.discord_invite) ? String(j.discord_invite) : "";
+            var a = document.getElementById("joinDiscord");
+            if (a && inv) a.href = inv;
+          }
+        }catch(e){}
       } catch(e){
-        setHtml("tasks", '<div class="err">Failed to load dashboard.</div>');
+        document.querySelector(".grid").innerHTML = '<div class="card span12"><div class="pb"><div class="err">Failed to load.</div></div></div>';
       }
     }
-    (function initX(){
-      var btn = document.getElementById("claimX");
-      if (!btn) return;
-      btn.addEventListener("click", async function(e){
-        e.preventDefault();
-        var tw = String((document.getElementById("tweetUrl")||{}).value || "").trim();
-        var rp = String((document.getElementById("replyUrl")||{}).value || "").trim();
-        var st = document.getElementById("xStat");
-        if (st) st.textContent = "Submitting…";
+
+    function _openAd(){ var m=document.getElementById("adModal"); if(m){ m.classList.add("on"); m.setAttribute("aria-hidden","false"); document.body.style.overflow="hidden"; }}
+    function _closeAd(){ var m=document.getElementById("adModal"); if(m){ m.classList.remove("on"); m.setAttribute("aria-hidden","true"); document.body.style.overflow=""; }}
+
+    (function(){
+      var o = document.getElementById("openAd");
+      var c = document.getElementById("adModalClose");
+      var b = document.getElementById("adModalBack");
+      if (o) o.addEventListener("click", function(e){ e.preventDefault(); _openAd(); });
+      if (c) c.addEventListener("click", _closeAd);
+      if (b) b.addEventListener("click", _closeAd);
+      var sub = document.getElementById("adSubmit");
+      if (sub) sub.addEventListener("click", async function(){
+        var st = document.getElementById("adStat");
+        var ok = document.getElementById("adOk");
+        if (ok) ok.style.display="none";
+        var name = String((document.getElementById("adName")||{}).value||"").trim();
+        var url = String((document.getElementById("adUrl")||{}).value||"").trim();
+        var pitch = String((document.getElementById("adPitch")||{}).value||"").trim();
+        if (!name){ if(st) st.textContent="Add a project name."; return; }
+        if (st) st.textContent="Sending…";
         try{
-          var r = await fetch("/api/x/claim", {
+          var r = await fetch("/api/advertise/lead", {
             method:"POST",
             credentials:"include",
-            headers: {"Content-Type":"application/json"},
-            body: JSON.stringify({tweet_url: tw, reply_url: rp})
+            headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({ project_name: name, project_url: url, pitch: pitch })
           });
-          var txt = "";
-          try{ txt = await r.text(); }catch(ex){}
-          if(!r.ok){
-            if (st) st.textContent = ("Failed: " + (txt||("HTTP "+r.status))).slice(0,160);
-            return;
-          }
-          var js = {};
-          try{ js = JSON.parse(txt); }catch(ex){ js = {}; }
-          if (st) st.textContent = "Claimed +" + (js.points_awarded||0) + " · Total " + (js.total_points||0);
-          await load();
-        } catch(ex){
-          if (st) st.textContent = "Network error";
-        }
+          var txt = ""; try{ txt = await r.text(); }catch(e){}
+          if (!r.ok){ if(st) st.textContent = (txt||("HTTP "+r.status)).slice(0,120); return; }
+          if (st) st.textContent="";
+          if (ok) ok.style.display="block";
+          setTimeout(_closeAd, 2200);
+        }catch(ex){ if(st) st.textContent="Network error"; }
       });
     })();
+
     load();
   </script>
 </body>
 </html>
-

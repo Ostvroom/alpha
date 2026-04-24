@@ -787,7 +787,14 @@ async def api_me(request: Request):
     if uid <= 0:
         raise HTTPException(401, "Unauthorized")
     u = _acct_get_user(uid) or {"user_id": uid, "username": "", "global_name": "", "avatar_url": "", "points": 0}
-    return u
+    roles = await _discord_fetch_member_roles(uid)
+    is_premium = _member_roles_include_premium(roles)
+    engage_tweet_url = (os.getenv("NA_COMMUNITY_ENGAGE_TWEET_URL") or "").strip()
+    return {
+        **u,
+        "is_premium": bool(is_premium),
+        "engage_tweet_url": engage_tweet_url,
+    }
 
 
 @app.get("/api/tasks")
@@ -830,6 +837,42 @@ async def api_tasks(request: Request):
         claimed = (tid in claimed_today) if ttype == "daily" else (tid in claimed_once)
         out.append({**t, "claimed": bool(claimed)})
     return {"tasks": out, "day": day}
+
+
+class AdvertiseLeadRequest(BaseModel):
+    project_name: str
+    project_url: str = ""
+    pitch: str = ""
+
+
+@app.post("/api/advertise/lead")
+async def api_advertise_lead(request: Request, body: AdvertiseLeadRequest):
+    """Store a sponsored-placement inquiry (admin can follow up in Discord)."""
+    if not _DEV_PREVIEW and not _has_access(request):
+        raise HTTPException(401, "Unauthorized")
+    tok = request.cookies.get(ACCESS_COOKIE, "")
+    payload = _verify_access_token(tok) or {}
+    uid = int(payload.get("uid") or 0)
+    if uid <= 0:
+        raise HTTPException(401, "Unauthorized")
+    name = (body.project_name or "").strip()[:120]
+    if not name:
+        raise HTTPException(400, "project_name required")
+    url_s = (body.project_url or "").strip()[:500]
+    pitch = (body.pitch or "").strip()[:1200]
+    try:
+        feed_events.add_event(
+            kind="advertise_inquiry",
+            guild_id=int(GUILD_ID or 0),
+            channel_id=0,
+            title=f"Advertise: {name}",
+            body=pitch or "(no pitch)",
+            url=url_s,
+            extra={"user_id": uid, "project_name": name, "project_url": url_s},
+        )
+    except Exception:
+        raise HTTPException(500, "Could not save inquiry")
+    return {"ok": True}
 
 
 class TaskClaimRequest(BaseModel):
@@ -960,6 +1003,35 @@ async def _fetch_sol_price_usd(session: aiohttp.ClientSession) -> float:
             return float(d["solana"]["usd"])
     except Exception:
         return float(getattr(config, "PAYMENT_PRICE_FALLBACK_SOL_USD", 150.0))
+
+
+async def _discord_fetch_member_roles(user_id: int) -> list[str]:
+    """Guild member role IDs for premium checks (website /api/me)."""
+    if not DISCORD_TOKEN or not GUILD_ID or int(user_id or 0) <= 0:
+        return []
+    url = f"{DISCORD_API}/guilds/{GUILD_ID}/members/{int(user_id)}"
+    headers = {"Authorization": f"Bot {DISCORD_TOKEN}"}
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as r:
+                if r.status != 200:
+                    return []
+                js = await r.json()
+                roles = js.get("roles") if isinstance(js, dict) else None
+                if not isinstance(roles, list):
+                    return []
+                return [str(x) for x in roles]
+    except Exception:
+        return []
+
+
+def _member_roles_include_premium(role_ids: list[str]) -> bool:
+    ids = {str(x) for x in role_ids}
+    if MONTHLY_ROLE_ID and str(MONTHLY_ROLE_ID) in ids:
+        return True
+    if LIFETIME_ROLE_ID and str(LIFETIME_ROLE_ID) in ids:
+        return True
+    return False
 
 
 async def _discord_grant_role(session: aiohttp.ClientSession, user_id: int, role_id: int) -> tuple[bool, str]:
