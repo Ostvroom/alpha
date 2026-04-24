@@ -53,6 +53,8 @@ from trackers import kolfi_tokens_client as kolfi
 from app_paths import DATA_DIR, ensure_dirs
 
 ensure_dirs()
+database.init_db()  # Ensure all tables (projects, follows, etc.) exist on startup
+feed_events.init_db()  # Ensure feed_events table exists
 
 DISCORD_TOKEN: str = config.DISCORD_TOKEN or ""
 GUILD_ID: int = int(config.DISCORD_GUILD_ID or 0)
