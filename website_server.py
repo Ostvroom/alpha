@@ -1446,7 +1446,8 @@ async def api_kol_dashboard(
     top = max(1, min(25, int(top or 5)))
     per_bucket = max(1, min(25, int(per_bucket or 5)))
 
-    cache_key = f"kol_dashboard:{hours:.2f}:{top}:{per_bucket}"
+    # v2: left leaderboard filters by last_alert_ts (rolling window), not first_alert_ts
+    cache_key = f"kol_dashboard:v2:{hours:.2f}:{top}:{per_bucket}"
 
     async def _build():
         from datetime import datetime, timezone, timedelta
@@ -1474,14 +1475,17 @@ async def api_kol_dashboard(
             now = datetime.now(timezone.utc)
             cutoff_top = now - timedelta(hours=hours)
 
-            # Top: only mints we alerted, first site alert within rolling window; ATHx from persisted first KOL call MC.
+            # Top: mints we *recently* alerted (last_alert_ts in window). All-time column uses full watchlist.
+            # Using first_alert_ts here made left === right whenever every top coin was first seen that day.
             watch_by_mint = _kolfi_alert_watchlist_by_mint()
             watch_entries: list = []
             for mk, ent in watch_by_mint.items():
                 if not isinstance(ent, dict):
                     continue
-                dt_fa = _parse_iso_dt(str(ent.get("first_alert_ts") or ""))
-                if not dt_fa or dt_fa < cutoff_top:
+                dt_recent = _parse_iso_dt(
+                    str(ent.get("last_alert_ts") or ent.get("first_alert_ts") or "")
+                )
+                if not dt_recent or dt_recent < cutoff_top:
                     continue
                 mint_s = str(ent.get("mint") or mk or "").strip()
                 if not mint_s:
@@ -1529,7 +1533,7 @@ async def api_kol_dashboard(
                 chart = f"https://gmgn.ai/sol/token/{mint}" if mint else ""
                 dex = str((snap or {}).get("dexscreener_url") or (snap or {}).get("dexUrl") or "")
                 thumb = await _thumb_url_cached(session, snap or {}, mint) if mint else ""
-                alert_ts = str(ent.get("first_alert_ts") or "").strip()
+                alert_ts = str(ent.get("last_alert_ts") or ent.get("first_alert_ts") or "").strip()
                 rows_top.append(
                     {
                         "ticker": tick,
