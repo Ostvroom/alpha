@@ -1217,7 +1217,7 @@ def _latest_profile_map(*, limit: int = 400) -> dict[str, dict]:
 async def api_projects_trending(request: Request, limit: int = 5):
     if not _DEV_PREVIEW and not _has_access(request):
         raise HTTPException(401, "Unauthorized")
-    limit = max(1, min(20, int(limit or 5)))
+    limit = max(1, min(50, int(limit or 5)))
     # Trending: distinct HVAs over the last 30 days (computed from follows table).
     rows = database.get_trending_projects_30d(limit=limit)
     if not rows:
@@ -1283,7 +1283,6 @@ async def api_projects_trending(request: Request, limit: int = 5):
                 "banner_url": p.get("banner_url") or "",
             }
         )
-    # No need to top-up: DB query already returns enough rows for limit<=20.
     return {"items": out[:limit]}
 
 

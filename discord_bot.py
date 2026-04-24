@@ -2347,6 +2347,7 @@ class BlockBrainBot(commands.Bot):
                                             "age_days": int(age) if isinstance(age, (int, float)) else None,
                                             "followers": int(getattr(account, "followers_count", 0) or 0),
                                             "hva": str(hva_handle or ""),
+                                            "hva_count": int(num_hvas or 0),
                                             "interaction": str(interaction_type or ""),
                                             "pfp_url": str(pfp or ""),
                                             "banner_url": str(ban or ""),

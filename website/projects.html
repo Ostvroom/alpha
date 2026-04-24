@@ -212,6 +212,20 @@
     </div>
   </div>
 
+  <div class="modal" id="trendModal" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Trending top 50">
+    <div class="modal-back" id="trendModalBack"></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">🔥 Trending · top 50</div>
+          <div class="modal-sub" id="trendModalStat">—</div>
+        </div>
+        <button class="modal-close" type="button" id="trendModalClose" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body" id="trendModalBody"></div>
+    </div>
+  </div>
+
   <div class="gate" id="gate">
     <div class="gate-back" id="gateBack"></div>
     <div class="gate-card" role="dialog" aria-modal="true" aria-label="Access gate">
@@ -256,9 +270,8 @@
       return '<span class="badge '+esc(cls||"")+'"><b>'+esc(label)+'</b> '+esc(v)+'</span>';
     }
 
-    function renderTrending(items){
-      var el=document.getElementById("trending");
-      if(!items||!items.length){el.innerHTML='<div class="ps">No data yet.</div>';return;}
+    function _trendingRowsHtml(items){
+      if(!items||!items.length) return '<div class="ps">No data yet.</div>';
       var html="";
       items.forEach(function(p, idx){
         var url = p.url || ("https://x.com/" + (p.handle||""));
@@ -275,7 +288,12 @@
         html+='</div>';
         html+='</div>';
       });
-      el.innerHTML=html;
+      return html;
+    }
+    function renderTrending(items){
+      var el=document.getElementById("trending");
+      if(!el) return;
+      el.innerHTML=_trendingRowsHtml(items);
     }
 
     function renderNew(items){
@@ -291,7 +309,11 @@
         html+='<div>';
         html+='<div class="titleLine"><a class="handle" href="'+esc(url)+'">'+esc(p.title||"Escalation")+'</a></div>';
         if (p.body) html+='<div class="desc">'+esc(p.body).slice(0,180)+'</div>';
+        var hvaN = extra.hva_count;
+        if (hvaN === undefined || hvaN === null || hvaN === "") hvaN = extra.num_hvas;
+        var hvaNum = (hvaN !== undefined && hvaN !== null && hvaN !== "") ? Number(hvaN) : NaN;
         html+='<div class="sub">'
+          +((!isNaN(hvaNum) && hvaNum > 0) ? badge("HVAs", String(hvaNum), "y") : "")
           +badge("TYPE", (extra.interaction||"signal").toString(), "p")
           +badge("AT", fmtTime(p.ts||""), "k")
           +'</div>';
@@ -374,7 +396,11 @@
         html+='<div>';
         html+='<div class="titleLine"><a class="handle" href="'+esc(url)+'">'+esc(p.title||"Escalation")+'</a></div>';
         if (p.body) html+='<div class="desc">'+esc(p.body).slice(0,260)+'</div>';
+        var hvaN2 = extra.hva_count;
+        if (hvaN2 === undefined || hvaN2 === null || hvaN2 === "") hvaN2 = extra.num_hvas;
+        var hvaNum2 = (hvaN2 !== undefined && hvaN2 !== null && hvaN2 !== "") ? Number(hvaN2) : NaN;
         html+='<div class="sub">'
+          +((!isNaN(hvaNum2) && hvaNum2 > 0) ? badge("HVAs", String(hvaNum2), "y") : "")
           +badge("TYPE", (extra.interaction||"signal").toString(), "p")
           +badge("AT", fmtTime(p.ts||""), "k")
           +'</div>';
@@ -382,6 +408,46 @@
         html+='</div>';
       });
       body.innerHTML = html;
+    }
+
+    function _openTrendModal(){
+      var m = document.getElementById("trendModal");
+      if (!m) return;
+      m.classList.add("on");
+      m.setAttribute("aria-hidden","false");
+      try { document.body.style.overflow="hidden"; } catch(e) {}
+    }
+    function _closeTrendModal(){
+      var m = document.getElementById("trendModal");
+      if (!m) return;
+      m.classList.remove("on");
+      m.setAttribute("aria-hidden","true");
+      try { document.body.style.overflow=""; } catch(e) {}
+    }
+
+    async function openTrending50(){
+      if (document.body.classList.contains("locked")) return;
+      _openTrendModal();
+      var body = document.getElementById("trendModalBody");
+      var stat = document.getElementById("trendModalStat");
+      if (body) body.innerHTML = '<div class="modal-wait">Loading trending…</div>';
+      if (stat) stat.textContent = "Loading…";
+      try{
+        var r = await fetch("/api/projects/trending?limit=50",{credentials:"include"});
+        if (!r.ok){
+          var t=""; try{ t = await r.text(); }catch(e){}
+          if (body) body.innerHTML = '<div class="modal-err">Failed to load: HTTP '+esc(r.status)+'<br/>'+esc((t||"").slice(0,240))+'</div>';
+          if (stat) stat.textContent = "Error";
+          return;
+        }
+        var d = await r.json();
+        var items = (d && d.items) || [];
+        if (stat) stat.textContent = (items.length || 0) + " projects · 30d HVA signal rank";
+        if (body) body.innerHTML = _trendingRowsHtml(items);
+      } catch(e){
+        if (body) body.innerHTML = '<div class="modal-err">Failed to load: '+esc(String(e||""))+'</div>';
+        if (stat) stat.textContent = "Error";
+      }
     }
 
     async function openEscalations72h(){
@@ -464,6 +530,21 @@
           }
         } catch(e){}
 
+        // Trending "More" → top 50 modal
+        (function(){
+          var moreTr = document.getElementById("moreTrending");
+          var closeBtn = document.getElementById("trendModalClose");
+          var back = document.getElementById("trendModalBack");
+          if (moreTr) moreTr.addEventListener("click", function(e){ e.preventDefault(); openTrending50(); });
+          if (closeBtn) closeBtn.addEventListener("click", function(){ _closeTrendModal(); });
+          if (back) back.addEventListener("click", function(){ _closeTrendModal(); });
+          document.addEventListener("keydown", function(e){
+            if (e.key !== "Escape") return;
+            _closeEscModal();
+            _closeTrendModal();
+          });
+        })();
+
         // Escalations "More" modal wiring
         (function(){
           var more = document.getElementById("moreNew");
@@ -472,7 +553,6 @@
           if (more) more.addEventListener("click", function(e){ e.preventDefault(); openEscalations72h(); });
           if (closeBtn) closeBtn.addEventListener("click", function(){ _closeEscModal(); });
           if (back) back.addEventListener("click", function(){ _closeEscModal(); });
-          document.addEventListener("keydown", function(e){ if (e.key === "Escape") _closeEscModal(); });
         })();
 
         refresh(); setInterval(refresh,7000);
