@@ -170,7 +170,12 @@ def _save_alert_watchlist(data: Dict[str, Any], max_mints: int = 2500) -> None:
         print(f"[Velcor3] WARNING: could not save watchlist: {e}")
 
 
-def register_alerted_mint(item: Dict[str, Any], alert_lines: List[str]) -> None:
+def register_alerted_mint(
+    item: Dict[str, Any],
+    alert_lines: List[str],
+    *,
+    at_iso: Optional[str] = None,
+) -> None:
     """
     Persist a mint into the "alert watchlist" the first time we post an alert for it.
     Stores baseline MC at first alert so we can track performance since *our* alert.
@@ -182,7 +187,7 @@ def register_alerted_mint(item: Dict[str, Any], alert_lines: List[str]) -> None:
         tick = _item_ticker(item)
         mc = _safe_float(item.get("last_market_cap"))
         ath = _safe_float(item.get("ath_market_cap"))
-        now = _iso_now()
+        now = (str(at_iso).strip() if at_iso else "") or _iso_now()
 
         calls = item.get("callsPreview") or item.get("calls") or []
         best_call = None
@@ -857,6 +862,7 @@ def build_token_embed(
     thumb_url: Optional[str],
     ai_review: Optional[str] = None,
     simple_embed: bool = True,
+    our_alert_utc_iso: Optional[str] = None,
 ) -> Embed:
     mint = _item_mint(item)
     tick = _item_ticker(item)
@@ -913,6 +919,15 @@ def build_token_embed(
 
         snap = f"**MC** {mc_s}  ·  **ATH** {ath_s}  ·  **Vol** {v_s}  ·  **5m** {chg_s}"
         embed.add_field(name="Snapshot", value=snap, inline=False)
+
+        if our_alert_utc_iso:
+            dt_alert = _parse_message_ts(our_alert_utc_iso)
+            human = (
+                dt_alert.strftime("%d/%m/%Y %H:%M:%S UTC")
+                if dt_alert
+                else str(our_alert_utc_iso)[:32]
+            )
+            embed.add_field(name="Our alert (UTC)", value=human, inline=False)
 
         link_parts: List[str] = []
         if tw:
@@ -1176,6 +1191,7 @@ async def run_kolfi_feed_once(
             ai_rev = None
             if enable_ai_review and not simple_alert:
                 ai_rev = await generate_kolfi_alert_review(item, alert_lines, session)
+            alert_at = _iso_now()
             embed = build_token_embed(
                 item,
                 key,
@@ -1186,6 +1202,7 @@ async def run_kolfi_feed_once(
                 thumb_url=thumb,
                 ai_review=ai_rev,
                 simple_embed=simple_alert,
+                our_alert_utc_iso=alert_at,
             )
             files: List[discord.File] = []
             if use_banner and banner_path and banner_filename:
@@ -1224,7 +1241,7 @@ async def run_kolfi_feed_once(
                 except Exception:
                     pass
             # Add this mint to the "alert watchlist" for daily performance tracking.
-            register_alerted_mint(item, alert_lines)
+            register_alerted_mint(item, alert_lines, at_iso=alert_at)
             cm = _safe_float(item.get("last_market_cap"))
             ca = _safe_float(item.get("ath_market_cap"))
             by_mint[mint] = _snapshot(item, cur_ids, ref_mc=cm, ref_ath=ca)

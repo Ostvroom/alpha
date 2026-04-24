@@ -1411,6 +1411,20 @@ async def api_daily_finds(request: Request, day: str = "", limit: int = 200):
     return {"day": start_dt.date().isoformat(), "items": out}
 
 
+def _kolfi_alert_watchlist_by_mint() -> dict:
+    """Mint → entrée watchlist (jetons pour lesquels le bot a posté une alerte)."""
+    try:
+        p = getattr(kolfi, "ALERT_WATCHLIST_PATH", "")
+        watch_path = Path(str(p)) if p else DATA_DIR / "kolfi_alert_watchlist.json"
+        if not watch_path.exists():
+            return {}
+        watch = json.loads(watch_path.read_text(encoding="utf-8"))
+        bm = watch.get("by_mint") if isinstance(watch, dict) else None
+        return bm if isinstance(bm, dict) else {}
+    except Exception:
+        return {}
+
+
 @app.get("/api/kol/dashboard")
 async def api_kol_dashboard(
     request: Request,
@@ -1435,6 +1449,8 @@ async def api_kol_dashboard(
     cache_key = f"kol_dashboard:{hours:.2f}:{top}:{per_bucket}"
 
     async def _build():
+        from datetime import datetime, timezone, timedelta
+
         async with aiohttp.ClientSession() as session:
             items, err = await kolfi.fetch_tokens_overview(
                 session,
@@ -1447,140 +1463,163 @@ async def api_kol_dashboard(
             if err and not items:
                 raise HTTPException(502, err)
 
-        # Map mint -> item (latest snapshot)
-        by_mint: dict[str, dict] = {}
-        for it in items or []:
-            if isinstance(it, dict):
-                m = kolfi._item_mint(it)  # type: ignore[attr-defined]
-                if m:
-                    by_mint[m] = it
+            # Map mint -> item (latest snapshot)
+            by_mint: dict[str, dict] = {}
+            for it in items or []:
+                if isinstance(it, dict):
+                    m = kolfi._item_mint(it)  # type: ignore[attr-defined]
+                    if m:
+                        by_mint[m] = it
 
-        # Top performers within window (ranked by ATH multiple from call -> ATH)
-        scored = []
-        for it in items or []:
-            if not isinstance(it, dict):
-                continue
-            row = kolfi._entry_for_leaderboard(it, max_call_age_hours=hours)  # type: ignore[attr-defined]
-            if row:
-                scored.append(row)
-        # Rank by ATHx (ath_usd / call_mc), not by absolute ATH dollars.
-        def _athx_key(x: dict) -> float:
-            try:
-                ath = float(x.get("ath_usd") or 0)
-                call = float(x.get("call_mc") or 0)
-                if ath > 0 and call > 0:
-                    return ath / call
-            except Exception:
-                pass
-            return 0.0
+            now = datetime.now(timezone.utc)
+            cutoff_top = now - timedelta(hours=hours)
 
-        scored.sort(key=_athx_key, reverse=True)
-        scored = [s for s in scored if _athx_key(s) > 0][:top]
+            # Top: only mints we alerted, first site alert within rolling window; ATHx from persisted first KOL call MC.
+            watch_by_mint = _kolfi_alert_watchlist_by_mint()
+            watch_entries: list = []
+            for mk, ent in watch_by_mint.items():
+                if not isinstance(ent, dict):
+                    continue
+                dt_fa = _parse_iso_dt(str(ent.get("first_alert_ts") or ""))
+                if not dt_fa or dt_fa < cutoff_top:
+                    continue
+                mint_s = str(ent.get("mint") or mk or "").strip()
+                if not mint_s:
+                    continue
+                watch_entries.append(ent)
 
-        top_rows = []
-        for r in scored:
-            it = r.get("item") or {}
-            bc = r.get("best_call") or {}
-            mint = str(r.get("mint") or "")
-            ticker = str(r.get("ticker") or "—")
-            call_mc = kolfi._safe_float(r.get("call_mc"))  # type: ignore[attr-defined]
-            cur_mc = kolfi._safe_float(r.get("cur_mc"))  # type: ignore[attr-defined]
-            ath_mc = kolfi._safe_float(r.get("ath_usd"))  # type: ignore[attr-defined]
-            since = (cur_mc / call_mc) if (call_mc and call_mc > 0 and cur_mc and cur_mc > 0) else None
-            ath_x = (ath_mc / call_mc) if (call_mc and call_mc > 0 and ath_mc and ath_mc > 0) else None
-            caller = kolfi._call_label(bc) if isinstance(bc, dict) else ""  # type: ignore[attr-defined]
-            caller_x = str((bc or {}).get("kolXId") or "").strip()
-            chart = f"https://gmgn.ai/sol/token/{mint}" if mint else ""
-            dex = str(it.get("dexscreener_url") or it.get("dexUrl") or "")
-            thumb = await _thumb_url_cached(session, it, mint) if mint else ""
-            top_rows.append(
-                {
-                    "ticker": ticker,
-                    "mint": mint,
-                    "caller": caller,
-                    "caller_x": caller_x,
-                    "call_mc": call_mc,
-                    "cur_mc": cur_mc,
-                    "ath_mc": ath_mc,
-                    "since_x": since,
-                    "ath_x": ath_x,
-                    "call_ts": (bc or {}).get("messageTs") or "",
-                    "chart_url": chart,
-                    "dex_url": dex,
-                    "thumb_url": thumb or "",
-                }
-            )
+            rows_top: list = []
+            for ent in watch_entries:
+                mint = str(ent.get("mint") or "").strip()
+                if not mint:
+                    continue
+                tick = str(ent.get("ticker") or "—")
+                snap = by_mint.get(mint) or {}
+                ath_mc = kolfi._safe_float((snap or {}).get("ath_market_cap"))  # type: ignore[attr-defined]
+                if ath_mc is None or ath_mc <= 0:
+                    ath_mc = kolfi._safe_float(ent.get("last_kolfi_ath_usd"))  # type: ignore[attr-defined]
 
-        # Build 3 columns of recent alert events, enriched with current perf
-        evs = feed_events.list_events(limit=350, kinds=["token_alert"])
-        buckets = {"low": [], "100k": [], "1m": []}
-        seen = set()
-        for ev in evs:
-            extra = (ev or {}).get("extra") or {}
-            mint = str(extra.get("mint") or "").strip()
-            if not mint or mint in seen:
-                continue
-            seen.add(mint)
-            bucket = str(extra.get("bucket") or "").strip().lower()
-            if bucket not in buckets:
-                # fallback: compute from current MC if unknown
+                fc_raw = None
+                if snap:
+                    try:
+                        fc_raw = kolfi._first_call_with_mc(snap)  # type: ignore[attr-defined]
+                    except Exception:
+                        fc_raw = None
+                call = _persist_first_call_for_mint(mint, fc_raw) or fc_raw or _get_persisted_first_call(mint)
+                if not isinstance(call, dict):
+                    continue
+
+                call_mc = kolfi._safe_float(call.get("callMarketCap"))  # type: ignore[attr-defined]
+                if call_mc is None or call_mc <= 0:
+                    continue
+
+                cur_mc = kolfi._safe_float((snap or {}).get("last_market_cap"))  # type: ignore[attr-defined]
+                since = (cur_mc / call_mc) if (cur_mc and cur_mc > 0) else None
+                ath_x = (ath_mc / call_mc) if (ath_mc and ath_mc > 0) else None
+                if ath_x is None or ath_x <= 0:
+                    continue
+
+                caller = ""
                 try:
-                    bucket = kolfi._mc_bucket(kolfi._safe_float((by_mint.get(mint) or {}).get("last_market_cap")))  # type: ignore[attr-defined]
+                    caller = kolfi._call_label(call)  # type: ignore[attr-defined]
                 except Exception:
-                    bucket = "low"
+                    caller = str(call.get("who") or call.get("kolUsername") or "caller")
+                caller_x = str(call.get("kolXId") or call.get("kol_x_id") or "").strip()
 
-            it = by_mint.get(mint) or {}
-            fc_raw = kolfi._first_call_with_mc(it) if it else None  # type: ignore[attr-defined]
-            # Persist earliest-ever call we've seen; if current snapshot missing, fall back to stored one.
-            fc = _persist_first_call_for_mint(mint, fc_raw) or fc_raw or _get_persisted_first_call(mint)
-            call_mc = kolfi._safe_float((fc or {}).get("callMarketCap")) if isinstance(fc, dict) else None  # type: ignore[attr-defined]
-            cur_mc = kolfi._safe_float(it.get("last_market_cap"))  # type: ignore[attr-defined]
-            ath_mc = kolfi._safe_float(it.get("ath_market_cap"))  # type: ignore[attr-defined]
-            since = (cur_mc / call_mc) if (call_mc and call_mc > 0 and cur_mc and cur_mc > 0) else None
-            ath_x = (ath_mc / call_mc) if (call_mc and call_mc > 0 and ath_mc and ath_mc > 0) else None
-            dex = str(it.get("dexscreener_url") or it.get("dexUrl") or ev.get("url") or "")
-            chart = f"https://gmgn.ai/sol/token/{mint}" if mint else ""
-            caller_label = kolfi._call_label(fc) if isinstance(fc, dict) else ""  # type: ignore[attr-defined]
-            caller_x = str((fc or {}).get("kolXId") or (fc or {}).get("kol_x_id") or "").strip()
-            thumb_url = str(extra.get("thumb_url") or "") or (await _thumb_url_cached(session, it, mint) if mint else "")
-            call_ts = ""
-            if isinstance(fc, dict):
-                call_ts = str(fc.get("messageTs") or fc.get("ts") or fc.get("callTs") or "") or ""
-            if not call_ts:
-                call_ts = str(ev.get("ts") or "") or ""
-            buckets[bucket].append(
-                {
-                    "event_id": ev.get("id"),
-                    "ts": ev.get("ts"),
-                    "call_ts": call_ts,
-                    "title": ev.get("title"),
-                    "mint": mint,
-                    "ticker": str(extra.get("symbol") or extra.get("name") or "").strip() or kolfi._item_ticker(it),  # type: ignore[attr-defined]
-                    "caller": caller_label or (caller_x or ""),
-                    "caller_x": caller_x,
-                    "call_mc": call_mc,
-                    "cur_mc": cur_mc,
-                    "ath_mc": ath_mc,
-                    "since_x": since,
-                    "ath_x": ath_x,
-                    "chart_url": chart,
-                    "dex_url": dex,
-                    "thumb_url": thumb_url,
-                }
-            )
-            if len(buckets[bucket]) >= per_bucket:
-                continue
-            if all(len(v) >= per_bucket for v in buckets.values()):
-                break
+                chart = f"https://gmgn.ai/sol/token/{mint}" if mint else ""
+                dex = str((snap or {}).get("dexscreener_url") or (snap or {}).get("dexUrl") or "")
+                thumb = await _thumb_url_cached(session, snap or {}, mint) if mint else ""
+                alert_ts = str(ent.get("first_alert_ts") or "").strip()
+                rows_top.append(
+                    {
+                        "ticker": tick,
+                        "mint": mint,
+                        "caller": caller,
+                        "caller_x": caller_x,
+                        "call_mc": call_mc,
+                        "cur_mc": cur_mc,
+                        "ath_mc": ath_mc,
+                        "since_x": since,
+                        "ath_x": ath_x,
+                        "call_ts": alert_ts,
+                        "chart_url": chart,
+                        "dex_url": dex,
+                        "thumb_url": thumb or "",
+                    }
+                )
 
-        return {
-            "top": top_rows,
-            "buckets": {
-                "low": buckets["low"][:per_bucket],
-                "100k": buckets["100k"][:per_bucket],
-                "1m": buckets["1m"][:per_bucket],
-            },
-        }
+            rows_top.sort(key=lambda r: float(r.get("ath_x") or 0), reverse=True)
+            top_rows = rows_top[:top]
+
+            # Build 3 columns: same rolling window (UTC) as the left leaderboard
+            evs = feed_events.list_events(limit=350, kinds=["token_alert"])
+            buckets = {"low": [], "100k": [], "1m": []}
+            seen = set()
+            for ev in evs:
+                ev_dt = _parse_iso_dt(str((ev or {}).get("ts") or ""))
+                if not ev_dt or ev_dt < cutoff_top:
+                    continue
+                extra = (ev or {}).get("extra") or {}
+                mint = str(extra.get("mint") or "").strip()
+                if not mint or mint in seen:
+                    continue
+                seen.add(mint)
+                bucket = str(extra.get("bucket") or "").strip().lower()
+                if bucket not in buckets:
+                    try:
+                        bucket = kolfi._mc_bucket(kolfi._safe_float((by_mint.get(mint) or {}).get("last_market_cap")))  # type: ignore[attr-defined]
+                    except Exception:
+                        bucket = "low"
+
+                it = by_mint.get(mint) or {}
+                fc_raw = kolfi._first_call_with_mc(it) if it else None  # type: ignore[attr-defined]
+                fc = _persist_first_call_for_mint(mint, fc_raw) or fc_raw or _get_persisted_first_call(mint)
+                call_mc = kolfi._safe_float((fc or {}).get("callMarketCap")) if isinstance(fc, dict) else None  # type: ignore[attr-defined]
+                cur_mc = kolfi._safe_float(it.get("last_market_cap"))  # type: ignore[attr-defined]
+                ath_mc = kolfi._safe_float(it.get("ath_market_cap"))  # type: ignore[attr-defined]
+                since = (cur_mc / call_mc) if (call_mc and call_mc > 0 and cur_mc and cur_mc > 0) else None
+                ath_x = (ath_mc / call_mc) if (call_mc and call_mc > 0 and ath_mc and ath_mc > 0) else None
+                dex = str(it.get("dexscreener_url") or it.get("dexUrl") or ev.get("url") or "")
+                chart = f"https://gmgn.ai/sol/token/{mint}" if mint else ""
+                caller_label = kolfi._call_label(fc) if isinstance(fc, dict) else ""  # type: ignore[attr-defined]
+                caller_x = str((fc or {}).get("kolXId") or (fc or {}).get("kol_x_id") or "").strip()
+                thumb_url = str(extra.get("thumb_url") or "") or (await _thumb_url_cached(session, it, mint) if mint else "")
+                call_ts = str((ev or {}).get("ts") or "").strip()
+                if not call_ts and isinstance(fc, dict):
+                    call_ts = str(fc.get("messageTs") or fc.get("ts") or fc.get("callTs") or "") or ""
+                buckets[bucket].append(
+                    {
+                        "event_id": ev.get("id"),
+                        "ts": ev.get("ts"),
+                        "call_ts": call_ts,
+                        "title": ev.get("title"),
+                        "mint": mint,
+                        "ticker": str(extra.get("symbol") or extra.get("name") or "").strip() or kolfi._item_ticker(it),  # type: ignore[attr-defined]
+                        "caller": caller_label or (caller_x or ""),
+                        "caller_x": caller_x,
+                        "call_mc": call_mc,
+                        "cur_mc": cur_mc,
+                        "ath_mc": ath_mc,
+                        "since_x": since,
+                        "ath_x": ath_x,
+                        "chart_url": chart,
+                        "dex_url": dex,
+                        "thumb_url": thumb_url,
+                    }
+                )
+                if len(buckets[bucket]) >= per_bucket:
+                    continue
+                if all(len(v) >= per_bucket for v in buckets.values()):
+                    break
+
+            return {
+                "top": top_rows,
+                "buckets": {
+                    "low": buckets["low"][:per_bucket],
+                    "100k": buckets["100k"][:per_bucket],
+                    "1m": buckets["1m"][:per_bucket],
+                },
+            }
     # Cache for 20 seconds; frontend refresh is also throttled.
     return await _cache_get_or_set(cache_key, 20.0, _build)
 
@@ -1690,62 +1729,47 @@ def _parse_iso_dt(s: str):
 @app.get("/api/kol/alerts/top-performers")
 async def api_kol_alerts_top_performers(request: Request, days: int = 30, top: int = 10):
     """
-    Top performers among tokens we alerted (watchlist), within a rolling window (default 30d),
-    ranked by ATHx (ATH MC / call MC).
+    Top performers among tokens we alerted (watchlist), ranked by ATHx (ATH MC / first-call MC).
+    Use days=0 for all-time (no rolling cutoff). Otherwise filter by last_alert_ts (or first) vs window.
     """
     if not _DEV_PREVIEW and not _has_access(request):
         raise HTTPException(401, "Unauthorized")
     api_key = str(getattr(config, "KOLFI_API_KEY", "") or "").strip()
     if not api_key:
         raise HTTPException(400, "Missing KOLFI_API_KEY")
-    days = max(1, min(180, int(days or 30)))
+    days = max(0, min(3650, int(days or 30)))
     top = max(1, min(25, int(top or 10)))
 
-    # Load watchlist (tokens we alerted)
-    watch = {}
-    try:
-        p = getattr(kolfi, "ALERT_WATCHLIST_PATH", "")
-        if p:
-            watch_path = Path(str(p))
-        else:
-            watch_path = DATA_DIR / "kolfi_alert_watchlist.json"
-        if watch_path.exists():
-            watch = json.loads(watch_path.read_text(encoding="utf-8"))
-    except Exception:
-        watch = {}
-
-    by_mint = watch.get("by_mint") if isinstance(watch, dict) else None
-    if not isinstance(by_mint, dict) or not by_mint:
-        return {"days": days, "items": []}
+    by_mint = _kolfi_alert_watchlist_by_mint()
+    if not by_mint:
+        return {"days": days, "all_time": days <= 0, "items": []}
 
     from datetime import datetime, timezone, timedelta
 
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(days=days)
+    cutoff = now - timedelta(days=days) if days > 0 else None
 
-    # Include mints whose most recent alert is within window.
-    # Using first_alert_ts here made the list too small once the watchlist aged.
     entries = []
-    for mint, ent in by_mint.items():
+    for mint_key, ent in by_mint.items():
         if not isinstance(ent, dict):
             continue
-        last_ts = ent.get("last_alert_ts") or ent.get("first_alert_ts")
-        dt = _parse_iso_dt(str(last_ts or ""))
-        if not dt or dt < cutoff:
-            continue
-        mint_s = str(ent.get("mint") or mint or "").strip()
+        mint_s = str(ent.get("mint") or mint_key or "").strip()
         if not mint_s:
             continue
+        if cutoff is not None:
+            last_ts = ent.get("last_alert_ts") or ent.get("first_alert_ts")
+            dt = _parse_iso_dt(str(last_ts or ""))
+            if not dt or dt < cutoff:
+                continue
         entries.append(ent)
 
     if not entries:
-        return {"days": days, "items": []}
+        return {"days": days, "all_time": days <= 0, "items": []}
 
     cache_key = f"kol_alerts_top:{days}:{top}"
 
     async def _build():
         async with aiohttp.ClientSession() as session:
-            # Current snapshots for ATH + thumbnail
             items, err = await kolfi.fetch_tokens_overview(
                 session,
                 api_key,
@@ -1755,79 +1779,80 @@ async def api_kol_alerts_top_performers(request: Request, days: int = 30, top: i
             )
             if err and not items:
                 raise HTTPException(502, err)
-        by_snap: dict[str, dict] = {}
-        for it in items or []:
-            if not isinstance(it, dict):
-                continue
-            m = kolfi._item_mint(it)  # type: ignore[attr-defined]
-            if m:
-                by_snap[m] = it
 
-        rows = []
-        for ent in entries:
-            mint = str(ent.get("mint") or "").strip()
-            if not mint:
-                continue
-            tick = str(ent.get("ticker") or "—")
+            by_snap: dict[str, dict] = {}
+            for it in items or []:
+                if not isinstance(it, dict):
+                    continue
+                m = kolfi._item_mint(it)  # type: ignore[attr-defined]
+                if m:
+                    by_snap[m] = it
 
-            snap = by_snap.get(mint) or {}
-            ath_mc = kolfi._safe_float((snap or {}).get("ath_market_cap"))  # type: ignore[attr-defined]
-            if ath_mc is None or ath_mc <= 0:
-                ath_mc = kolfi._safe_float(ent.get("last_kolfi_ath_usd"))  # type: ignore[attr-defined]
+            rows = []
+            for ent in entries:
+                mint = str(ent.get("mint") or "").strip()
+                if not mint:
+                    continue
+                tick = str(ent.get("ticker") or "—")
 
-            # Call context: ALWAYS use earliest-ever call we've seen for this mint.
-            # This keeps MC@call and call time stable, even if there are later calls.
-            fc_raw = None
-            if snap:
+                snap = by_snap.get(mint) or {}
+                ath_mc = kolfi._safe_float((snap or {}).get("ath_market_cap"))  # type: ignore[attr-defined]
+                if ath_mc is None or ath_mc <= 0:
+                    ath_mc = kolfi._safe_float(ent.get("last_kolfi_ath_usd"))  # type: ignore[attr-defined]
+
+                fc_raw = None
+                if snap:
+                    try:
+                        fc_raw = kolfi._first_call_with_mc(snap)  # type: ignore[attr-defined]
+                    except Exception:
+                        fc_raw = None
+                call = _persist_first_call_for_mint(mint, fc_raw) or fc_raw or _get_persisted_first_call(mint)
+                if not isinstance(call, dict):
+                    continue
+
+                call_mc = kolfi._safe_float(call.get("callMarketCap"))  # type: ignore[attr-defined]
+                if call_mc is None or call_mc <= 0:
+                    continue
+
+                cur_mc = kolfi._safe_float((snap or {}).get("last_market_cap"))  # type: ignore[attr-defined]
+                since = (cur_mc / call_mc) if (cur_mc and cur_mc > 0) else None
+                ath_x = (ath_mc / call_mc) if (ath_mc and ath_mc > 0) else None
+                if ath_x is None or ath_x <= 0:
+                    continue
+
+                caller = ""
                 try:
-                    fc_raw = kolfi._first_call_with_mc(snap)  # type: ignore[attr-defined]
+                    caller = kolfi._call_label(call)  # type: ignore[attr-defined]
                 except Exception:
-                    fc_raw = None
-            call = _persist_first_call_for_mint(mint, fc_raw) or fc_raw or _get_persisted_first_call(mint)
-            if not isinstance(call, dict):
-                continue
+                    caller = str(call.get("who") or call.get("kolUsername") or "caller")
+                caller_x = str(call.get("kolXId") or call.get("kol_x_id") or "").strip()
 
-            call_mc = kolfi._safe_float(call.get("callMarketCap"))  # type: ignore[attr-defined]
-            if call_mc is None or call_mc <= 0:
-                continue
+                chart = f"https://gmgn.ai/sol/token/{mint}" if mint else ""
+                dex = str((snap or {}).get("dexscreener_url") or (snap or {}).get("dexUrl") or "")
+                thumb = await _thumb_url_cached(session, snap or {}, mint) if mint else ""
 
-            cur_mc = kolfi._safe_float((snap or {}).get("last_market_cap"))  # type: ignore[attr-defined]
-            since = (cur_mc / call_mc) if (cur_mc and cur_mc > 0) else None
-            ath_x = (ath_mc / call_mc) if (ath_mc and ath_mc > 0) else None
-            if ath_x is None or ath_x <= 0:
-                continue
+                our_ts = str(ent.get("first_alert_ts") or "").strip()
 
-            caller = ""
-            try:
-                caller = kolfi._call_label(call)  # type: ignore[attr-defined]
-            except Exception:
-                caller = str(call.get("who") or call.get("kolUsername") or "caller")
-            caller_x = str(call.get("kolXId") or call.get("kol_x_id") or "").strip()
+                rows.append(
+                    {
+                        "ticker": tick,
+                        "mint": mint,
+                        "caller": caller,
+                        "caller_x": caller_x,
+                        "call_mc": call_mc,
+                        "cur_mc": cur_mc,
+                        "ath_mc": ath_mc,
+                        "since_x": since,
+                        "ath_x": ath_x,
+                        "call_ts": our_ts,
+                        "chart_url": chart,
+                        "dex_url": dex,
+                        "thumb_url": thumb or "",
+                    }
+                )
 
-            chart = f"https://gmgn.ai/sol/token/{mint}" if mint else ""
-            dex = str((snap or {}).get("dexscreener_url") or (snap or {}).get("dexUrl") or "")
-            thumb = await _thumb_url_cached(session, snap or {}, mint) if mint else ""
-
-            rows.append(
-                {
-                    "ticker": tick,
-                    "mint": mint,
-                    "caller": caller,
-                    "caller_x": caller_x,
-                    "call_mc": call_mc,
-                    "cur_mc": cur_mc,
-                    "ath_mc": ath_mc,
-                    "since_x": since,
-                    "ath_x": ath_x,
-                    "call_ts": (call or {}).get("messageTs") or (call or {}).get("ts") or "",
-                    "chart_url": chart,
-                    "dex_url": dex,
-                    "thumb_url": thumb or "",
-                }
-            )
-
-        rows.sort(key=lambda r: float(r.get("ath_x") or 0), reverse=True)
-        return {"days": days, "items": rows[:top]}
+            rows.sort(key=lambda r: float(r.get("ath_x") or 0), reverse=True)
+            return {"days": days, "all_time": days <= 0, "items": rows[:top]}
 
     return await _cache_get_or_set(cache_key, 60.0, _build)
 

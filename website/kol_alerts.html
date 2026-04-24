@@ -252,7 +252,7 @@
     <div class="grid">
       <div class="card span6">
         <div class="ph">
-          <div class="pt">Top performed coins (24h) · ranked by ATHx</div>
+          <div class="pt">Top performed coins (24h) · our alerts · ranked by ATHx</div>
           <div class="loadWrap">
             <span class="livePill" title="Live feed"><i></i>LIVE</span>
             <div class="ps" id="stat">—</div>
@@ -263,7 +263,7 @@
 
       <div class="card span6">
         <div class="ph">
-          <div class="pt">Top performed coins (30d) · from our alerts · ranked by ATHx</div>
+          <div class="pt">Top performed coins (all time) · our alerts · ranked by ATHx</div>
           <div class="loadWrap">
             <span class="livePill" title="Live feed"><i></i>LIVE</span>
             <div class="ps" id="stat30">—</div>
@@ -438,7 +438,7 @@
 
         var res = await Promise.all([
           fetch("/api/kol/dashboard?hours=24&top=10&per_bucket=6",{credentials:"include"}),
-          fetch("/api/kol/alerts/top-performers?days=30&top=10",{credentials:"include"})
+          fetch("/api/kol/alerts/top-performers?days=0&top=10",{credentials:"include"})
         ]);
         var r = res[0], r30 = res[1];
 
