@@ -37,6 +37,8 @@
     .ps{font-family:"JetBrains Mono",monospace;font-size:10px;color:rgba(240,232,192,.45)}
     /* Panel body scroll: vertical only; tables can scroll horizontally inside */
     .pb{padding:10px 14px;max-height:74vh;overflow-y:auto;overflow-x:hidden}
+    /* Tighter max-height so leaderboards / buckets scroll with more rows from API */
+    .pb.pb-tight{max-height:min(52vh,520px);min-height:120px}
     /* In-panel vertical scrollbar (match site style) */
     .pb{
       scrollbar-width: thin;
@@ -252,13 +254,13 @@
     <div class="grid">
       <div class="card span6">
         <div class="ph">
-          <div class="pt">Top performed coins (24h) · first alerted in this window · ranked by ATHx</div>
+          <div class="pt">Top performed coins (24h) · site alerts in this window · ranked by ATHx</div>
           <div class="loadWrap">
             <span class="livePill" title="Live feed"><i></i>LIVE</span>
             <div class="ps" id="stat">—</div>
           </div>
         </div>
-        <div class="pb" id="top"></div>
+        <div class="pb pb-tight" id="top"></div>
       </div>
 
       <div class="card span6">
@@ -269,29 +271,29 @@
             <div class="ps" id="stat30">—</div>
           </div>
         </div>
-        <div class="pb" id="top30"></div>
+        <div class="pb pb-tight" id="top30"></div>
       </div>
 
       <div class="card accent accLow span4">
         <div class="ph">
           <div class="pt">Low mcap alerts</div>
-          <div class="headRight"><span class="livePill liveMini"><i></i>LIVE</span><div class="ps">&lt;50k</div></div>
+          <div class="headRight"><span class="livePill liveMini"><i></i>LIVE</span><div class="ps">MC@call &lt;50k</div></div>
         </div>
-        <div class="pb" id="b_low"></div>
+        <div class="pb pb-tight" id="b_low"></div>
       </div>
       <div class="card accent acc100k span4">
         <div class="ph">
-          <div class="pt">#100k mcap alerts</div>
-          <div class="headRight"><span class="livePill liveMini"><i></i>LIVE</span><div class="ps">50k–100k</div></div>
+          <div class="pt">Mid mcap alerts</div>
+          <div class="headRight"><span class="livePill liveMini"><i></i>LIVE</span><div class="ps">50k–&lt;1M @call</div></div>
         </div>
-        <div class="pb" id="b_100k"></div>
+        <div class="pb pb-tight" id="b_100k"></div>
       </div>
       <div class="card accent acc1m span4">
         <div class="ph">
           <div class="pt">1m+ mcap alerts</div>
-          <div class="headRight"><span class="livePill liveMini"><i></i>LIVE</span><div class="ps">100k+</div></div>
+          <div class="headRight"><span class="livePill liveMini"><i></i>LIVE</span><div class="ps">1M+ @call</div></div>
         </div>
-        <div class="pb" id="b_1m"></div>
+        <div class="pb pb-tight" id="b_1m"></div>
       </div>
     </div>
   </div>
@@ -437,8 +439,8 @@
         if (stat30) stat30.textContent = "Updating…";
 
         var res = await Promise.all([
-          fetch("/api/kol/dashboard?hours=24&top=10&per_bucket=6",{credentials:"include"}),
-          fetch("/api/kol/alerts/top-performers?days=0&top=10",{credentials:"include"})
+          fetch("/api/kol/dashboard?hours=24&top=20&per_bucket=20",{credentials:"include"}),
+          fetch("/api/kol/alerts/top-performers?days=0&top=20",{credentials:"include"})
         ]);
         var r = res[0], r30 = res[1];
 

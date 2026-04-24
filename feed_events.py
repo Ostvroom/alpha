@@ -219,7 +219,7 @@ def list_events(
     kinds: Optional[Sequence[str]] = None,
 ) -> List[Dict[str, Any]]:
     init_db()
-    limit = max(1, min(500, int(limit or 100)))
+    limit = max(1, min(800, int(limit or 100)))
     rows: List[tuple] = []
     if _use_pg():
         conn = _conn_pg()

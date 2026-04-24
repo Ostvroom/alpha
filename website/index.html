@@ -114,15 +114,23 @@
     }
     .nav-cta:hover { background: #ffe033 !important; }
 
-    /* ── TICKER ──────────────────────────────────────────── */
+    /* ── TICKER (marquee tool strip) ─────────────────────── */
     .ticker {
-      background: #ffcc00; overflow: hidden;
-      padding: 9px 0;
-      border-top: 2px solid #090909; border-bottom: 2px solid #090909;
+      position: relative;
+      z-index: 50;
+      background: #ffcc00;
+      overflow: hidden;
+      padding: 10px 0;
+      border-top: 2px solid #090909;
+      border-bottom: 2px solid #090909;
+      min-height: 40px;
     }
     .ticker-track {
-      display: flex; width: max-content;
-      animation: scroll-ticker 28s linear infinite;
+      display: flex;
+      width: max-content;
+      flex-shrink: 0;
+      will-change: transform;
+      animation: scroll-ticker 32s linear infinite;
     }
     .ticker-track:hover { animation-play-state: paused; }
     @keyframes scroll-ticker {
@@ -131,13 +139,53 @@
     }
     .t-item {
       font-family: "Barlow Condensed", sans-serif;
-      font-size: 14px; font-weight: 800;
-      letter-spacing: .10em; text-transform: uppercase;
-      color: #090909; white-space: nowrap;
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+      color: #090909;
+      white-space: nowrap;
       padding: 0 22px;
-      display: flex; align-items: center; gap: 22px;
+      line-height: 1.25;
+      display: flex;
+      align-items: center;
+      gap: 22px;
     }
     .t-sep { opacity: .35; font-size: 16px; }
+
+    /* Bottom ticker — same style, visibly larger + slower */
+    .ticker.ticker--foot {
+      padding: 14px 0;
+      min-height: 52px;
+      border-top: 2px solid rgba(255, 204, 0, 0.35);
+      border-bottom: 2px solid #090909;
+      margin-top: 0;
+    }
+    .ticker--foot .t-item {
+      font-size: clamp(16px, 2.4vw, 20px);
+      font-weight: 900;
+      letter-spacing: .11em;
+      padding: 0 30px;
+      gap: 26px;
+    }
+    .ticker--foot .t-sep { font-size: 18px; opacity: .32; }
+    .ticker-track--foot {
+      animation-name: scroll-ticker-foot;
+      animation-duration: 44s;
+      animation-timing-function: linear;
+      animation-iteration-count: infinite;
+    }
+    .ticker-track--foot:hover { animation-play-state: paused; }
+    @keyframes scroll-ticker-foot {
+      from { transform: translateX(0); }
+      to   { transform: translateX(-50%); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .ticker-track,
+      .ticker-track--foot {
+        animation-duration: 120s;
+      }
+    }
 
     /* ── HERO ────────────────────────────────────────────── */
     .hero {
@@ -724,6 +772,11 @@
 
 <div class="divider"></div>
 
+<!-- ══ TICKER (footer — larger marquee) ═══════════════════ -->
+<div class="ticker ticker--foot" aria-hidden="true">
+  <div class="ticker-track ticker-track--foot" id="tickerFoot"></div>
+</div>
+
 <!-- ══ FOOTER ════════════════════════════════════════════ -->
 <div class="fullbar">
   <footer>
@@ -818,22 +871,27 @@
     setTimeout(hideLoader, 2200);
   })();
 
-  /* ── TICKER ─────────────────────────── */
+  /* ── TICKER (top + bottom marquees) ─────────────────────────── */
   (function () {
     var items = [
-      "Token Alerts","ATH Leaderboard","Mint Pipeline","Top Movers",
-      "Research Briefs","Tokens Tracker","24/7 Monitoring","Solana Native",
-      "Website Alpha","Access Code","Live Feed","Nerds Alpha"
+      "Token Alerts", "ATH Leaderboard", "Mint Pipeline", "Top Movers",
+      "Daily Finds", "Project Intel", "KOL Signals", "Live Feed",
+      "Research Briefs", "Wallet Tracker", "ETH · SOL · Base", "24/7 Monitoring",
+      "Website Alpha", "Early Access", "Nerds Alpha"
     ];
-    var track = document.getElementById("ticker");
-    var html = "";
-    for (var r = 0; r < 2; r++) {
-      items.forEach(function (item) {
-        html += '<span class="t-item">' + item +
-          '<span class="t-sep" aria-hidden="true">◆</span></span>';
-      });
+    function fillMarquee(trackEl) {
+      if (!trackEl) return;
+      var html = "";
+      for (var r = 0; r < 2; r++) {
+        items.forEach(function (item) {
+          html += '<span class="t-item">' + item +
+            '<span class="t-sep" aria-hidden="true">◆</span></span>';
+        });
+      }
+      trackEl.innerHTML = html;
     }
-    track.innerHTML = html;
+    fillMarquee(document.getElementById("ticker"));
+    fillMarquee(document.getElementById("tickerFoot"));
   })();
 
   /* ── EARLY ACCESS MODAL ───────────────── */

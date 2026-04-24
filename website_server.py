@@ -1496,6 +1496,47 @@ def _kolfi_alert_watchlist_by_mint() -> dict:
         return {}
 
 
+def _parse_iso_dt(s: str):
+    try:
+        from datetime import datetime, timezone
+
+        if not s:
+            return None
+        dt = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+
+def _dashboard_bucket_thresholds() -> tuple[float, float]:
+    """(low_max, mid_max) for MC@call tiers: <low_max, [low_max, mid_max), >=mid_max -> 1m column."""
+    try:
+        low_max = float(os.getenv("KOL_DASHBOARD_LOW_MAX_USD", "50000") or 50000)
+    except Exception:
+        low_max = 50000.0
+    try:
+        mid_max = float(os.getenv("KOL_DASHBOARD_MID_MAX_USD", "1000000") or 1000000)
+    except Exception:
+        mid_max = 1000000.0
+    low_max = max(1000.0, low_max)
+    mid_max = max(low_max + 1.0, mid_max)
+    return low_max, mid_max
+
+
+def _dashboard_bucket_by_call_mc(call_mc: Optional[float], low_max: float, mid_max: float) -> str:
+    """Map MC@call to dashboard column keys low / 100k / 1m (names kept for API compatibility)."""
+    v = kolfi._safe_float(call_mc)  # type: ignore[attr-defined]
+    if v is None or v <= 0:
+        return "low"
+    if v < low_max:
+        return "low"
+    if v < mid_max:
+        return "100k"
+    return "1m"
+
+
 @app.get("/api/kol/dashboard")
 async def api_kol_dashboard(
     request: Request,
@@ -1505,8 +1546,8 @@ async def api_kol_dashboard(
 ):
     """
     Website dashboard for KOL alerts:
-    - top performing calls (ranked by ATH reached)
-    - 3 columns by MC bucket at time of call (low/100k/1m) with performance since call
+    - Top (24h window): mints with a site token_alert in the window, ranked by ATHx.
+    - Buckets: same window, deduped by mint, columns split by MC@call (env tier thresholds).
     """
     if not _DEV_PREVIEW and not _has_access(request):
         raise HTTPException(401, "Unauthorized")
@@ -1517,9 +1558,7 @@ async def api_kol_dashboard(
     top = max(1, min(25, int(top or 5)))
     per_bucket = max(1, min(25, int(per_bucket or 5)))
 
-    # Left leaderboard: mints whose *first* Velcor3 alert was in this window (UTC).
-    # Using last_alert_ts re-included old coins after any re-fire, so 24h matched all-time ATHx.
-    cache_key = f"kol_dashboard:v3_first_alert:{hours:.2f}:{top}:{per_bucket}"
+    cache_key = f"kol_dashboard:v4_feed24h:{hours:.2f}:{top}:{per_bucket}"
 
     async def _build():
         from datetime import datetime, timezone, timedelta
@@ -1528,9 +1567,8 @@ async def api_kol_dashboard(
             items, err = await kolfi.fetch_tokens_overview(
                 session,
                 api_key,
-                limit=100,
+                limit=150,
                 include_calls=50,
-                # Dashboard buckets need broad coverage; cache + slower frontend refresh keeps this cheap.
                 max_pages=15,
             )
             if err and not items:
@@ -1547,32 +1585,23 @@ async def api_kol_dashboard(
             now = datetime.now(timezone.utc)
             cutoff_top = now - timedelta(hours=hours)
 
-            # Top: mints we *first* alerted inside the window (same idea as Kolfi daily recap).
-            watch_by_mint = _kolfi_alert_watchlist_by_mint()
-            watch_entries: list = []
-            for mk, ent in watch_by_mint.items():
-                if not isinstance(ent, dict):
-                    continue
-                dt_first = _parse_iso_dt(str(ent.get("first_alert_ts") or "").strip())
-                if not dt_first:
-                    dt_first = _parse_iso_dt(str(ent.get("last_alert_ts") or "").strip())
-                if not dt_first or dt_first < cutoff_top:
-                    continue
-                mint_s = str(ent.get("mint") or mk or "").strip()
-                if not mint_s:
-                    continue
-                watch_entries.append(ent)
-
-            rows_top: list = []
-            for ent in watch_entries:
-                mint = str(ent.get("mint") or "").strip()
+            async def _row_leaderboard(
+                mint: str,
+                *,
+                site_alert_ts: str,
+                ent_opt: Optional[dict],
+            ) -> Optional[dict]:
                 if not mint:
-                    continue
-                tick = str(ent.get("ticker") or "—")
+                    return None
+                tick = "—"
+                if isinstance(ent_opt, dict):
+                    tick = str(ent_opt.get("ticker") or "—")
                 snap = by_mint.get(mint) or {}
+                if tick == "—" and snap:
+                    tick = kolfi._item_ticker(snap)  # type: ignore[attr-defined]
                 ath_mc = kolfi._safe_float((snap or {}).get("ath_market_cap"))  # type: ignore[attr-defined]
-                if ath_mc is None or ath_mc <= 0:
-                    ath_mc = kolfi._safe_float(ent.get("last_kolfi_ath_usd"))  # type: ignore[attr-defined]
+                if (ath_mc is None or ath_mc <= 0) and isinstance(ent_opt, dict):
+                    ath_mc = kolfi._safe_float(ent_opt.get("last_kolfi_ath_usd"))  # type: ignore[attr-defined]
 
                 fc_raw = None
                 if snap:
@@ -1582,17 +1611,17 @@ async def api_kol_dashboard(
                         fc_raw = None
                 call = _persist_first_call_for_mint(mint, fc_raw) or fc_raw or _get_persisted_first_call(mint)
                 if not isinstance(call, dict):
-                    continue
+                    return None
 
                 call_mc = kolfi._safe_float(call.get("callMarketCap"))  # type: ignore[attr-defined]
                 if call_mc is None or call_mc <= 0:
-                    continue
+                    return None
 
                 cur_mc = kolfi._safe_float((snap or {}).get("last_market_cap"))  # type: ignore[attr-defined]
-                since = (cur_mc / call_mc) if (cur_mc and cur_mc > 0) else None
-                ath_x = (ath_mc / call_mc) if (ath_mc and ath_mc > 0) else None
+                since = (cur_mc / call_mc) if (cur_mc and call_mc > 0) else None
+                ath_x = (ath_mc / call_mc) if (ath_mc and call_mc > 0) else None
                 if ath_x is None or ath_x <= 0:
-                    continue
+                    return None
 
                 caller = ""
                 try:
@@ -1604,52 +1633,100 @@ async def api_kol_dashboard(
                 chart = f"https://gmgn.ai/sol/token/{mint}" if mint else ""
                 dex = str((snap or {}).get("dexscreener_url") or (snap or {}).get("dexUrl") or "")
                 thumb = await _thumb_url_cached(session, snap or {}, mint) if mint else ""
-                alert_ts = str(ent.get("first_alert_ts") or ent.get("last_alert_ts") or "").strip()
-                rows_top.append(
-                    {
-                        "ticker": tick,
-                        "mint": mint,
-                        "caller": caller,
-                        "caller_x": caller_x,
-                        "call_mc": call_mc,
-                        "cur_mc": cur_mc,
-                        "ath_mc": ath_mc,
-                        "since_x": since,
-                        "ath_x": ath_x,
-                        "call_ts": alert_ts,
-                        "chart_url": chart,
-                        "dex_url": dex,
-                        "thumb_url": thumb or "",
-                    }
+                alert_ts = (site_alert_ts or "").strip() or (
+                    str((ent_opt or {}).get("first_alert_ts") or "").strip()
+                    if isinstance(ent_opt, dict)
+                    else ""
                 )
+                return {
+                    "ticker": tick,
+                    "mint": mint,
+                    "caller": caller,
+                    "caller_x": caller_x,
+                    "call_mc": call_mc,
+                    "cur_mc": cur_mc,
+                    "ath_mc": ath_mc,
+                    "since_x": since,
+                    "ath_x": ath_x,
+                    "call_ts": alert_ts,
+                    "chart_url": chart,
+                    "dex_url": dex,
+                    "thumb_url": thumb or "",
+                }
+
+            evs_top = feed_events.list_events(limit=800, kinds=["token_alert"])
+            watch_by_mint = _kolfi_alert_watchlist_by_mint()
+            mint_site_ts: dict[str, str] = {}
+            mint_order: list[str] = []
+            seen_ev_mint: set[str] = set()
+            for ev in evs_top:
+                ev_dt = _parse_iso_dt(str((ev or {}).get("ts") or ""))
+                if not ev_dt or ev_dt < cutoff_top:
+                    continue
+                extra = (ev or {}).get("extra") or {}
+                mint = str(extra.get("mint") or "").strip()
+                if not mint or mint in seen_ev_mint:
+                    continue
+                seen_ev_mint.add(mint)
+                mint_order.append(mint)
+                mint_site_ts[mint] = str((ev or {}).get("ts") or "").strip()
+
+            rows_top: list = []
+            for mint in mint_order:
+                ent = watch_by_mint.get(mint) if isinstance(watch_by_mint.get(mint), dict) else None
+                row = await _row_leaderboard(
+                    mint,
+                    site_alert_ts=mint_site_ts.get(mint, ""),
+                    ent_opt=ent,
+                )
+                if row:
+                    rows_top.append(row)
+
+            if not rows_top:
+                for mk, ent in watch_by_mint.items():
+                    if not isinstance(ent, dict):
+                        continue
+                    mint = str(ent.get("mint") or mk or "").strip()
+                    if not mint:
+                        continue
+                    dt_first = _parse_iso_dt(str(ent.get("first_alert_ts") or "").strip())
+                    if not dt_first or dt_first < cutoff_top:
+                        continue
+                    row = await _row_leaderboard(
+                        mint,
+                        site_alert_ts=str(ent.get("first_alert_ts") or "").strip(),
+                        ent_opt=ent,
+                    )
+                    if row:
+                        rows_top.append(row)
 
             rows_top.sort(key=lambda r: float(r.get("ath_x") or 0), reverse=True)
             top_rows = rows_top[:top]
 
-            # Build 3 columns: same rolling window (UTC) as the left leaderboard
-            evs = feed_events.list_events(limit=350, kinds=["token_alert"])
-            buckets = {"low": [], "100k": [], "1m": []}
-            seen = set()
+            low_max, mid_max = _dashboard_bucket_thresholds()
+            evs = feed_events.list_events(limit=800, kinds=["token_alert"])
+
+            seen_bucket: set[str] = set()
+            staged: dict[str, list] = {"low": [], "100k": [], "1m": []}
             for ev in evs:
                 ev_dt = _parse_iso_dt(str((ev or {}).get("ts") or ""))
                 if not ev_dt or ev_dt < cutoff_top:
                     continue
                 extra = (ev or {}).get("extra") or {}
                 mint = str(extra.get("mint") or "").strip()
-                if not mint or mint in seen:
+                if not mint or mint in seen_bucket:
                     continue
-                seen.add(mint)
-                bucket = str(extra.get("bucket") or "").strip().lower()
-                if bucket not in buckets:
-                    try:
-                        bucket = kolfi._mc_bucket(kolfi._safe_float((by_mint.get(mint) or {}).get("last_market_cap")))  # type: ignore[attr-defined]
-                    except Exception:
-                        bucket = "low"
 
                 it = by_mint.get(mint) or {}
                 fc_raw = kolfi._first_call_with_mc(it) if it else None  # type: ignore[attr-defined]
                 fc = _persist_first_call_for_mint(mint, fc_raw) or fc_raw or _get_persisted_first_call(mint)
                 call_mc = kolfi._safe_float((fc or {}).get("callMarketCap")) if isinstance(fc, dict) else None  # type: ignore[attr-defined]
+                if call_mc is None or call_mc <= 0:
+                    continue
+
+                seen_bucket.add(mint)
+                bucket = _dashboard_bucket_by_call_mc(call_mc, low_max, mid_max)
+
                 cur_mc = kolfi._safe_float(it.get("last_market_cap"))  # type: ignore[attr-defined]
                 ath_mc = kolfi._safe_float(it.get("ath_market_cap"))  # type: ignore[attr-defined]
                 since = (cur_mc / call_mc) if (call_mc and call_mc > 0 and cur_mc and cur_mc > 0) else None
@@ -1662,39 +1739,34 @@ async def api_kol_dashboard(
                 call_ts = str((ev or {}).get("ts") or "").strip()
                 if not call_ts and isinstance(fc, dict):
                     call_ts = str(fc.get("messageTs") or fc.get("ts") or fc.get("callTs") or "") or ""
-                buckets[bucket].append(
-                    {
-                        "event_id": ev.get("id"),
-                        "ts": ev.get("ts"),
-                        "call_ts": call_ts,
-                        "title": ev.get("title"),
-                        "mint": mint,
-                        "ticker": str(extra.get("symbol") or extra.get("name") or "").strip() or kolfi._item_ticker(it),  # type: ignore[attr-defined]
-                        "caller": caller_label or (caller_x or ""),
-                        "caller_x": caller_x,
-                        "call_mc": call_mc,
-                        "cur_mc": cur_mc,
-                        "ath_mc": ath_mc,
-                        "since_x": since,
-                        "ath_x": ath_x,
-                        "chart_url": chart,
-                        "dex_url": dex,
-                        "thumb_url": thumb_url,
-                    }
-                )
-                if len(buckets[bucket]) >= per_bucket:
-                    continue
-                if all(len(v) >= per_bucket for v in buckets.values()):
-                    break
+                row_b = {
+                    "event_id": ev.get("id"),
+                    "ts": ev.get("ts"),
+                    "call_ts": call_ts,
+                    "title": ev.get("title"),
+                    "mint": mint,
+                    "ticker": str(extra.get("symbol") or extra.get("name") or "").strip()
+                    or kolfi._item_ticker(it),  # type: ignore[attr-defined]
+                    "caller": caller_label or (caller_x or ""),
+                    "caller_x": caller_x,
+                    "call_mc": call_mc,
+                    "cur_mc": cur_mc,
+                    "ath_mc": ath_mc,
+                    "since_x": since,
+                    "ath_x": ath_x,
+                    "chart_url": chart,
+                    "dex_url": dex,
+                    "thumb_url": thumb_url,
+                }
+                staged[bucket].append((ev_dt, row_b))
 
-            return {
-                "top": top_rows,
-                "buckets": {
-                    "low": buckets["low"][:per_bucket],
-                    "100k": buckets["100k"][:per_bucket],
-                    "1m": buckets["1m"][:per_bucket],
-                },
-            }
+            buckets_out = {"low": [], "100k": [], "1m": []}
+            for key in ("low", "100k", "1m"):
+                arr = staged.get(key) or []
+                arr.sort(key=lambda t: t[0], reverse=True)
+                buckets_out[key] = [r for _, r in arr[:per_bucket]]
+
+            return {"top": top_rows, "buckets": buckets_out}
     # Cache for 20 seconds; frontend refresh is also throttled.
     return await _cache_get_or_set(cache_key, 20.0, _build)
 
@@ -1787,20 +1859,6 @@ async def api_kol_top_performers(request: Request, days: int = 30, top: int = 10
     return await _cache_get_or_set(cache_key, 60.0, _build)
 
 
-def _parse_iso_dt(s: str):
-    try:
-        from datetime import datetime, timezone
-
-        if not s:
-            return None
-        dt = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
-    except Exception:
-        return None
-
-
 @app.get("/api/kol/alerts/top-performers")
 async def api_kol_alerts_top_performers(request: Request, days: int = 30, top: int = 10):
     """
@@ -1836,8 +1894,6 @@ async def api_kol_alerts_top_performers(request: Request, days: int = 30, top: i
         if cutoff is not None:
             first_ts = str(ent.get("first_alert_ts") or "").strip()
             dt = _parse_iso_dt(first_ts) if first_ts else None
-            if not dt:
-                dt = _parse_iso_dt(str(ent.get("last_alert_ts") or ""))
             if not dt or dt < cutoff:
                 continue
         entries.append(ent)
