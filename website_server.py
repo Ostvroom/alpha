@@ -1558,7 +1558,7 @@ async def api_kol_dashboard(
     top = max(1, min(25, int(top or 5)))
     per_bucket = max(1, min(25, int(per_bucket or 5)))
 
-    cache_key = f"kol_dashboard:v4_feed24h:{hours:.2f}:{top}:{per_bucket}"
+    cache_key = f"kol_dashboard:v5_feed_only:{hours:.2f}:{top}:{per_bucket}"
 
     async def _build():
         from datetime import datetime, timezone, timedelta
@@ -1569,7 +1569,7 @@ async def api_kol_dashboard(
                 api_key,
                 limit=150,
                 include_calls=50,
-                max_pages=15,
+                max_pages=28,
             )
             if err and not items:
                 raise HTTPException(502, err)
@@ -1591,6 +1591,7 @@ async def api_kol_dashboard(
                 site_alert_ts: str,
                 ent_opt: Optional[dict],
             ) -> Optional[dict]:
+                """Leaderboard row: prefer Kolfi overview snapshot; else watchlist snapshot (mint not on current board)."""
                 if not mint:
                     return None
                 tick = "—"
@@ -1599,9 +1600,12 @@ async def api_kol_dashboard(
                 snap = by_mint.get(mint) or {}
                 if tick == "—" and snap:
                     tick = kolfi._item_ticker(snap)  # type: ignore[attr-defined]
+
                 ath_mc = kolfi._safe_float((snap or {}).get("ath_market_cap"))  # type: ignore[attr-defined]
                 if (ath_mc is None or ath_mc <= 0) and isinstance(ent_opt, dict):
                     ath_mc = kolfi._safe_float(ent_opt.get("last_kolfi_ath_usd"))  # type: ignore[attr-defined]
+                if (ath_mc is None or ath_mc <= 0) and isinstance(ent_opt, dict):
+                    ath_mc = kolfi._safe_float(ent_opt.get("baseline_ath_usd"))  # type: ignore[attr-defined]
 
                 fc_raw = None
                 if snap:
@@ -1609,7 +1613,24 @@ async def api_kol_dashboard(
                         fc_raw = kolfi._first_call_with_mc(snap)  # type: ignore[attr-defined]
                     except Exception:
                         fc_raw = None
-                call = _persist_first_call_for_mint(mint, fc_raw) or fc_raw or _get_persisted_first_call(mint)
+                call: Optional[dict] = _persist_first_call_for_mint(mint, fc_raw) or fc_raw or _get_persisted_first_call(mint)  # type: ignore[assignment]
+                if not isinstance(call, dict) and isinstance(ent_opt, dict):
+                    lc = ent_opt.get("last_call")
+                    if isinstance(lc, dict):
+                        cm = kolfi._safe_float(lc.get("callMarketCap"))  # type: ignore[attr-defined]
+                        if cm and cm > 0:
+                            call = dict(lc)
+                            if not call.get("kolUsername") and lc.get("who"):
+                                call["kolUsername"] = str(lc.get("who"))
+                if not isinstance(call, dict) and isinstance(ent_opt, dict):
+                    bcm = kolfi._safe_float(ent_opt.get("baseline_mc_usd"))  # type: ignore[attr-defined]
+                    if bcm and bcm > 0:
+                        lc = ent_opt.get("last_call") if isinstance(ent_opt.get("last_call"), dict) else {}
+                        call = {
+                            "callMarketCap": bcm,
+                            "kolUsername": str((lc or {}).get("who") or "caller"),
+                            "kolXId": (lc or {}).get("kolXId") or (lc or {}).get("kol_x_id"),
+                        }
                 if not isinstance(call, dict):
                     return None
 
@@ -1618,6 +1639,9 @@ async def api_kol_dashboard(
                     return None
 
                 cur_mc = kolfi._safe_float((snap or {}).get("last_market_cap"))  # type: ignore[attr-defined]
+                if (cur_mc is None or cur_mc <= 0) and isinstance(ent_opt, dict):
+                    cur_mc = kolfi._safe_float(ent_opt.get("last_kolfi_mc_usd"))  # type: ignore[attr-defined]
+
                 since = (cur_mc / call_mc) if (cur_mc and call_mc > 0) else None
                 ath_x = (ath_mc / call_mc) if (ath_mc and call_mc > 0) else None
                 if ath_x is None or ath_x <= 0:
@@ -1682,24 +1706,6 @@ async def api_kol_dashboard(
                 if row:
                     rows_top.append(row)
 
-            if not rows_top:
-                for mk, ent in watch_by_mint.items():
-                    if not isinstance(ent, dict):
-                        continue
-                    mint = str(ent.get("mint") or mk or "").strip()
-                    if not mint:
-                        continue
-                    dt_first = _parse_iso_dt(str(ent.get("first_alert_ts") or "").strip())
-                    if not dt_first or dt_first < cutoff_top:
-                        continue
-                    row = await _row_leaderboard(
-                        mint,
-                        site_alert_ts=str(ent.get("first_alert_ts") or "").strip(),
-                        ent_opt=ent,
-                    )
-                    if row:
-                        rows_top.append(row)
-
             rows_top.sort(key=lambda r: float(r.get("ath_x") or 0), reverse=True)
             top_rows = rows_top[:top]
 
@@ -1718,8 +1724,26 @@ async def api_kol_dashboard(
                     continue
 
                 it = by_mint.get(mint) or {}
+                ent_b = watch_by_mint.get(mint) if isinstance(watch_by_mint.get(mint), dict) else None
                 fc_raw = kolfi._first_call_with_mc(it) if it else None  # type: ignore[attr-defined]
                 fc = _persist_first_call_for_mint(mint, fc_raw) or fc_raw or _get_persisted_first_call(mint)
+                if not isinstance(fc, dict) and isinstance(ent_b, dict):
+                    lc = ent_b.get("last_call")
+                    if isinstance(lc, dict):
+                        cm = kolfi._safe_float(lc.get("callMarketCap"))  # type: ignore[attr-defined]
+                        if cm and cm > 0:
+                            fc = dict(lc)
+                            if not fc.get("kolUsername") and lc.get("who"):
+                                fc["kolUsername"] = str(lc.get("who"))
+                if not isinstance(fc, dict) and isinstance(ent_b, dict):
+                    bcm = kolfi._safe_float(ent_b.get("baseline_mc_usd"))  # type: ignore[attr-defined]
+                    if bcm and bcm > 0:
+                        lc = ent_b.get("last_call") if isinstance(ent_b.get("last_call"), dict) else {}
+                        fc = {
+                            "callMarketCap": bcm,
+                            "kolUsername": str((lc or {}).get("who") or "caller"),
+                            "kolXId": (lc or {}).get("kolXId") or (lc or {}).get("kol_x_id"),
+                        }
                 call_mc = kolfi._safe_float((fc or {}).get("callMarketCap")) if isinstance(fc, dict) else None  # type: ignore[attr-defined]
                 if call_mc is None or call_mc <= 0:
                     continue
@@ -1728,7 +1752,13 @@ async def api_kol_dashboard(
                 bucket = _dashboard_bucket_by_call_mc(call_mc, low_max, mid_max)
 
                 cur_mc = kolfi._safe_float(it.get("last_market_cap"))  # type: ignore[attr-defined]
+                if (cur_mc is None or cur_mc <= 0) and isinstance(ent_b, dict):
+                    cur_mc = kolfi._safe_float(ent_b.get("last_kolfi_mc_usd"))  # type: ignore[attr-defined]
                 ath_mc = kolfi._safe_float(it.get("ath_market_cap"))  # type: ignore[attr-defined]
+                if (ath_mc is None or ath_mc <= 0) and isinstance(ent_b, dict):
+                    ath_mc = kolfi._safe_float(ent_b.get("last_kolfi_ath_usd"))  # type: ignore[attr-defined]
+                if (ath_mc is None or ath_mc <= 0) and isinstance(ent_b, dict):
+                    ath_mc = kolfi._safe_float(ent_b.get("baseline_ath_usd"))  # type: ignore[attr-defined]
                 since = (cur_mc / call_mc) if (call_mc and call_mc > 0 and cur_mc and cur_mc > 0) else None
                 ath_x = (ath_mc / call_mc) if (call_mc and call_mc > 0 and ath_mc and ath_mc > 0) else None
                 dex = str(it.get("dexscreener_url") or it.get("dexUrl") or ev.get("url") or "")
