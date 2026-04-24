@@ -239,7 +239,27 @@ def _apply_monkey_patch():
     _safe_init._is_patched = True
     ClientTransaction.init = _safe_init
 
-    print("    [PATCH] In-memory monkey-patch applied (get_indices, get_animation_key, init).")
+    # ── patch _get_user_state to prevent 429 infinite recursion ─────────────
+    try:
+        from twikit.client.client import Client
+        if not getattr(Client._get_user_state, "_is_patched", False):
+            original_get_user_state = Client._get_user_state
+            async def _safe_get_user_state(self):
+                if getattr(self, "_is_checking_user_state", False):
+                    return "normal"
+                self._is_checking_user_state = True
+                try:
+                    return await original_get_user_state(self)
+                except Exception:
+                    return "normal"
+                finally:
+                    self._is_checking_user_state = False
+            _safe_get_user_state._is_patched = True
+            Client._get_user_state = _safe_get_user_state
+    except Exception as e:
+        print(f"    [PATCH] Could not patch Client._get_user_state: {e}")
+
+    print("    [PATCH] In-memory monkey-patch applied (get_indices, get_animation_key, init, _get_user_state).")
 
     # ── patch User.__init__ ─────────────────────────────────────────────────
     # The user.py file patch fixes the source on disk, but the User class is

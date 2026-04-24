@@ -1104,7 +1104,7 @@ class BlockBrainBot(commands.Bot):
                 
                 # Discord Field Limit is 1024. Stop if we get close.
                 if len("\n".join(lines)) + len(new_line) > 950:
-                    lines.append(f"...and {len(results) - count} more.")
+                    lines.append(f"...and {len(ranked) - count} more.")
                     break
                     
                 lines.append(new_line.strip())
