@@ -851,6 +851,20 @@ class BlockBrainBot(commands.Bot):
         for word in critical_bans:
             if re.search(rf"\b{re.escape(word)}\b", text):
                 return True, word
+
+        # Personal role patterns that often look "project-like" at first glance.
+        # Keep this check before broad project indicators (e.g. "building", "web3").
+        personal_role_patterns = [
+            (r"\bbuilding\s+@", "building @"),
+            (r"\bfounder\s+@", "founder @"),
+            (r"\bfounder\s+of\b", "founder of"),
+            (r"\bco-?founder\s+of\b", "co-founder of"),
+            (r"\bpassionate\s+collector\b", "passionate collector"),
+            (r"\bnft\s+collector\b", "nft collector"),
+        ]
+        for pattern, reason in personal_role_patterns:
+            if re.search(pattern, text):
+                return True, reason
         
         # 🛡️ PROJECT INDICATORS (Priority Overrides)
         project_indicators = [
