@@ -1517,8 +1517,9 @@ async def api_kol_dashboard(
     top = max(1, min(25, int(top or 5)))
     per_bucket = max(1, min(25, int(per_bucket or 5)))
 
-    # v2: left leaderboard filters by last_alert_ts (rolling window), not first_alert_ts
-    cache_key = f"kol_dashboard:v2:{hours:.2f}:{top}:{per_bucket}"
+    # Left leaderboard: mints whose *first* Velcor3 alert was in this window (UTC).
+    # Using last_alert_ts re-included old coins after any re-fire, so 24h matched all-time ATHx.
+    cache_key = f"kol_dashboard:v3_first_alert:{hours:.2f}:{top}:{per_bucket}"
 
     async def _build():
         from datetime import datetime, timezone, timedelta
@@ -1546,17 +1547,16 @@ async def api_kol_dashboard(
             now = datetime.now(timezone.utc)
             cutoff_top = now - timedelta(hours=hours)
 
-            # Top: mints we *recently* alerted (last_alert_ts in window). All-time column uses full watchlist.
-            # Using first_alert_ts here made left === right whenever every top coin was first seen that day.
+            # Top: mints we *first* alerted inside the window (same idea as Kolfi daily recap).
             watch_by_mint = _kolfi_alert_watchlist_by_mint()
             watch_entries: list = []
             for mk, ent in watch_by_mint.items():
                 if not isinstance(ent, dict):
                     continue
-                dt_recent = _parse_iso_dt(
-                    str(ent.get("last_alert_ts") or ent.get("first_alert_ts") or "")
-                )
-                if not dt_recent or dt_recent < cutoff_top:
+                dt_first = _parse_iso_dt(str(ent.get("first_alert_ts") or "").strip())
+                if not dt_first:
+                    dt_first = _parse_iso_dt(str(ent.get("last_alert_ts") or "").strip())
+                if not dt_first or dt_first < cutoff_top:
                     continue
                 mint_s = str(ent.get("mint") or mk or "").strip()
                 if not mint_s:
@@ -1604,7 +1604,7 @@ async def api_kol_dashboard(
                 chart = f"https://gmgn.ai/sol/token/{mint}" if mint else ""
                 dex = str((snap or {}).get("dexscreener_url") or (snap or {}).get("dexUrl") or "")
                 thumb = await _thumb_url_cached(session, snap or {}, mint) if mint else ""
-                alert_ts = str(ent.get("last_alert_ts") or ent.get("first_alert_ts") or "").strip()
+                alert_ts = str(ent.get("first_alert_ts") or ent.get("last_alert_ts") or "").strip()
                 rows_top.append(
                     {
                         "ticker": tick,
@@ -1805,7 +1805,8 @@ def _parse_iso_dt(s: str):
 async def api_kol_alerts_top_performers(request: Request, days: int = 30, top: int = 10):
     """
     Top performers among tokens we alerted (watchlist), ranked by ATHx (ATH MC / first-call MC).
-    Use days=0 for all-time (no rolling cutoff). Otherwise filter by last_alert_ts (or first) vs window.
+    Use days=0 for all-time (no rolling cutoff). Otherwise filter by first_alert_ts vs window
+    (tokens we first alerted in that window — not last re-fire).
     """
     if not _DEV_PREVIEW and not _has_access(request):
         raise HTTPException(401, "Unauthorized")
@@ -1833,8 +1834,10 @@ async def api_kol_alerts_top_performers(request: Request, days: int = 30, top: i
         if not mint_s:
             continue
         if cutoff is not None:
-            last_ts = ent.get("last_alert_ts") or ent.get("first_alert_ts")
-            dt = _parse_iso_dt(str(last_ts or ""))
+            first_ts = str(ent.get("first_alert_ts") or "").strip()
+            dt = _parse_iso_dt(first_ts) if first_ts else None
+            if not dt:
+                dt = _parse_iso_dt(str(ent.get("last_alert_ts") or ""))
             if not dt or dt < cutoff:
                 continue
         entries.append(ent)
