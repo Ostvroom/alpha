@@ -1737,7 +1737,8 @@ async def api_kol_alerts_top_performers(request: Request, days: int = 30, top: i
     api_key = str(getattr(config, "KOLFI_API_KEY", "") or "").strip()
     if not api_key:
         raise HTTPException(400, "Missing KOLFI_API_KEY")
-    days = max(0, min(3650, int(days or 30)))
+    # Note: do not use `days or 30` — 0 is a valid value meaning all-time.
+    days = max(0, min(3650, int(days)))
     top = max(1, min(25, int(top or 10)))
 
     by_mint = _kolfi_alert_watchlist_by_mint()
