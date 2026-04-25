@@ -238,22 +238,7 @@
         a.href = ev.url;
         a.style.display = "inline-block";
       }
-      // Smart followers list (detail-only).
-      try{
-        var sf = (extra && extra.smart_followers) ? extra.smart_followers : [];
-        if (Array.isArray(sf) && sf.length){
-          var fieldsEl = document.getElementById("fields");
-          if (fieldsEl) fieldsEl.style.display = "grid";
-          var div = document.createElement("div");
-          div.className = "field full";
-          var links = sf.slice(0,120).map(function(h){
-            var xh = String(h||"").replace(/^@/,"");
-            return '<a href="https://x.com/'+esc(xh)+'" target="_blank" rel="noreferrer" style="color:#ffcc00">@'+esc(xh)+'</a>';
-          }).join(" · ");
-          div.innerHTML = '<div class="k">Smart followers</div><div class="v">'+links+'</div>';
-          fieldsEl.appendChild(div);
-        }
-      }catch(e){}
+      // Smart follower names are intentionally hidden in detail views.
       // Keep the raw key/value block hidden by default (fields render is nicer).
     }
     // Back button: prefer same-origin referrer; fallback to /projects

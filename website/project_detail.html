@@ -98,8 +98,9 @@
       if(!r.ok){ document.getElementById("err").style.display="block"; document.getElementById("err").textContent="Could not load project ("+r.status+")."; return; }
       var p = await r.json();
       document.getElementById("card").style.display="block";
-      document.getElementById("title").innerHTML = "@"+esc(p.handle||h);
-      document.getElementById("meta").textContent = "Category: " + (p.category||"—") + " · Alerted: " + fmtTime(p.alerted_at||"");
+      var scoreTop = Math.max(0, Number(p.score||0));
+      document.getElementById("title").innerHTML = "🔥 VELOCITY ALERT: " + esc(p.name || ("@" + (p.handle||h))) + " · Score " + esc(String(Math.round(scoreTop)));
+      document.getElementById("meta").textContent = "Escalation · " + fmtTime(p.alerted_at||"");
       document.getElementById("summary").innerHTML = esc((p.summary||p.description||"No summary."));
       if (p.pfp_url){
         var pfp = document.getElementById("pfp");
@@ -117,7 +118,7 @@
       var profile = document.getElementById("profileSec");
       profile.style.display = "block";
       profile.innerHTML =
-        '<div class="k">Profile</div>'
+        '<div class="k">👤 Profile</div>'
         + '<div class="v">Name: <b style="color:#ffcc00;">'+esc(p.name||"—")+'</b> | Category: <b>'+esc(p.category||"—")+'</b></div>'
         + '<div class="chips">'
         + '<span class="badge"><b>Age</b> '+esc(ageFromDate(p.created_at||""))+'</span>'
@@ -128,7 +129,7 @@
       var scoreSec = document.getElementById("scoreSec");
       scoreSec.style.display = "block";
       scoreSec.innerHTML =
-        '<div class="k">Social Score</div>'
+        '<div class="k">📊 Social Score</div>'
         + '<div class="chips"><span class="badge"><b>Score</b> '+esc(String(score))+'%</span></div>'
         + '<div class="bar"><i style="width:'+esc(String(score))+'%;"></i></div>'
         + '<div class="v">Status: <b>'+scoreStatus(score)+'</b> | Verified: ✅</div>';
@@ -136,20 +137,24 @@
       var researchSec = document.getElementById("researchSec");
       researchSec.style.display = "block";
       researchSec.innerHTML =
-        '<div class="k">Nerds Alpha Research</div>'
+        '<div class="k">🧠 Nerds Alpha Research</div>'
         + '<div class="v">'+esc((p.summary||p.description||"No research text."))+'</div>';
+
+      var followersSec = document.getElementById("followersSec");
+      followersSec.style.display = "block";
+      followersSec.innerHTML =
+        '<div class="k">🧬 Velcor3 Engaged</div>'
+        + '<div class="chips"><span class="badge"><b>Smart Engagers</b> '+esc(String(p.smart_followers_count||0))+'</span></div>';
 
       if(Array.isArray(p.smart_followers) && p.smart_followers.length){
         var names = p.smart_followers.map(function(x){
           var h = String(x||"").replace(/^@/,"");
           return '<a href="https://x.com/'+esc(h)+'" target="_blank" rel="noreferrer" style="color:#ffcc00">@'+esc(h)+'</a>';
         }).join(" · ");
-        var folSec = document.getElementById("followersSec");
-        folSec.style.display = "block";
-        folSec.innerHTML =
-          '<div class="k">Smart Followers</div>'
-          + '<div class="v">'+names+'</div>'
-          + '<div class="chips"><span class="badge"><b>Velcor3 engaged</b> '+esc(String(p.smart_followers_count||p.smart_followers.length||0))+' smart followers</span></div>';
+        var listSec = document.createElement("div");
+        listSec.className = "section";
+        listSec.innerHTML = '<div class="k">👥 Smart Followers</div><div class="v">'+names+'</div>';
+        document.getElementById("card").appendChild(listSec);
       }
       if(p.x_url){
         var x=document.getElementById("xBtn");
