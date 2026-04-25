@@ -22,12 +22,18 @@
     .head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:14px;border-bottom:1px solid rgba(255,204,0,.12)}
     .h1{font-weight:800;color:#ffcc00;font-size:20px}
     .meta{margin-top:6px;font-family:"JetBrains Mono",monospace;font-size:11px;color:rgba(240,232,192,.55)}
-    .body{padding:14px;font-size:14px;line-height:1.45;color:rgba(240,232,192,.86);white-space:pre-wrap}
+    .body{padding:14px;font-size:14px;line-height:1.45;color:rgba(240,232,192,.86);white-space:pre-wrap;border-bottom:1px solid rgba(255,204,0,.10)}
     .fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:14px;border-top:1px solid rgba(255,204,0,.10)}
     .field{border:1px solid rgba(255,204,0,.12);border-radius:12px;padding:10px 12px;background:rgba(0,0,0,.18)}
     .field.full{grid-column:1/-1}
     .k{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:rgba(240,232,192,.55)}
     .v{margin-top:6px;font-size:13px;color:rgba(240,232,192,.82);overflow-wrap:anywhere}
+    .section{margin:0 14px 12px;border:1px solid rgba(255,204,0,.12);border-radius:12px;padding:10px 12px;background:rgba(0,0,0,.18)}
+    .chips{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
+    .badge{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:999px;font-family:"JetBrains Mono",monospace;font-size:10px;border:1px solid rgba(255,204,0,.12);background:rgba(255,204,0,.08);color:rgba(240,232,192,.88)}
+    .badge b{font-weight:800;color:#ffcc00}
+    .bar{margin-top:8px;height:10px;border:1px solid rgba(255,204,0,.2);border-radius:999px;overflow:hidden;background:rgba(0,0,0,.22)}
+    .bar > i{display:block;height:100%;background:linear-gradient(90deg, rgba(255,240,190,.95), rgba(255,204,0,.75))}
     .err{margin-top:14px;font-family:"JetBrains Mono",monospace;font-size:12px;color:rgba(255,120,120,.9)}
   </style>
 </head>
@@ -36,7 +42,7 @@
     <div class="top">
       <a class="brand" href="/projects"><img src="/logo.png" alt="Nerds Alpha" /><span>Nerds Alpha · Project</span></a>
       <div style="display:flex;gap:8px;">
-        <a class="btn" id="xBtn" href="#" target="_blank" rel="noreferrer" style="display:none;">X</a>
+        <a class="btn" id="xBtn" href="#" target="_blank" rel="noreferrer" style="display:none;">Open Source</a>
         <a class="btn" id="backBtn" href="/projects">Back</a>
       </div>
     </div>
@@ -48,7 +54,10 @@
         </div>
       </div>
       <div class="body" id="summary"></div>
-      <div class="fields" id="fields"></div>
+      <div class="section" id="profileSec" style="display:none;"></div>
+      <div class="section" id="scoreSec" style="display:none;"></div>
+      <div class="section" id="researchSec" style="display:none;"></div>
+      <div class="section" id="followersSec" style="display:none;"></div>
     </div>
     <div class="err" id="err" style="display:none;"></div>
   </div>
@@ -60,12 +69,14 @@
       var m = window.location.pathname.match(/\/project\/([^/?#]+)/);
       return m ? decodeURIComponent(m[1]).replace(/^@/,"") : "";
     }
-    function addField(k,v,full){
-      var fields=document.getElementById("fields");
-      var div=document.createElement("div");
-      div.className="field"+(full?" full":"");
-      div.innerHTML='<div class="k">'+esc(k)+'</div><div class="v">'+(v||"—")+'</div>';
-      fields.appendChild(div);
+    function ageFromDate(iso){
+      try{
+        var d = new Date(iso);
+        if(isNaN(d.getTime())) return "—";
+        var sec = Math.max(0, (Date.now()-d.getTime())/1000);
+        var days = Math.floor(sec/86400);
+        return days + " days ago";
+      }catch(e){ return "—"; }
     }
     async function main(){
       var h=getHandle();
@@ -77,16 +88,42 @@
       document.getElementById("title").innerHTML = "@"+esc(p.handle||h);
       document.getElementById("meta").textContent = "Category: " + (p.category||"—") + " · Alerted: " + fmtTime(p.alerted_at||"");
       document.getElementById("summary").innerHTML = esc((p.summary||p.description||"No summary."));
-      addField("Name", esc(p.name||"—"), false);
-      addField("Score", esc(String(p.score||0)), false);
-      addField("Age", esc(p.created_at ? fmtTime(p.created_at) : "—"), false);
-      addField("Followers", esc(fmtFollowers(p.followers)), false);
+
+      var profile = document.getElementById("profileSec");
+      profile.style.display = "block";
+      profile.innerHTML =
+        '<div class="k">Profile</div>'
+        + '<div class="v">Name: <b style="color:#ffcc00;">'+esc(p.name||"—")+'</b> | Category: <b>'+esc(p.category||"—")+'</b></div>'
+        + '<div class="chips">'
+        + '<span class="badge"><b>Age</b> '+esc(ageFromDate(p.created_at||""))+'</span>'
+        + '<span class="badge"><b>Followers</b> '+esc(fmtFollowers(p.followers))+'</span>'
+        + '</div>';
+
+      var score = Math.max(0, Math.min(100, Number(p.score||0)));
+      var scoreSec = document.getElementById("scoreSec");
+      scoreSec.style.display = "block";
+      scoreSec.innerHTML =
+        '<div class="k">Social Score</div>'
+        + '<div class="chips"><span class="badge"><b>Score</b> '+esc(String(score))+'%</span></div>'
+        + '<div class="bar"><i style="width:'+esc(String(score))+'%;"></i></div>'
+        + '<div class="v">Status: <b>'+(score>=70?'Strong':(score>=40?'Could be Something':'Early'))+'</b></div>';
+
+      var researchSec = document.getElementById("researchSec");
+      researchSec.style.display = "block";
+      researchSec.innerHTML =
+        '<div class="k">Nerds Alpha Research</div>'
+        + '<div class="v">'+esc((p.summary||p.description||"No research text."))+'</div>';
+
       if(Array.isArray(p.smart_followers) && p.smart_followers.length){
         var names = p.smart_followers.map(function(x){
           var h = String(x||"").replace(/^@/,"");
           return '<a href="https://x.com/'+esc(h)+'" target="_blank" rel="noreferrer" style="color:#ffcc00">@'+esc(h)+'</a>';
         }).join(" · ");
-        addField("Smart followers", names, true);
+        var folSec = document.getElementById("followersSec");
+        folSec.style.display = "block";
+        folSec.innerHTML =
+          '<div class="k">Smart Followers</div>'
+          + '<div class="v">'+names+'</div>';
       }
       if(p.x_url){
         var x=document.getElementById("xBtn");
