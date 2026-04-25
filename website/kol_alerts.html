@@ -35,6 +35,8 @@
     .ph{padding:12px 14px;border-bottom:1px solid rgba(255,204,0,.12);display:flex;justify-content:space-between;align-items:center}
     .pt{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:rgba(240,232,192,.70)}
     .ps{font-family:"JetBrains Mono",monospace;font-size:10px;color:rgba(240,232,192,.45)}
+    .agoTag{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:999px;background:rgba(255,204,0,.10);border:1px solid rgba(255,204,0,.22);font-family:"JetBrains Mono",monospace;font-size:9.5px;color:#ffcc00;white-space:nowrap;font-weight:700}
+    .timeExact{font-family:"JetBrains Mono",monospace;font-size:10px;color:rgba(240,232,192,.55);white-space:nowrap}
     /* Panel body scroll: vertical only; tables can scroll horizontally inside */
     .pb{padding:10px 14px;max-height:74vh;overflow-y:auto;overflow-x:hidden}
     /* Tighter max-height so leaderboards / buckets scroll with more rows from API */
@@ -254,7 +256,7 @@
     <div class="grid">
       <div class="card span6">
         <div class="ph">
-          <div class="pt">Top performed coins (24h) · site alerts in this window · ranked by ATHx</div>
+          <div class="pt">Token alerts (last 24h) · exact time &amp; hours ago · ranked by ATHx</div>
           <div class="loadWrap">
             <span class="livePill" title="Live feed"><i></i>LIVE</span>
             <div class="ps" id="stat">—</div>
@@ -265,7 +267,7 @@
 
       <div class="card span6">
         <div class="ph">
-          <div class="pt">Top performed coins (all time) · our alerts · ranked by ATHx</div>
+          <div class="pt">Top performing coins (all time) · our discord &amp; website alerts · ranked by ATHx</div>
           <div class="loadWrap">
             <span class="livePill" title="Live feed"><i></i>LIVE</span>
             <div class="ps" id="stat30">—</div>
@@ -276,22 +278,22 @@
 
       <div class="card accent accLow span4">
         <div class="ph">
-          <div class="pt">Low mcap alerts</div>
+          <div class="pt">Low cap alerts</div>
           <div class="headRight"><span class="livePill liveMini"><i></i>LIVE</span><div class="ps">MC@call &lt;50k</div></div>
         </div>
         <div class="pb pb-tight" id="b_low"></div>
       </div>
       <div class="card accent acc100k span4">
         <div class="ph">
-          <div class="pt">Mid mcap alerts</div>
-          <div class="headRight"><span class="livePill liveMini"><i></i>LIVE</span><div class="ps">50k–&lt;1M @call</div></div>
+          <div class="pt">Mid cap alerts</div>
+          <div class="headRight"><span class="livePill liveMini"><i></i>LIVE</span><div class="ps">50k–1M @call</div></div>
         </div>
         <div class="pb pb-tight" id="b_100k"></div>
       </div>
       <div class="card accent acc1m span4">
         <div class="ph">
-          <div class="pt">1m+ mcap alerts</div>
-          <div class="headRight"><span class="livePill liveMini"><i></i>LIVE</span><div class="ps">1M+ @call</div></div>
+          <div class="pt">1M+ cap alerts</div>
+          <div class="headRight"><span class="livePill liveMini"><i></i>LIVE</span><div class="ps">1M+ MCap @call</div></div>
         </div>
         <div class="pb pb-tight" id="b_1m"></div>
       </div>
@@ -300,38 +302,40 @@
 
   <script>
     function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;").replace(/'/g,"&#39;");}
-    function _pad2(n){ n = Number(n||0); return (n<10?("0"+n):(""+n)); }
+    function _pad2(n){ n = Number(n||0); return (n<10?("0"+n):(""+ n)); }
     function _fmtUTC(d){
       return _pad2(d.getUTCDate())+"/"+_pad2(d.getUTCMonth()+1)+"/"+d.getUTCFullYear()
         +" "+_pad2(d.getUTCHours())+":"+_pad2(d.getUTCMinutes())+":"+_pad2(d.getUTCSeconds());
     }
-    function fmtTime(v){
+    function _parseDate(v){
       try{
-        if(v===null||v===undefined) return "";
-        var s = String(v).trim();
-        if(!s) return "";
-        // epoch seconds or ms
-        if(/^\d{10,13}$/.test(s)){
-          var n = parseInt(s,10);
-          if(s.length===10) n = n*1000;
-          var d0 = new Date(n);
-          if(!isNaN(d0.getTime())) return _fmtUTC(d0);
-        }
-        // ISO
-        var d = new Date(s);
-        if(!isNaN(d.getTime())) return _fmtUTC(d);
-        // dd/mm/yyyy (optionally with time)
-        var m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
-        if(m){
-          var dd = parseInt(m[1],10), mm = parseInt(m[2],10), yy = parseInt(m[3],10);
-          var hh = parseInt(m[4]||"0",10), mi = parseInt(m[5]||"0",10), ss = parseInt(m[6]||"0",10);
-          var d2 = new Date(Date.UTC(yy, mm-1, dd, hh, mi, ss));
-          if(!isNaN(d2.getTime())) return _fmtUTC(d2);
-        }
-        return s;
-      }catch(e){
-        return String(v||"");
-      }
+        if(!v && v!==0) return null;
+        var s=String(v).trim();
+        if(!s) return null;
+        if(/^\d{10,13}$/.test(s)){var n=parseInt(s,10);if(s.length===10)n*=1000;var d0=new Date(n);if(!isNaN(d0.getTime()))return d0;}
+        var d=new Date(s); if(!isNaN(d.getTime()))return d;
+        var m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+        if(m){var d2=new Date(Date.UTC(parseInt(m[3]),parseInt(m[2])-1,parseInt(m[1]),parseInt(m[4]||0),parseInt(m[5]||0),parseInt(m[6]||0)));if(!isNaN(d2.getTime()))return d2;}
+        return null;
+      }catch(e){return null;}
+    }
+    function fmtTime(v){
+      var d=_parseDate(v); if(!d) return String(v||"");
+      return _fmtUTC(d);
+    }
+    function hoursAgo(v){
+      var d=_parseDate(v); if(!d) return null;
+      var diff=(Date.now()-d.getTime())/1000;
+      if(diff<0) return null;
+      if(diff<60) return Math.round(diff)+"s ago";
+      if(diff<3600) return Math.round(diff/60)+"m ago";
+      var h=diff/3600;
+      if(h<24) return h.toFixed(1)+"h ago";
+      return Math.floor(h/24)+"d "+Math.round(h%24)+"h ago";
+    }
+    function fmtHour(v){
+      var d=_parseDate(v); if(!d) return "";
+      return _pad2(d.getUTCHours())+":"+_pad2(d.getUTCMinutes())+" UTC";
     }
     function fmtMc(n){
       if (n === null || n === undefined) return "—";
@@ -380,7 +384,8 @@
           +esc(r.mint||"").slice(0,6)+'…'+esc(r.mint||"").slice(-6)
           +'</div>';
         html+='</div>';
-        html+='<div class="colTime"><span class="tmeta">'+esc(fmtTime(r.call_ts||""))+'</span></div>';
+        var _ago=hoursAgo(r.call_ts||""); var _hr=fmtHour(r.call_ts||"");
+        html+='<div class="colTime"><span class="timeExact">'+esc(_hr)+'</span>'+(_ago?'<br><span class="agoTag">'+esc(_ago)+'</span>':'')+'</div>';
         html+='<div class="colCall">'+badge("MC", fmtMc(r.call_mc), "k")+'</div>';
         html+='<div class="colAth">'+badge("ATH", fmtMc(r.ath_mc), "g")+'</div>';
         html+='<div class="colAthx">'+badge("x", fmtX(r.ath_x), "g")+'</div>';
@@ -406,13 +411,14 @@
         var chart = r.chart_url || "";
         var callerLink = r.caller_x ? ("https://x.com/" + String(r.caller_x).replace(/^@/,"")) : "";
         var av = (r.thumb_url||"").trim();
+        var _ts=r.call_ts||r.ts||""; var _ago2=hoursAgo(_ts); var _hr2=fmtHour(_ts);
         html+='<div class="item">';
         html+='<div class="row"><div class="ttl" style="display:flex;align-items:center;gap:10px;min-width:0;">'
           +'<span class="av" style="width:32px;height:32px;border-radius:10px;flex:0 0 auto;">'+(av?('<img src="'+esc(av)+'" loading="lazy" />'):'')+'</span>'
           +'<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
           +(detail?('<a href="'+esc(detail)+'">'+esc(r.ticker||r.title||"Token")+'</a>'):esc(r.ticker||r.title||"Token"))
           +'</span></div>'
-          +'<div class="tmeta">'+esc(fmtTime(r.call_ts||r.ts||""))+'</div></div>';
+          +'<div style="text-align:right"><span class="timeExact">'+esc(_hr2)+'</span>'+(_ago2?'<br><span class="agoTag">'+esc(_ago2)+'</span>':'')+'</div></div>';
         html+='<div class="sub">'
           +badge("MC@call", fmtMc(r.call_mc), "k")
           +badge("ATH", fmtMc(r.ath_mc), "g")
