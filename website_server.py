@@ -587,6 +587,135 @@ def _has_access(req: Request) -> bool:
     return _verify_access_token(tok) is not None
 
 
+def _current_user_id(req: Request) -> int:
+    tok = req.cookies.get(ACCESS_COOKIE, "")
+    payload = _verify_access_token(tok) or {}
+    try:
+        return int(payload.get("uid") or 0)
+    except Exception:
+        return 0
+
+
+def _admin_user_ids() -> set[int]:
+    raw = str(os.getenv("WEBSITE_ADMIN_USER_IDS", "") or "").strip()
+    out: set[int] = set()
+    for part in raw.split(","):
+        p = str(part or "").strip()
+        if not p:
+            continue
+        try:
+            out.add(int(p))
+        except Exception:
+            continue
+    return out
+
+
+def _require_admin(request: Request) -> int:
+    if not _DEV_PREVIEW and not _has_access(request):
+        raise HTTPException(401, "Unauthorized")
+    uid = _current_user_id(request)
+    admins = _admin_user_ids()
+    if not admins:
+        raise HTTPException(403, "Admin list not configured")
+    if uid <= 0 or uid not in admins:
+        raise HTTPException(403, "Admin only")
+    return uid
+
+
+def _admin_init_tables() -> None:
+    conn = sqlite3.connect(database.DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS website_hidden_projects (
+            handle TEXT PRIMARY KEY,
+            name TEXT,
+            reason TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS website_manual_projects (
+            handle TEXT PRIMARY KEY,
+            name TEXT,
+            description TEXT,
+            category TEXT,
+            summary TEXT,
+            followers INTEGER,
+            created_at TEXT,
+            alerted_at TEXT,
+            pfp_url TEXT,
+            banner_url TEXT,
+            score INTEGER DEFAULT 0,
+            created_by INTEGER,
+            created_on TEXT DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def _is_hidden_by_admin(*, handle: str = "", name: str = "") -> tuple[bool, Optional[str]]:
+    _admin_init_tables()
+    h = str(handle or "").strip().lstrip("@").lower()
+    n = str(name or "").strip().lower()
+    if not h and not n:
+        return False, None
+    conn = sqlite3.connect(database.DB_PATH)
+    cur = conn.cursor()
+    if h:
+        cur.execute("SELECT reason FROM website_hidden_projects WHERE lower(handle)=?", (h,))
+        row = cur.fetchone()
+        if row:
+            conn.close()
+            return True, str(row[0] or "admin hidden handle")
+    if n:
+        cur.execute("SELECT reason FROM website_hidden_projects WHERE lower(name)=?", (n,))
+        row = cur.fetchone()
+        if row:
+            conn.close()
+            return True, str(row[0] or "admin hidden name")
+    conn.close()
+    return False, None
+
+
+def _get_manual_project_by_handle(handle: str) -> Optional[dict]:
+    _admin_init_tables()
+    h = str(handle or "").strip().lstrip("@").lower()
+    if not h:
+        return None
+    conn = sqlite3.connect(database.DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM website_manual_projects WHERE lower(handle)=? LIMIT 1", (h,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return dict(row)
+
+
+def _list_manual_projects(*, limit: int = 100) -> list[dict]:
+    _admin_init_tables()
+    conn = sqlite3.connect(database.DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT handle, name, description, category, summary, followers, created_at, alerted_at, pfp_url, banner_url, score
+        FROM website_manual_projects
+        ORDER BY COALESCE(alerted_at, created_at, created_on) DESC
+        LIMIT ?
+        """,
+        (max(1, min(500, int(limit or 100))),),
+    )
+    rows = [dict(r) for r in (cur.fetchall() or [])]
+    conn.close()
+    return rows
+
 def _rand_state(n: int = 20) -> str:
     try:
         import secrets
@@ -1098,6 +1227,12 @@ async def page_projects(request: Request):
     return _serve_page(request, "projects.html")
 
 
+@app.get("/admin/projects", response_class=HTMLResponse)
+async def page_admin_projects(request: Request):
+    _require_admin(request)
+    return _serve_page(request, "admin_projects.html")
+
+
 @app.get("/project/{handle}", response_class=HTMLResponse)
 async def page_project_detail(request: Request, handle: str):
     return _serve_page(request, "project_detail.html")
@@ -1291,6 +1426,193 @@ def _latest_profile_map(*, limit: int = 400) -> dict[str, dict]:
     return mp
 
 
+def _is_personal_profile_like(
+    *,
+    handle: str = "",
+    name: str = "",
+    description: str = "",
+    summary: str = "",
+    category: str = "",
+) -> tuple[bool, Optional[str]]:
+    """
+    Website-side personal-profile filter aligned with discord_bot.is_personal_profile().
+    Returns (is_personal, reason).
+    """
+    h = str(handle or "").strip().lstrip("@").lower()
+    text = " ".join(
+        [
+            str(name or "").strip(),
+            str(description or "").strip(),
+            str(summary or "").strip(),
+            str(category or "").strip(),
+        ]
+    ).lower()
+
+    if h.startswith("0x") and len(h) <= 10:
+        return True, "0x handle pattern"
+
+    critical_bans = [
+        "manager",
+        "collab manager",
+        "moderator",
+        "ambassador",
+        "contributor",
+        "personal account",
+        "alpha caller",
+        "content creator",
+        "researcher",
+        "trader",
+        "shitpost",
+        "ct",
+        "thread",
+        "calling",
+        "consultant",
+        "growth",
+        "marketing",
+        "strategies",
+        "associated with",
+        "involvement in",
+        "working with",
+        "helping",
+        "supporting",
+        "advising",
+    ]
+    for word in critical_bans:
+        if re.search(rf"\b{re.escape(word)}\b", text):
+            return True, word
+
+    personal_role_patterns = [
+        (r"\bbuilding\s+@", "building @"),
+        (r"\bfounder\s+@", "founder @"),
+        (r"\bfounder\s+of\b", "founder of"),
+        (r"\bco-?founder\s+of\b", "co-founder of"),
+        (r"\bpassionate\s+collector\b", "passionate collector"),
+        (r"\bnft\s+collector\b", "nft collector"),
+    ]
+    for pattern, reason in personal_role_patterns:
+        if re.search(pattern, text):
+            return True, reason
+
+    project_indicators = [
+        "official",
+        "building",
+        "$",
+        "coin",
+        "token",
+        "ecosystem",
+        "protocol",
+        "solana",
+        "ether",
+        "network",
+        "utility",
+        "launching",
+        "mainnet",
+        "testnet",
+        "whitelist",
+        "presale",
+        "airdrop",
+        "eth",
+        "web3",
+        "art",
+        ".art",
+        ".xyz",
+        ".com",
+        "pfp",
+        "collection",
+        "minting",
+        "meme",
+        "defi",
+        "game",
+        "infra",
+        "agent",
+        "neural",
+        "gpu",
+        "swap",
+        "liquidity",
+        "prediction",
+        "market",
+        "lab",
+        "velcor3",
+    ]
+    if any(indicator in text for indicator in project_indicators):
+        return False, None
+
+    ban_words = [
+        "advisor",
+        "enthusiast",
+        "collector",
+        "printer",
+        "writer",
+        "team",
+        "analyst",
+        "builder",
+        "developer",
+        "engineer",
+        "designer",
+        "artist",
+        "founder",
+        "ceo",
+        "co-founder",
+        "partner",
+        "intern",
+        "marketing",
+        "growth",
+        "strategy",
+        "head of",
+        "lead",
+        "investor",
+        "member",
+        "lover",
+        "fan",
+        "founder of",
+        "moderator of",
+        "builder of",
+        "nft trader",
+        "influencer",
+        "freelance",
+        "waifu",
+        "anime",
+        "otaku",
+        "cosplay",
+    ]
+    for word in ban_words:
+        if re.search(rf"\b{re.escape(word)}\b", text):
+            return True, word
+
+    return False, None
+
+
+def _exact_profile_block_hit(*, handle: str = "", name: str = "") -> tuple[bool, Optional[str]]:
+    """
+    Exact blacklist filter for website alerts/lists.
+    Configure with env vars:
+      - WEBSITE_ALERTS_BLOCK_HANDLES="user1,user2,@user3"
+      - WEBSITE_ALERTS_BLOCK_NAMES="Name One,Name Two"
+    """
+    h = str(handle or "").strip().lstrip("@").lower()
+    n = str(name or "").strip().lower()
+
+    raw_handles = str(os.getenv("WEBSITE_ALERTS_BLOCK_HANDLES", "") or "").strip()
+    raw_names = str(os.getenv("WEBSITE_ALERTS_BLOCK_NAMES", "") or "").strip()
+
+    blocked_handles = {
+        x.strip().lstrip("@").lower()
+        for x in raw_handles.split(",")
+        if x and x.strip()
+    }
+    blocked_names = {
+        x.strip().lower()
+        for x in raw_names.split(",")
+        if x and x.strip()
+    }
+
+    if h and h in blocked_handles:
+        return True, f"exact handle @{h}"
+    if n and n in blocked_names:
+        return True, f"exact name '{name}'"
+    return False, None
+
+
 @app.get("/api/projects/trending")
 async def api_projects_trending(request: Request, limit: int = 5):
     if not _DEV_PREVIEW and not _has_access(request):
@@ -1343,6 +1665,27 @@ async def api_projects_trending(request: Request, limit: int = 5):
         # If age is unknown, keep it (better than dropping everything); otherwise filter by max_age_days.
         if isinstance(age_days, int) and age_days > max_age_days:
             continue
+        is_exact_blocked, _ = _exact_profile_block_hit(
+            handle=str(handle or ""),
+            name=str(name or ""),
+        )
+        if is_exact_blocked:
+            continue
+        is_hidden_admin, _ = _is_hidden_by_admin(
+            handle=str(handle or ""),
+            name=str(name or ""),
+        )
+        if is_hidden_admin:
+            continue
+        is_personal, _ = _is_personal_profile_like(
+            handle=str(handle or ""),
+            name=str(name or ""),
+            description=str(desc or ""),
+            summary="",
+            category="",
+        )
+        if is_personal:
+            continue
         pfp_url = p.get("pfp_url") or ""
         if not pfp_url and handle:
             # Fallback avatar if we haven't seen a discovery/escalation event yet.
@@ -1373,6 +1716,27 @@ async def api_projects_new(request: Request, limit: int = 5):
     rows = database.get_projects_finds_24h(limit=limit)
     out = []
     for twitter_id, handle, name, desc, created_at, alerted_at, cat, summ, followers in rows:
+        is_exact_blocked, _ = _exact_profile_block_hit(
+            handle=str(handle or ""),
+            name=str(name or ""),
+        )
+        if is_exact_blocked:
+            continue
+        is_hidden_admin, _ = _is_hidden_by_admin(
+            handle=str(handle or ""),
+            name=str(name or ""),
+        )
+        if is_hidden_admin:
+            continue
+        is_personal, _ = _is_personal_profile_like(
+            handle=str(handle or ""),
+            name=str(name or ""),
+            description=str(desc or ""),
+            summary=str(summ or ""),
+            category=str(cat or ""),
+        )
+        if is_personal:
+            continue
         out.append(
             {
                 "twitter_id": str(twitter_id),
@@ -1388,6 +1752,37 @@ async def api_projects_new(request: Request, limit: int = 5):
                 "url": f"https://x.com/{handle}" if handle else "",
             }
         )
+    for m in _list_manual_projects(limit=200):
+        mh = str(m.get("handle") or "").strip().lstrip("@")
+        mn = str(m.get("name") or "")
+        is_exact_blocked, _ = _exact_profile_block_hit(handle=mh, name=mn)
+        is_hidden_admin, _ = _is_hidden_by_admin(handle=mh, name=mn)
+        is_personal, _ = _is_personal_profile_like(
+            handle=mh,
+            name=mn,
+            description=str(m.get("description") or ""),
+            summary=str(m.get("summary") or ""),
+            category=str(m.get("category") or ""),
+        )
+        if is_exact_blocked or is_hidden_admin or is_personal:
+            continue
+        out.append(
+            {
+                "twitter_id": f"manual:{mh}",
+                "handle": mh,
+                "name": mn,
+                "description": str(m.get("description") or ""),
+                "created_at": str(m.get("created_at") or ""),
+                "alerted_at": str(m.get("alerted_at") or ""),
+                "age_days": _age_days_from_created_at(str(m.get("created_at") or "")),
+                "followers": int(m.get("followers") or 0),
+                "category": str(m.get("category") or ""),
+                "summary": str(m.get("summary") or ""),
+                "url": f"https://x.com/{mh}" if mh else "",
+            }
+        )
+    out.sort(key=lambda x: str(x.get("alerted_at") or x.get("created_at") or ""), reverse=True)
+    out = out[:limit]
     return {"items": out}
 
 
@@ -1404,6 +1799,27 @@ async def api_projects_finds(request: Request, limit: int = 50, exclude_escalati
     for twitter_id, handle, name, desc, created_at, alerted_at, cat, summ, followers in rows:
         hnorm = str(handle or "").strip().lstrip("@").lower()
         if esc_handles and hnorm and hnorm in esc_handles:
+            continue
+        is_exact_blocked, _ = _exact_profile_block_hit(
+            handle=str(handle or ""),
+            name=str(name or ""),
+        )
+        if is_exact_blocked:
+            continue
+        is_hidden_admin, _ = _is_hidden_by_admin(
+            handle=str(handle or ""),
+            name=str(name or ""),
+        )
+        if is_hidden_admin:
+            continue
+        is_personal, _ = _is_personal_profile_like(
+            handle=str(handle or ""),
+            name=str(name or ""),
+            description=str(desc or ""),
+            summary=str(summ or ""),
+            category=str(cat or ""),
+        )
+        if is_personal:
             continue
         hkey = str(handle or "").strip().lstrip("@").lower()
         p = prof.get(hkey) or {}
@@ -1430,6 +1846,41 @@ async def api_projects_finds(request: Request, limit: int = 50, exclude_escalati
                 "banner_url": p.get("banner_url") or "",
             }
         )
+    for m in _list_manual_projects(limit=300):
+        mh = str(m.get("handle") or "").strip().lstrip("@")
+        mn = str(m.get("name") or "")
+        if esc_handles and mh.lower() in esc_handles:
+            continue
+        is_exact_blocked, _ = _exact_profile_block_hit(handle=mh, name=mn)
+        is_hidden_admin, _ = _is_hidden_by_admin(handle=mh, name=mn)
+        is_personal, _ = _is_personal_profile_like(
+            handle=mh,
+            name=mn,
+            description=str(m.get("description") or ""),
+            summary=str(m.get("summary") or ""),
+            category=str(m.get("category") or ""),
+        )
+        if is_exact_blocked or is_hidden_admin or is_personal:
+            continue
+        out.append(
+            {
+                "twitter_id": f"manual:{mh}",
+                "handle": mh,
+                "name": mn,
+                "description": str(m.get("description") or ""),
+                "created_at": str(m.get("created_at") or ""),
+                "alerted_at": str(m.get("alerted_at") or ""),
+                "age_days": _age_days_from_created_at(str(m.get("created_at") or "")),
+                "followers": int(m.get("followers") or 0),
+                "category": str(m.get("category") or ""),
+                "summary": str(m.get("summary") or ""),
+                "url": f"https://x.com/{mh}" if mh else "",
+                "pfp_url": str(m.get("pfp_url") or ""),
+                "banner_url": str(m.get("banner_url") or ""),
+            }
+        )
+    out.sort(key=lambda x: str(x.get("alerted_at") or x.get("created_at") or ""), reverse=True)
+    out = out[:limit]
     return {"items": out}
 
 
@@ -1458,6 +1909,27 @@ async def api_daily_finds(request: Request, day: str = "", limit: int = 200):
     prof = _latest_profile_map()
     out = []
     for twitter_id, handle, name, desc, created_at, alerted_at, cat, summ, followers in rows:
+        is_exact_blocked, _ = _exact_profile_block_hit(
+            handle=str(handle or ""),
+            name=str(name or ""),
+        )
+        if is_exact_blocked:
+            continue
+        is_hidden_admin, _ = _is_hidden_by_admin(
+            handle=str(handle or ""),
+            name=str(name or ""),
+        )
+        if is_hidden_admin:
+            continue
+        is_personal, _ = _is_personal_profile_like(
+            handle=str(handle or ""),
+            name=str(name or ""),
+            description=str(desc or ""),
+            summary=str(summ or ""),
+            category=str(cat or ""),
+        )
+        if is_personal:
+            continue
         hkey = str(handle or "").strip().lstrip("@").lower()
         p = prof.get(hkey) or {}
         age_days = _age_days_from_created_at(created_at)
@@ -1485,6 +1957,41 @@ async def api_daily_finds(request: Request, day: str = "", limit: int = 200):
                 "pfp_url": pfp_url,
             }
         )
+    for m in _list_manual_projects(limit=500):
+        mh = str(m.get("handle") or "").strip().lstrip("@")
+        mn = str(m.get("name") or "")
+        ma = str(m.get("alerted_at") or "")
+        if day and (not ma.startswith(day)):
+            continue
+        is_exact_blocked, _ = _exact_profile_block_hit(handle=mh, name=mn)
+        is_hidden_admin, _ = _is_hidden_by_admin(handle=mh, name=mn)
+        is_personal, _ = _is_personal_profile_like(
+            handle=mh,
+            name=mn,
+            description=str(m.get("description") or ""),
+            summary=str(m.get("summary") or ""),
+            category=str(m.get("category") or ""),
+        )
+        if is_exact_blocked or is_hidden_admin or is_personal:
+            continue
+        out.append(
+            {
+                "twitter_id": f"manual:{mh}",
+                "handle": mh,
+                "name": mn,
+                "description": str(m.get("description") or ""),
+                "created_at": str(m.get("created_at") or ""),
+                "alerted_at": ma,
+                "age_days": _age_days_from_created_at(str(m.get("created_at") or "")),
+                "followers": int(m.get("followers") or 0),
+                "category": str(m.get("category") or ""),
+                "summary": str(m.get("summary") or ""),
+                "url": f"https://x.com/{mh}" if mh else "",
+                "pfp_url": str(m.get("pfp_url") or ""),
+            }
+        )
+    out.sort(key=lambda x: str(x.get("alerted_at") or x.get("created_at") or ""), reverse=True)
+    out = out[:limit]
     return {"day": start_dt.date().isoformat(), "items": out}
 
 
@@ -2158,18 +2665,55 @@ async def api_project_detail(request: Request, handle: str):
     if not h:
         raise HTTPException(400, "Missing handle")
     row = database.get_project_by_handle(h)
-    if not row:
+    manual = _get_manual_project_by_handle(h) if not row else None
+    if not row and not manual:
         raise HTTPException(404, "Project not found")
-    twitter_id, hdl, name, desc, created_at, alerted_at, cat, summ, followers, _legacy_smarts = row
-    score, _score_hvas = _calculate_discord_style_project_score(str(twitter_id or ""))
-    smarts = database.get_project_smart_followers(str(twitter_id or ""), limit=120)
+    if row:
+        twitter_id, hdl, name, desc, created_at, alerted_at, cat, summ, followers, _legacy_smarts = row
+    else:
+        twitter_id = f"manual:{str((manual or {}).get('handle') or h)}"
+        hdl = str((manual or {}).get("handle") or h)
+        name = str((manual or {}).get("name") or hdl)
+        desc = str((manual or {}).get("description") or "")
+        created_at = str((manual or {}).get("created_at") or "")
+        alerted_at = str((manual or {}).get("alerted_at") or "")
+        cat = str((manual or {}).get("category") or "")
+        summ = str((manual or {}).get("summary") or "")
+        followers = (manual or {}).get("followers")
+    is_exact_blocked, reason_exact = _exact_profile_block_hit(
+        handle=str(hdl or h),
+        name=str(name or ""),
+    )
+    if is_exact_blocked:
+        raise HTTPException(404, f"Profile filtered ({reason_exact or 'exact blocklist'})")
+    is_hidden_admin, reason_hidden = _is_hidden_by_admin(
+        handle=str(hdl or h),
+        name=str(name or ""),
+    )
+    if is_hidden_admin:
+        raise HTTPException(404, f"Profile filtered ({reason_hidden or 'admin hidden'})")
+    is_personal, reason = _is_personal_profile_like(
+        handle=str(hdl or h),
+        name=str(name or ""),
+        description=str(desc or ""),
+        summary=str(summ or ""),
+        category=str(cat or ""),
+    )
+    if is_personal:
+        raise HTTPException(404, f"Profile filtered (personal account: {reason or 'rule'})")
+    if row:
+        score, _score_hvas = _calculate_discord_style_project_score(str(twitter_id or ""))
+        smarts = database.get_project_smart_followers(str(twitter_id or ""), limit=120)
+    else:
+        score = int((manual or {}).get("score") or 0)
+        smarts = []
     hkey = str(hdl or h).strip().lstrip("@").lower()
     prof = _latest_profile_map(limit=700)
     p = prof.get(hkey) or {}
-    pfp_url = str(p.get("pfp_url") or "").strip()
+    pfp_url = str((manual or {}).get("pfp_url") or p.get("pfp_url") or "").strip()
     if not pfp_url and hdl:
         pfp_url = f"https://unavatar.io/twitter/{str(hdl).lstrip('@')}"
-    banner_url = str(p.get("banner_url") or "").strip()
+    banner_url = str((manual or {}).get("banner_url") or p.get("banner_url") or "").strip()
     return {
         "twitter_id": str(twitter_id or ""),
         "handle": str(hdl or h),
@@ -2187,6 +2731,158 @@ async def api_project_detail(request: Request, handle: str):
         "x_url": f"https://x.com/{str(hdl or h).lstrip('@')}",
         "smart_followers": smarts,
     }
+
+
+class AdminProjectHideRequest(BaseModel):
+    handle: str
+    name: str = ""
+    reason: str = "admin hidden"
+    hidden: bool = True
+
+
+class AdminProjectAddRequest(BaseModel):
+    handle: str
+    name: str
+    description: str = ""
+    category: str = ""
+    summary: str = ""
+    followers: int = 0
+    created_at: str = ""
+    alerted_at: str = ""
+    pfp_url: str = ""
+    banner_url: str = ""
+    score: int = 0
+
+
+@app.get("/api/admin/projects/search")
+async def api_admin_projects_search(request: Request, q: str = "", limit: int = 50):
+    _require_admin(request)
+    _admin_init_tables()
+    limit = max(1, min(200, int(limit or 50)))
+    needle = f"%{str(q or '').strip().lower()}%"
+    conn = sqlite3.connect(database.DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    if str(q or "").strip():
+        cur.execute(
+            """
+            SELECT twitter_id, handle, name, description, ai_category, ai_summary, followers_count, alerted_at
+            FROM projects
+            WHERE lower(handle) LIKE ? OR lower(name) LIKE ?
+            ORDER BY COALESCE(alerted_at, created_at) DESC
+            LIMIT ?
+            """,
+            (needle, needle, limit),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT twitter_id, handle, name, description, ai_category, ai_summary, followers_count, alerted_at
+            FROM projects
+            ORDER BY COALESCE(alerted_at, created_at) DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+    rows = [dict(r) for r in (cur.fetchall() or [])]
+    cur.execute("SELECT handle, name, reason, created_at FROM website_hidden_projects ORDER BY created_at DESC LIMIT 300")
+    hidden = [dict(r) for r in (cur.fetchall() or [])]
+    cur.execute("SELECT handle, name, category, created_on FROM website_manual_projects ORDER BY created_on DESC LIMIT 300")
+    manual = [dict(r) for r in (cur.fetchall() or [])]
+    conn.close()
+    return {"items": rows, "hidden": hidden, "manual": manual}
+
+
+@app.post("/api/admin/projects/hide")
+async def api_admin_projects_hide(request: Request, body: AdminProjectHideRequest):
+    _require_admin(request)
+    _admin_init_tables()
+    h = str(body.handle or "").strip().lstrip("@").lower()
+    if not h:
+        raise HTTPException(400, "handle required")
+    n = str(body.name or "").strip()
+    rsn = str(body.reason or "admin hidden").strip()[:200]
+    conn = sqlite3.connect(database.DB_PATH)
+    cur = conn.cursor()
+    if bool(body.hidden):
+        cur.execute(
+            """
+            INSERT INTO website_hidden_projects (handle, name, reason)
+            VALUES (?, ?, ?)
+            ON CONFLICT(handle) DO UPDATE SET
+              name=excluded.name,
+              reason=excluded.reason
+            """,
+            (h, n, rsn),
+        )
+    else:
+        cur.execute("DELETE FROM website_hidden_projects WHERE lower(handle)=?", (h,))
+    conn.commit()
+    conn.close()
+    return {"ok": True, "handle": h, "hidden": bool(body.hidden)}
+
+
+@app.post("/api/admin/projects/add")
+async def api_admin_projects_add(request: Request, body: AdminProjectAddRequest):
+    uid = _require_admin(request)
+    _admin_init_tables()
+    h = str(body.handle or "").strip().lstrip("@").lower()
+    if not h:
+        raise HTTPException(400, "handle required")
+    name = str(body.name or "").strip() or h
+    conn = sqlite3.connect(database.DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO website_manual_projects
+            (handle, name, description, category, summary, followers, created_at, alerted_at, pfp_url, banner_url, score, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(handle) DO UPDATE SET
+            name=excluded.name,
+            description=excluded.description,
+            category=excluded.category,
+            summary=excluded.summary,
+            followers=excluded.followers,
+            created_at=excluded.created_at,
+            alerted_at=excluded.alerted_at,
+            pfp_url=excluded.pfp_url,
+            banner_url=excluded.banner_url,
+            score=excluded.score,
+            created_by=excluded.created_by
+        """,
+        (
+            h,
+            name,
+            str(body.description or ""),
+            str(body.category or ""),
+            str(body.summary or ""),
+            int(body.followers or 0),
+            str(body.created_at or ""),
+            str(body.alerted_at or ""),
+            str(body.pfp_url or ""),
+            str(body.banner_url or ""),
+            int(body.score or 0),
+            int(uid or 0),
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True, "handle": h}
+
+
+@app.post("/api/admin/projects/remove-manual")
+async def api_admin_projects_remove_manual(request: Request, body: AdminProjectHideRequest):
+    _require_admin(request)
+    _admin_init_tables()
+    h = str(body.handle or "").strip().lstrip("@").lower()
+    if not h:
+        raise HTTPException(400, "handle required")
+    conn = sqlite3.connect(database.DB_PATH)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM website_manual_projects WHERE lower(handle)=?", (h,))
+    conn.commit()
+    conn.close()
+    return {"ok": True, "handle": h}
 
 
 @app.get("/alert/{event_id}", response_class=HTMLResponse)

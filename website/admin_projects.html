@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#090909" />
+  <title>Nerds Alpha — Admin Projects</title>
+  <link rel="icon" href="/logo.png" type="image/png" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{background:#090909;color:#f0e8c0;font-family:Inter,system-ui,sans-serif}
+    .wrap{width:min(1200px,100%);margin:0 auto;padding:18px}
+    .top{display:flex;justify-content:space-between;align-items:center;gap:12px}
+    .brand{display:flex;align-items:center;gap:10px;color:#ffcc00;text-decoration:none}
+    .brand img{width:28px;height:28px;border-radius:6px;border:1px solid rgba(255,204,0,.25)}
+    .btn{border:1px solid rgba(255,204,0,.25);color:#f0e8c0;background:transparent;border-radius:10px;padding:8px 10px;font-family:"JetBrains Mono",monospace;font-size:11px;text-transform:uppercase;cursor:pointer}
+    .grid{display:grid;grid-template-columns:1.2fr .9fr;gap:12px;margin-top:14px}
+    @media (max-width:980px){.grid{grid-template-columns:1fr}}
+    .card{border:1px solid rgba(255,204,0,.18);border-radius:12px;overflow:hidden;background:rgba(9,9,9,.7)}
+    .ph{padding:10px 12px;border-bottom:1px solid rgba(255,204,0,.12);font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:rgba(240,232,192,.8)}
+    .pb{padding:12px}
+    .row{display:flex;gap:8px;align-items:center}
+    .row + .row{margin-top:8px}
+    .inp{flex:1;background:rgba(0,0,0,.25);border:1px solid rgba(255,204,0,.16);border-radius:9px;color:#f0e8c0;padding:8px 10px}
+    .txt{width:100%;min-height:70px;background:rgba(0,0,0,.25);border:1px solid rgba(255,204,0,.16);border-radius:9px;color:#f0e8c0;padding:8px 10px}
+    .list{max-height:62vh;overflow:auto;border:1px solid rgba(255,204,0,.10);border-radius:10px;padding:8px}
+    .item{padding:8px;border-bottom:1px solid rgba(255,204,0,.1)}
+    .item:last-child{border-bottom:none}
+    .small{font-size:12px;color:rgba(240,232,192,.72)}
+    .mono{font-family:"JetBrains Mono",monospace;font-size:11px}
+    .ok{color:#98ffba}
+    .err{color:#ff9696}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <a class="brand" href="/projects"><img src="/logo.png" alt="" /><span>NERDS ALPHA · ADMIN PROJECTS</span></a>
+      <div class="row">
+        <a class="btn" href="/projects">Back</a>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="ph">Search & Hide/Unhide</div>
+        <div class="pb">
+          <div class="row">
+            <input class="inp" id="q" placeholder="Search handle or name" />
+            <button class="btn" id="searchBtn">Search</button>
+          </div>
+          <div class="list" id="results" style="margin-top:10px;"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="ph">Add / Update Project</div>
+        <div class="pb">
+          <div class="row"><input class="inp" id="a_handle" placeholder="Handle (without @)" /></div>
+          <div class="row"><input class="inp" id="a_name" placeholder="Name" /></div>
+          <div class="row"><input class="inp" id="a_cat" placeholder="Category" /></div>
+          <div class="row"><input class="inp" id="a_followers" placeholder="Followers (number)" /></div>
+          <div class="row"><input class="inp" id="a_created" placeholder="Created at (ISO optional)" /></div>
+          <div class="row"><input class="inp" id="a_alerted" placeholder="Alerted at (ISO optional)" /></div>
+          <div class="row"><input class="inp" id="a_pfp" placeholder="PFP URL (optional)" /></div>
+          <div class="row"><input class="inp" id="a_banner" placeholder="Banner URL (optional)" /></div>
+          <div class="row"><input class="inp" id="a_score" placeholder="Score 0..100 (optional)" /></div>
+          <div class="row"><textarea class="txt" id="a_desc" placeholder="Description"></textarea></div>
+          <div class="row"><textarea class="txt" id="a_sum" placeholder="Summary"></textarea></div>
+          <div class="row">
+            <button class="btn" id="saveBtn">Save Manual</button>
+            <button class="btn" id="delBtn">Remove Manual</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid" style="margin-top:12px;">
+      <div class="card">
+        <div class="ph">Hidden list</div>
+        <div class="pb"><div class="list" id="hidden"></div></div>
+      </div>
+      <div class="card">
+        <div class="ph">Manual list</div>
+        <div class="pb"><div class="list" id="manual"></div></div>
+      </div>
+    </div>
+
+    <div id="msg" class="mono" style="margin-top:10px;"></div>
+  </div>
+
+  <script>
+    function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");}
+    function msg(t, ok){ var el=document.getElementById("msg"); el.className="mono "+(ok?"ok":"err"); el.textContent=t; }
+    async function jget(url){ const r=await fetch(url,{credentials:"include"}); if(!r.ok) throw new Error("HTTP "+r.status); return await r.json(); }
+    async function jpost(url, body){ const r=await fetch(url,{method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})}); if(!r.ok){let t="";try{t=await r.text();}catch(e){} throw new Error("HTTP "+r.status+(t?": "+t:""));} return await r.json(); }
+
+    async function load(){
+      try{
+        const q = encodeURIComponent(document.getElementById("q").value || "");
+        const d = await jget("/api/admin/projects/search?q="+q+"&limit=80");
+        const res = document.getElementById("results");
+        res.innerHTML = (d.items||[]).map(function(x){
+          const h = String(x.handle||"");
+          const n = String(x.name||"");
+          return '<div class="item">'
+            +'<div><b>@'+esc(h)+'</b> <span class="small">'+esc(n)+'</span></div>'
+            +'<div class="small">'+esc(String(x.ai_category||""))+' · '+esc(String(x.alerted_at||""))+'</div>'
+            +'<div class="row" style="margin-top:6px;">'
+            +'<button class="btn" onclick="hideOne(\''+esc(h)+'\',\''+esc(n)+'\',true)">Hide</button>'
+            +'<button class="btn" onclick="hideOne(\''+esc(h)+'\',\''+esc(n)+'\',false)">Unhide</button>'
+            +'<button class="btn" onclick="fillManual(\''+esc(h)+'\',\''+esc(n)+'\',\''+esc(String(x.description||""))+'\',\''+esc(String(x.ai_category||""))+'\',\''+esc(String(x.ai_summary||""))+'\',\''+esc(String(x.followers_count||0))+'\',\''+esc(String(x.alerted_at||""))+'\')">Use</button>'
+            +'</div>'
+            +'</div>';
+        }).join("") || '<div class="small">No results</div>';
+
+        document.getElementById("hidden").innerHTML = (d.hidden||[]).map(function(x){
+          return '<div class="item"><b>@'+esc(x.handle||"")+'</b> <span class="small">'+esc(x.name||"")+'</span><div class="small">'+esc(x.reason||"")+'</div></div>';
+        }).join("") || '<div class="small">No hidden projects</div>';
+
+        document.getElementById("manual").innerHTML = (d.manual||[]).map(function(x){
+          return '<div class="item"><b>@'+esc(x.handle||"")+'</b> <span class="small">'+esc(x.name||"")+'</span><div class="small">'+esc(x.category||"")+'</div></div>';
+        }).join("") || '<div class="small">No manual projects</div>';
+      }catch(e){ msg("Load failed: "+String(e), false); }
+    }
+
+    async function hideOne(h, n, hidden){
+      try{
+        await jpost("/api/admin/projects/hide",{handle:h,name:n,reason:"admin hidden",hidden:!!hidden});
+        msg((hidden?"Hidden ":"Unhidden ")+("@"+h), true);
+        await load();
+      }catch(e){ msg("Hide failed: "+String(e), false); }
+    }
+
+    function fillManual(h,n,d,c,s,f,a){
+      document.getElementById("a_handle").value = h||"";
+      document.getElementById("a_name").value = n||"";
+      document.getElementById("a_desc").value = d||"";
+      document.getElementById("a_cat").value = c||"";
+      document.getElementById("a_sum").value = s||"";
+      document.getElementById("a_followers").value = f||"0";
+      document.getElementById("a_alerted").value = a||"";
+    }
+
+    async function saveManual(){
+      try{
+        await jpost("/api/admin/projects/add",{
+          handle: document.getElementById("a_handle").value,
+          name: document.getElementById("a_name").value,
+          description: document.getElementById("a_desc").value,
+          category: document.getElementById("a_cat").value,
+          summary: document.getElementById("a_sum").value,
+          followers: Number(document.getElementById("a_followers").value||0),
+          created_at: document.getElementById("a_created").value,
+          alerted_at: document.getElementById("a_alerted").value,
+          pfp_url: document.getElementById("a_pfp").value,
+          banner_url: document.getElementById("a_banner").value,
+          score: Number(document.getElementById("a_score").value||0)
+        });
+        msg("Manual project saved", true);
+        await load();
+      }catch(e){ msg("Save failed: "+String(e), false); }
+    }
+
+    async function deleteManual(){
+      try{
+        await jpost("/api/admin/projects/remove-manual",{handle: document.getElementById("a_handle").value});
+        msg("Manual project removed", true);
+        await load();
+      }catch(e){ msg("Remove failed: "+String(e), false); }
+    }
+
+    document.getElementById("searchBtn").addEventListener("click", load);
+    document.getElementById("saveBtn").addEventListener("click", saveManual);
+    document.getElementById("delBtn").addEventListener("click", deleteManual);
+    load();
+  </script>
+</body>
+</html>

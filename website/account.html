@@ -86,59 +86,6 @@
         </div>
       </div>
 
-      <div class="card span12">
-        <div class="ph">
-          <div class="pt">Premium</div>
-          <div class="ps">Unlock the full stack</div>
-        </div>
-        <div class="pb">
-          <p class="lead"><b>Nerds Alpha Premium</b> removes interruptions and turns on every live feed, dashboard, and pro tool we ship.</p>
-          <ul class="feat">
-            <li><span><b>No ads</b> — clean UI, no promo modals.</span></li>
-            <li><span><b>All features</b> — full projects, token alerts, daily finds, and future drops.</span></li>
-            <li><span><b>24/7 live feeds</b> — same real-time pipelines as our Discord hunters.</span></li>
-            <li><span><b>Member-first roadmap</b> — early access to new scanners, wallets, and AI signals.</span></li>
-          </ul>
-          <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-            <a class="btn primary" id="joinDiscord" href="https://discord.gg/MDqvrdhFDY" target="_blank" rel="noreferrer">Join Discord · upgrade</a>
-            <a class="btn" href="/early-access">Payment &amp; tiers</a>
-          </div>
-        </div>
-      </div>
-
-      <div class="card span12">
-        <div class="ph">
-          <div class="pt">Advertise</div>
-          <div class="ps">Sponsored visibility</div>
-        </div>
-        <div class="pb">
-          <p class="lead">Put your project <b>at the top</b> of Nerds Alpha: pinned placements, homepage callouts, and co-marketing with our community pulse. We’ll review every request manually.</p>
-          <button type="button" class="btn primary" id="openAd">Advertise your project</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="modal" id="adModal" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Advertise">
-    <div class="modal-back" id="adModalBack"></div>
-    <div class="modal-card">
-      <div class="modal-head">
-        <div class="modal-title">Advertise · inquiry</div>
-        <button class="modal-close" type="button" id="adModalClose" aria-label="Close">&times;</button>
-      </div>
-      <div class="modal-body">
-        <div class="meta">Project name / ticker</div>
-        <input class="inp" id="adName" maxlength="120" placeholder="@YourProject or display name" />
-        <div class="meta" style="margin-top:12px">Link (X, site, or deck)</div>
-        <input class="inp" id="adUrl" maxlength="500" placeholder="https://…" />
-        <div class="meta" style="margin-top:12px">Short pitch</div>
-        <textarea class="inp" id="adPitch" rows="4" maxlength="1200" style="resize:vertical;min-height:88px" placeholder="What you want promoted, budget range, timeline…"></textarea>
-        <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
-          <button type="button" class="btn primary" id="adSubmit">Submit inquiry</button>
-          <span class="ps" id="adStat"></span>
-        </div>
-        <div class="ok" id="adOk" style="display:none">Received — we’ll reach out on Discord when possible.</div>
-      </div>
     </div>
   </div>
 
@@ -168,55 +115,10 @@
           av.src = (me.avatar_url||"");
           av.onerror = function(){ try{ av.style.display="none"; }catch(e){} };
         }
-        try{
-          var inf = await fetch("/api/info");
-          if (inf.ok){
-            var j = await inf.json();
-            var inv = (j && j.discord_invite) ? String(j.discord_invite) : "";
-            var a = document.getElementById("joinDiscord");
-            if (a && inv) a.href = inv;
-          }
-        }catch(e){}
       } catch(e){
         document.querySelector(".grid").innerHTML = '<div class="card span12"><div class="pb"><div class="err">Failed to load.</div></div></div>';
       }
     }
-
-    function _openAd(){ var m=document.getElementById("adModal"); if(m){ m.classList.add("on"); m.setAttribute("aria-hidden","false"); document.body.style.overflow="hidden"; }}
-    function _closeAd(){ var m=document.getElementById("adModal"); if(m){ m.classList.remove("on"); m.setAttribute("aria-hidden","true"); document.body.style.overflow=""; }}
-
-    (function(){
-      var o = document.getElementById("openAd");
-      var c = document.getElementById("adModalClose");
-      var b = document.getElementById("adModalBack");
-      if (o) o.addEventListener("click", function(e){ e.preventDefault(); _openAd(); });
-      if (c) c.addEventListener("click", _closeAd);
-      if (b) b.addEventListener("click", _closeAd);
-      var sub = document.getElementById("adSubmit");
-      if (sub) sub.addEventListener("click", async function(){
-        var st = document.getElementById("adStat");
-        var ok = document.getElementById("adOk");
-        if (ok) ok.style.display="none";
-        var name = String((document.getElementById("adName")||{}).value||"").trim();
-        var url = String((document.getElementById("adUrl")||{}).value||"").trim();
-        var pitch = String((document.getElementById("adPitch")||{}).value||"").trim();
-        if (!name){ if(st) st.textContent="Add a project name."; return; }
-        if (st) st.textContent="Sending…";
-        try{
-          var r = await fetch("/api/advertise/lead", {
-            method:"POST",
-            credentials:"include",
-            headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({ project_name: name, project_url: url, pitch: pitch })
-          });
-          var txt = ""; try{ txt = await r.text(); }catch(e){}
-          if (!r.ok){ if(st) st.textContent = (txt||("HTTP "+r.status)).slice(0,120); return; }
-          if (st) st.textContent="";
-          if (ok) ok.style.display="block";
-          setTimeout(_closeAd, 2200);
-        }catch(ex){ if(st) st.textContent="Network error"; }
-      });
-    })();
 
     load();
   </script>
