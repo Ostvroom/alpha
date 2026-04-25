@@ -1744,7 +1744,16 @@ async def api_kol_dashboard(
                             "kolUsername": str((lc or {}).get("who") or "caller"),
                             "kolXId": (lc or {}).get("kolXId") or (lc or {}).get("kol_x_id"),
                         }
-                call_mc = kolfi._safe_float((fc or {}).get("callMarketCap")) if isinstance(fc, dict) else None  # type: ignore[attr-defined]
+                # ── OUR ALERT MC (what MC was when WE posted the alert) ──────────
+                # Priority: extra.alert_mc (saved since fix) → watchlist baseline_mc_usd
+                # NEVER use callMarketCap from Kolfi (= the Telegram KOL's original call,
+                # which can be days/weeks old at a much lower MC than our actual alert MC).
+                call_mc = kolfi._safe_float(extra.get("alert_mc"))  # type: ignore[attr-defined]
+                if call_mc is None or call_mc <= 0:
+                    call_mc = kolfi._safe_float((ent_b or {}).get("baseline_mc_usd"))  # type: ignore[attr-defined]
+                if call_mc is None or call_mc <= 0:
+                    # Absolute last resort: Kolfi KOL first-call (may be approximate)
+                    call_mc = kolfi._safe_float((fc or {}).get("callMarketCap")) if isinstance(fc, dict) else None  # type: ignore[attr-defined]
                 if call_mc is None or call_mc <= 0:
                     continue
 
@@ -1766,9 +1775,9 @@ async def api_kol_dashboard(
                 caller_label = kolfi._call_label(fc) if isinstance(fc, dict) else ""  # type: ignore[attr-defined]
                 caller_x = str((fc or {}).get("kolXId") or (fc or {}).get("kol_x_id") or "").strip()
                 thumb_url = str(extra.get("thumb_url") or "") or (await _thumb_url_cached(session, it, mint) if mint else "")
-                call_ts = str((ev or {}).get("ts") or "").strip()
-                if not call_ts and isinstance(fc, dict):
-                    call_ts = str(fc.get("messageTs") or fc.get("ts") or fc.get("callTs") or "") or ""
+                # ── AUTHORITATIVE ALERT TIMESTAMP ────────────────────────────────
+                # Use extra.alert_ts (exact moment bot fired alert) → ev.ts (feed event ts)
+                call_ts = str(extra.get("alert_ts") or "").strip() or str((ev or {}).get("ts") or "").strip()
                 row_b = {
                     "event_id": ev.get("id"),
                     "ts": ev.get("ts"),

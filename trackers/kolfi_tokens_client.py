@@ -1236,6 +1236,12 @@ async def run_kolfi_feed_once(
                             "name": name,
                             "thumb_url": str(thumb or ""),
                             "embed": embed_payload,
+                            # Snapshot at OUR alert time — used by the website dashboard
+                            # so MC@call reflects what MC was when WE alerted, not the
+                            # Kolfi/Telegram KOL's original call (which could be weeks old).
+                            "alert_mc": _safe_float(item.get("last_market_cap")),
+                            "alert_ath": _safe_float(item.get("ath_market_cap")),
+                            "alert_ts": alert_at,
                         },
                     )
                 except Exception:
