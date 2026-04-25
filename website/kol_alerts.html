@@ -254,7 +254,7 @@
     </div>
 
     <div class="grid">
-      <div class="card span6">
+      <div class="card span12">
         <div class="ph">
           <div class="pt">Top performing alerts (7 days) · ranked by ATHx</div>
           <div class="loadWrap">
@@ -263,17 +263,6 @@
           </div>
         </div>
         <div class="pb pb-tight" id="top"></div>
-      </div>
-
-      <div class="card span6">
-        <div class="ph">
-          <div class="pt">Top daily callers (24h) · Kolfi leaderboard style</div>
-          <div class="loadWrap">
-            <span class="livePill" title="Live feed"><i></i>LIVE</span>
-            <div class="ps" id="stat30">—</div>
-          </div>
-        </div>
-        <div class="pb pb-tight" id="top30"></div>
       </div>
 
       <div class="card accent accLow span4">
@@ -378,6 +367,10 @@
         throw e;
       }
     }
+    function _isAbortError(e){
+      var s = String((e && (e.name || e.message || e)) || "");
+      return /AbortError|aborted/i.test(s);
+    }
     function renderTop(elId, items){
       var el=document.getElementById(elId);
       if(!items||!items.length){el.innerHTML='<div class="ps">No alerts yet.</div>';return;}
@@ -475,38 +468,6 @@
       });
       el.innerHTML=html;
     }
-    function renderCallers(elId, items){
-      var el=document.getElementById(elId);
-      if(!items||!items.length){el.innerHTML='<div class="ps">No daily callers yet.</div>';return;}
-      var html="";
-      html+='<div class="tableScroll">';
-      html+='<div class="topHeader">'
-        +'<div></div>'
-        +'<div class="colH">Top daily callers</div>'
-        +'<div class="colH">Last call</div>'
-        +'<div class="colH">Calls</div>'
-        +'<div class="colH">Tokens</div>'
-        +'<div class="colH">Best x</div>'
-        +'<div class="colH">Profile</div>'
-        +'<div class="colH">Links</div>'
-        +'</div>';
-      items.forEach(function(r, idx){
-        var callerLink = r.caller_x ? ("https://x.com/" + String(r.caller_x).replace(/^@/,"")) : "";
-        var _ago=hoursAgo(r.last_call_ts||""); var _hr=fmtHour(r.last_call_ts||"");
-        html+='<div class="tokRow">';
-        html+='<div class="av"></div>';
-        html+='<div><div class="row"><div class="ttl">'+esc(String(idx+1)+". ")+(callerLink?('<a href="'+esc(callerLink)+'" target="_blank" rel="noreferrer" style="color:#ffcc00">'+esc(r.caller||"Caller")+'</a>'):esc(r.caller||"Caller"))+'</div></div></div>';
-        html+='<div class="colTime"><span class="timeExact">'+esc(_hr)+'</span>'+(_ago?'<br><span class="agoTag">'+esc(_ago)+'</span>':'')+'</div>';
-        html+='<div class="colCall">'+badge("Calls", String(r.calls_count||0), "k")+'</div>';
-        html+='<div class="colAth">'+badge("Tokens", String(r.tokens_count||0), "g")+'</div>';
-        html+='<div class="colAthx">'+badge("Best", fmtX(r.best_since_x), "g")+'</div>';
-        html+='<div class="colCaller">'+(callerLink?('<a class="badge r" target="_blank" rel="noreferrer" href="'+esc(callerLink)+'"><b>@</b> '+esc(r.caller_x)+'</a>'):badge("X", "—", "r"))+'</div>';
-        html+='<div class="colLinks">'+(callerLink?('<a class="badge p" target="_blank" rel="noreferrer" href="'+esc(callerLink)+'"><b>Profile</b></a>'):'')+'</div>';
-        html+='</div>';
-      });
-      html+='</div>';
-      el.innerHTML=html;
-    }
     var _refreshBusy = false;
     var _firstLoad = true;
     async function refresh(){
@@ -515,27 +476,28 @@
       var stat = document.getElementById("stat");
       if (stat) stat.textContent = "Updating…";
       try{
-        var stat30 = document.getElementById("stat30");
-        if (stat30) stat30.textContent = "Updating…";
-
-        var d = await fetchJsonWithTimeout("/api/kol/dashboard?hours=24&top=20&per_bucket=20", 12000);
+        var d;
+        try{
+          d = await fetchJsonWithTimeout("/api/kol/dashboard?hours=24&top=10&per_bucket=20", 20000);
+        }catch(e1){
+          // Retry once with a lighter payload before surfacing an error.
+          d = await fetchJsonWithTimeout("/api/kol/dashboard?hours=24&top=10&per_bucket=12", 12000);
+        }
         renderTop("top", (d&&d.top)||[]);
-        renderCallers("top30", (d&&d.daily_callers)||[]);
         var b = (d&&d.buckets)||{};
         renderBucket("b_low", b.low||[]);
         renderBucket("b_100k", b["100k"]||[]);
         renderBucket("b_1m", b["1m"]||[]);
         if (stat) stat.textContent="Updated " + new Date().toLocaleTimeString();
-        if (stat30) stat30.textContent="Updated " + new Date().toLocaleTimeString();
       } catch(e){
-        document.getElementById("top").innerHTML = '<div class="err">Failed to load: '+esc(String(e||""))+'</div>';
+        var msg = _isAbortError(e)
+          ? "Timeout while loading Kolfi data. Auto-refresh will retry."
+          : ("Failed to load: " + String(e||""));
+        document.getElementById("top").innerHTML = '<div class="err">'+esc(msg)+'</div>';
         document.getElementById("b_low").innerHTML = '<div class="ps">—</div>';
         document.getElementById("b_100k").innerHTML = '<div class="ps">—</div>';
         document.getElementById("b_1m").innerHTML = '<div class="ps">—</div>';
         if (stat) stat.textContent = "Error";
-        document.getElementById("top30").innerHTML = '<div class="err">Failed to load callers: '+esc(String(e||""))+'</div>';
-        var stat30 = document.getElementById("stat30");
-        if (stat30) stat30.textContent = "Error";
       } finally {
         _refreshBusy = false;
         if (_firstLoad){

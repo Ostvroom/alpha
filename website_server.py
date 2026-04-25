@@ -373,6 +373,7 @@ _ROOT_DIR = Path(__file__).parent
 _CACHE: dict[str, tuple[float, object]] = {}
 _CACHE_LOCK = asyncio.Lock()
 _THUMB_CACHE: dict[str, tuple[float, str]] = {}
+_KOL_DASHBOARD_LAST_GOOD: Optional[dict] = None
 _FIRST_CALLS_PATH = str(DATA_DIR / "kolfi_first_calls.json")
 _FIRST_CALLS: dict[str, dict] = {}
 _FIRST_CALLS_LOADED = False
@@ -1595,7 +1596,6 @@ async def api_kol_dashboard(
     """
     Website dashboard for token alerts pulled directly from Kolfi overview.
     - top: top performing alerts in the last 7 days (ranked by ATHx from first call).
-    - daily_callers: top callers in the last 24h from Kolfi call rows.
     - buckets: recent token alerts split by MC@call for quick monitoring.
     """
     if not _DEV_PREVIEW and not _has_access(request):
@@ -1604,13 +1604,14 @@ async def api_kol_dashboard(
     if not api_key:
         raise HTTPException(400, "Missing KOLFI_API_KEY")
     hours = float(hours or 24.0)
-    top = max(1, min(25, int(top or 5)))
+    top = max(1, min(10, int(top or 5)))
     per_bucket = max(1, min(25, int(per_bucket or 5)))
 
     cache_key = f"kol_dashboard:v7_direct_kolfi:{hours:.2f}:{top}:{per_bucket}"
 
     async def _build():
         from datetime import datetime, timezone, timedelta
+        global _KOL_DASHBOARD_LAST_GOOD
 
         async with aiohttp.ClientSession() as session:
             items, err = await kolfi.fetch_tokens_overview(
@@ -1622,16 +1623,17 @@ async def api_kol_dashboard(
                 max_pages=8,
             )
             if err and not items:
+                # Serve stale data rather than failing hard when Kolfi is slow/unreachable.
+                if isinstance(_KOL_DASHBOARD_LAST_GOOD, dict):
+                    return dict(_KOL_DASHBOARD_LAST_GOOD)
                 raise HTTPException(502, err)
 
             now = datetime.now(timezone.utc)
             cutoff = now - timedelta(hours=hours)
             cutoff_top7 = now - timedelta(days=7)
-            cutoff_callers_24h = now - timedelta(hours=24)
             low_max, mid_max = _dashboard_bucket_thresholds()
             staged: dict[str, list] = {"low": [], "100k": [], "1m": []}
             top7_rows: list[dict] = []
-            callers_agg: dict[str, dict] = {}
 
             for it in items or []:
                 if not isinstance(it, dict):
@@ -1749,38 +1751,6 @@ async def api_kol_dashboard(
                         ).strip()
                         staged[bucket].append((latest_dt, latest_row))
 
-                # Right panel: top daily callers from last 24h call rows.
-                for c in callers_rows:
-                    c_dt = _parse_iso_dt(str((c or {}).get("messageTs") or ""))
-                    if c_dt is None or c_dt < cutoff_callers_24h:
-                        continue
-                    cx = str((c or {}).get("kolXId") or (c or {}).get("kol_x_id") or "").strip()
-                    cname = ""
-                    try:
-                        cname = kolfi._call_label(c)  # type: ignore[attr-defined]
-                    except Exception:
-                        cname = str((c or {}).get("kolUsername") or (c or {}).get("who") or "caller")
-                    key = (cx or cname or "caller").lower()
-                    ent = callers_agg.get(key)
-                    if not isinstance(ent, dict):
-                        ent = {
-                            "caller": cname or (cx or "caller"),
-                            "caller_x": cx,
-                            "calls_count": 0,
-                            "tokens_set": set(),
-                            "best_since_x": 0.0,
-                            "last_call_ts": "",
-                        }
-                    ent["calls_count"] = int(ent.get("calls_count") or 0) + 1
-                    ent["tokens_set"].add(mint)
-                    sx = kolfi._safe_float((cur_mc / kolfi._safe_float(c.get("callMarketCap"))) if (cur_mc and kolfi._safe_float(c.get("callMarketCap")) and kolfi._safe_float(c.get("callMarketCap")) > 0) else None)  # type: ignore[attr-defined]
-                    if sx and sx > float(ent.get("best_since_x") or 0):
-                        ent["best_since_x"] = float(sx)
-                    ts_s = str((c or {}).get("messageTs") or "")
-                    if ts_s > str(ent.get("last_call_ts") or ""):
-                        ent["last_call_ts"] = ts_s
-                    callers_agg[key] = ent
-
             buckets_out = {"low": [], "100k": [], "1m": []}
             for key in ("low", "100k", "1m"):
                 arr = staged.get(key) or []
@@ -1788,28 +1758,9 @@ async def api_kol_dashboard(
                 buckets_out[key] = [r for _, r in arr[:per_bucket]]
 
             top7_rows.sort(key=lambda r: float(r.get("ath_x") or 0), reverse=True)
-
-            callers_out: list[dict] = []
-            for ent in callers_agg.values():
-                callers_out.append(
-                    {
-                        "caller": str(ent.get("caller") or "caller"),
-                        "caller_x": str(ent.get("caller_x") or ""),
-                        "calls_count": int(ent.get("calls_count") or 0),
-                        "tokens_count": len(ent.get("tokens_set") or set()),
-                        "best_since_x": float(ent.get("best_since_x") or 0),
-                        "last_call_ts": str(ent.get("last_call_ts") or ""),
-                    }
-                )
-            callers_out.sort(
-                key=lambda x: (
-                    int(x.get("calls_count") or 0),
-                    int(x.get("tokens_count") or 0),
-                    float(x.get("best_since_x") or 0),
-                ),
-                reverse=True,
-            )
-            return {"top": top7_rows[:top], "daily_callers": callers_out[:top], "buckets": buckets_out}
+            built = {"top": top7_rows[:top], "buckets": buckets_out}
+            _KOL_DASHBOARD_LAST_GOOD = dict(built)
+            return built
     # Cache for 20 seconds; frontend refresh is also throttled.
     return await _cache_get_or_set(cache_key, 20.0, _build)
 
