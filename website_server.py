@@ -927,6 +927,20 @@ async def api_me(request: Request):
     }
 
 
+@app.get("/api/admin/status")
+async def api_admin_status(request: Request):
+    """Small helper so UI can show/hide admin controls."""
+    if not _DEV_PREVIEW and not _has_access(request):
+        raise HTTPException(401, "Unauthorized")
+    uid = _current_user_id(request)
+    admins = _admin_user_ids()
+    return {
+        "user_id": int(uid or 0),
+        "is_admin": bool(uid and admins and uid in admins),
+        "admin_configured": bool(admins),
+    }
+
+
 @app.get("/api/tasks")
 async def api_tasks(request: Request):
     if not _DEV_PREVIEW and not _has_access(request):
