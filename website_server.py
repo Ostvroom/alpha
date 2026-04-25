@@ -1496,6 +1496,54 @@ def _kolfi_alert_watchlist_by_mint() -> dict:
         return {}
 
 
+def _token_alert_rollup_from_db(*, days: int = 0, limit_events: int = 8000) -> dict[str, dict]:
+    """
+    Build mint-level rollup from persisted token_alert feed events.
+    Source of truth for "our alerts" history (DB-backed, not JSON watchlist).
+    """
+    from datetime import datetime, timezone, timedelta
+
+    out: dict[str, dict] = {}
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=max(0, int(days)))) if int(days or 0) > 0 else None
+    evs = feed_events.list_events(limit=max(100, min(20000, int(limit_events or 8000))), kinds=["token_alert"])
+    # list_events() returns newest first; iterate oldest->newest for stable first_alert fields.
+    for ev in reversed(evs or []):
+        extra = (ev or {}).get("extra") or {}
+        mint = str(extra.get("mint") or "").strip()
+        if not mint:
+            continue
+        ev_ts = str(extra.get("alert_ts") or (ev or {}).get("ts") or "").strip()
+        ev_dt = _parse_iso_dt(ev_ts)
+        if cutoff is not None and (ev_dt is None or ev_dt < cutoff):
+            continue
+
+        symbol = str(extra.get("symbol") or extra.get("name") or "").strip()
+        alert_mc = kolfi._safe_float(extra.get("alert_mc"))  # type: ignore[attr-defined]
+        if alert_mc is None or alert_mc <= 0:
+            continue
+
+        row = out.get(mint)
+        if not isinstance(row, dict):
+            out[mint] = {
+                "mint": mint,
+                "ticker": symbol or "—",
+                "first_alert_ts": ev_ts,
+                "last_alert_ts": ev_ts,
+                "alert_count": 1,
+                "first_alert_mc": alert_mc,
+                "last_alert_mc": alert_mc,
+            }
+            continue
+
+        row["last_alert_ts"] = ev_ts or row.get("last_alert_ts") or ""
+        row["last_alert_mc"] = alert_mc
+        row["alert_count"] = int(row.get("alert_count") or 0) + 1
+        if symbol and (not str(row.get("ticker") or "").strip() or str(row.get("ticker")) == "—"):
+            row["ticker"] = symbol
+    return out
+
+
 def _parse_iso_dt(s: str):
     try:
         from datetime import datetime, timezone
@@ -1901,9 +1949,9 @@ async def api_kol_top_performers(request: Request, days: int = 30, top: int = 10
 @app.get("/api/kol/alerts/top-performers")
 async def api_kol_alerts_top_performers(request: Request, days: int = 30, top: int = 10):
     """
-    Top performers among tokens we alerted (watchlist), ranked by ATHx (ATH MC / first-call MC).
-    Use days=0 for all-time (no rolling cutoff). Otherwise filter by first_alert_ts vs window
-    (tokens we first alerted in that window — not last re-fire).
+    Top performers among tokens we alerted (DB-backed token_alert events), ranked by ATHx
+    from OUR first alert MC (ATH MC / first_alert_mc).
+    Use days=0 for all-time (no cutoff); days>0 = first alert within rolling window.
     """
     if not _DEV_PREVIEW and not _has_access(request):
         raise HTTPException(401, "Unauthorized")
@@ -1914,31 +1962,10 @@ async def api_kol_alerts_top_performers(request: Request, days: int = 30, top: i
     days = max(0, min(3650, int(days)))
     top = max(1, min(25, int(top or 10)))
 
-    by_mint = _kolfi_alert_watchlist_by_mint()
-    if not by_mint:
+    rollup = _token_alert_rollup_from_db(days=days, limit_events=10000)
+    if not rollup:
         return {"days": days, "all_time": days <= 0, "items": []}
-
-    from datetime import datetime, timezone, timedelta
-
-    now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(days=days) if days > 0 else None
-
-    entries = []
-    for mint_key, ent in by_mint.items():
-        if not isinstance(ent, dict):
-            continue
-        mint_s = str(ent.get("mint") or mint_key or "").strip()
-        if not mint_s:
-            continue
-        if cutoff is not None:
-            first_ts = str(ent.get("first_alert_ts") or "").strip()
-            dt = _parse_iso_dt(first_ts) if first_ts else None
-            if not dt or dt < cutoff:
-                continue
-        entries.append(ent)
-
-    if not entries:
-        return {"days": days, "all_time": days <= 0, "items": []}
+    entries = list(rollup.values())
 
     cache_key = f"kol_alerts_top:{days}:{top}"
 
@@ -1972,8 +1999,19 @@ async def api_kol_alerts_top_performers(request: Request, days: int = 30, top: i
                 snap = by_snap.get(mint) or {}
                 ath_mc = kolfi._safe_float((snap or {}).get("ath_market_cap"))  # type: ignore[attr-defined]
                 if ath_mc is None or ath_mc <= 0:
-                    ath_mc = kolfi._safe_float(ent.get("last_kolfi_ath_usd"))  # type: ignore[attr-defined]
+                    continue
 
+                alert_mc = kolfi._safe_float(ent.get("first_alert_mc"))  # type: ignore[attr-defined]
+                if alert_mc is None or alert_mc <= 0:
+                    continue
+
+                cur_mc = kolfi._safe_float((snap or {}).get("last_market_cap"))  # type: ignore[attr-defined]
+                since = (cur_mc / alert_mc) if (cur_mc and cur_mc > 0) else None
+                ath_x = (ath_mc / alert_mc) if (ath_mc and ath_mc > 0) else None
+                if ath_x is None or ath_x <= 0:
+                    continue
+
+                call = None
                 fc_raw = None
                 if snap:
                     try:
@@ -1981,31 +2019,22 @@ async def api_kol_alerts_top_performers(request: Request, days: int = 30, top: i
                     except Exception:
                         fc_raw = None
                 call = _persist_first_call_for_mint(mint, fc_raw) or fc_raw or _get_persisted_first_call(mint)
-                if not isinstance(call, dict):
-                    continue
-
-                call_mc = kolfi._safe_float(call.get("callMarketCap"))  # type: ignore[attr-defined]
-                if call_mc is None or call_mc <= 0:
-                    continue
-
-                cur_mc = kolfi._safe_float((snap or {}).get("last_market_cap"))  # type: ignore[attr-defined]
-                since = (cur_mc / call_mc) if (cur_mc and cur_mc > 0) else None
-                ath_x = (ath_mc / call_mc) if (ath_mc and ath_mc > 0) else None
-                if ath_x is None or ath_x <= 0:
-                    continue
-
                 caller = ""
-                try:
-                    caller = kolfi._call_label(call)  # type: ignore[attr-defined]
-                except Exception:
-                    caller = str(call.get("who") or call.get("kolUsername") or "caller")
-                caller_x = str(call.get("kolXId") or call.get("kol_x_id") or "").strip()
+                caller_x = ""
+                if isinstance(call, dict):
+                    try:
+                        caller = kolfi._call_label(call)  # type: ignore[attr-defined]
+                    except Exception:
+                        caller = str(call.get("who") or call.get("kolUsername") or "caller")
+                    caller_x = str(call.get("kolXId") or call.get("kol_x_id") or "").strip()
 
                 chart = f"https://gmgn.ai/sol/token/{mint}" if mint else ""
                 dex = str((snap or {}).get("dexscreener_url") or (snap or {}).get("dexUrl") or "")
                 thumb = await _thumb_url_cached(session, snap or {}, mint) if mint else ""
 
-                our_ts = str(ent.get("first_alert_ts") or "").strip()
+                first_ts = str(ent.get("first_alert_ts") or "").strip()
+                last_ts = str(ent.get("last_alert_ts") or "").strip()
+                alert_count = int(ent.get("alert_count") or 0)
 
                 rows.append(
                     {
@@ -2013,22 +2042,105 @@ async def api_kol_alerts_top_performers(request: Request, days: int = 30, top: i
                         "mint": mint,
                         "caller": caller,
                         "caller_x": caller_x,
-                        "call_mc": call_mc,
+                        "call_mc": alert_mc,
                         "cur_mc": cur_mc,
                         "ath_mc": ath_mc,
                         "since_x": since,
                         "ath_x": ath_x,
-                        "call_ts": our_ts,
+                        "call_ts": first_ts,
+                        "first_alert_ts": first_ts,
+                        "last_alert_ts": last_ts,
+                        "alert_count": alert_count,
                         "chart_url": chart,
                         "dex_url": dex,
                         "thumb_url": thumb or "",
                     }
                 )
 
-            rows.sort(key=lambda r: float(r.get("ath_x") or 0), reverse=True)
+            # Primary: ATHx from OUR first alert MC. Tie-breaker: latest first alert.
+            rows.sort(
+                key=lambda r: (
+                    float(r.get("ath_x") or 0),
+                    str(r.get("first_alert_ts") or ""),
+                ),
+                reverse=True,
+            )
             return {"days": days, "all_time": days <= 0, "items": rows[:top]}
 
     return await _cache_get_or_set(cache_key, 60.0, _build)
+
+
+@app.get("/api/kol/alerts/history")
+async def api_kol_alerts_history(request: Request, days: int = 30, limit: int = 100):
+    """
+    Date-ordered list of our alerted tokens with performance from first alert MC:
+    includes first/last alert timestamps, alert count, since_x, and ath_x.
+    """
+    if not _DEV_PREVIEW and not _has_access(request):
+        raise HTTPException(401, "Unauthorized")
+    api_key = str(getattr(config, "KOLFI_API_KEY", "") or "").strip()
+    if not api_key:
+        raise HTTPException(400, "Missing KOLFI_API_KEY")
+    days = max(0, min(3650, int(days)))
+    limit = max(1, min(500, int(limit or 100)))
+
+    rollup = _token_alert_rollup_from_db(days=days, limit_events=15000)
+    if not rollup:
+        return {"days": days, "all_time": days <= 0, "items": []}
+    entries = list(rollup.values())
+
+    cache_key = f"kol_alerts_history:{days}:{limit}"
+
+    async def _build():
+        async with aiohttp.ClientSession() as session:
+            items, err = await kolfi.fetch_tokens_overview(
+                session,
+                api_key,
+                limit=100,
+                include_calls=20,
+                max_pages=8,
+            )
+            if err and not items:
+                raise HTTPException(502, err)
+            by_snap: dict[str, dict] = {}
+            for it in items or []:
+                if not isinstance(it, dict):
+                    continue
+                m = kolfi._item_mint(it)  # type: ignore[attr-defined]
+                if m:
+                    by_snap[m] = it
+
+            out: list[dict] = []
+            for ent in entries:
+                mint = str(ent.get("mint") or "").strip()
+                if not mint:
+                    continue
+                first_alert_mc = kolfi._safe_float(ent.get("first_alert_mc"))  # type: ignore[attr-defined]
+                if first_alert_mc is None or first_alert_mc <= 0:
+                    continue
+                snap = by_snap.get(mint) or {}
+                cur_mc = kolfi._safe_float((snap or {}).get("last_market_cap"))  # type: ignore[attr-defined]
+                ath_mc = kolfi._safe_float((snap or {}).get("ath_market_cap"))  # type: ignore[attr-defined]
+                since_x = (cur_mc / first_alert_mc) if (cur_mc and cur_mc > 0) else None
+                ath_x = (ath_mc / first_alert_mc) if (ath_mc and ath_mc > 0) else None
+                out.append(
+                    {
+                        "mint": mint,
+                        "ticker": str(ent.get("ticker") or "—"),
+                        "first_alert_ts": str(ent.get("first_alert_ts") or ""),
+                        "last_alert_ts": str(ent.get("last_alert_ts") or ""),
+                        "alert_count": int(ent.get("alert_count") or 0),
+                        "call_mc": first_alert_mc,
+                        "cur_mc": cur_mc,
+                        "ath_mc": ath_mc,
+                        "since_x": since_x,
+                        "ath_x": ath_x,
+                    }
+                )
+            out.sort(key=lambda r: str(r.get("first_alert_ts") or ""), reverse=True)
+            return {"days": days, "all_time": days <= 0, "items": out[:limit]}
+
+    return await _cache_get_or_set(cache_key, 30.0, _build)
 
 
 @app.get("/api/feed/event/{event_id}")
