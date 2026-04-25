@@ -1591,6 +1591,73 @@ def _dashboard_bucket_by_call_mc(call_mc: Optional[float], low_max: float, mid_m
     return "1m"
 
 
+def _calculate_discord_style_project_score(project_id: str) -> tuple[int, int]:
+    """
+    Match Discord bot `calculate_score()` formula for website project details.
+    Returns: (score_0_100, unique_hvas_count)
+    """
+    pid = str(project_id or "").strip()
+    if not pid:
+        return 0, 0
+
+    interactions = database.get_project_follows(pid) or []
+    unique_hvas = set()
+    score = 0.0
+
+    for row in interactions:
+        try:
+            h = str((row or [None])[0] or "").strip().lower()
+        except Exception:
+            h = ""
+        if h:
+            unique_hvas.add(h)
+
+    ai_data = database.get_project_ai_data(pid) or {}
+    try:
+        ai_alpha = float(ai_data.get("alpha_score") or 0.0)
+    except Exception:
+        ai_alpha = 0.0
+    # Base AI boost (same as Discord bot): up to 30 points.
+    score += ai_alpha * 0.3
+
+    t1 = {str(h or "").strip().lower() for h in (getattr(config, "TIER_1_HVAs", []) or []) if str(h or "").strip()}
+    conn = sqlite3.connect(database.DB_PATH)
+    cursor = conn.cursor()
+    try:
+        for h in unique_hvas:
+            cursor.execute("SELECT quality_score FROM hva_stats WHERE hva_handle = ?", (h,))
+            res = cursor.fetchone()
+            try:
+                hva_perf = float(res[0]) if (res and res[0] is not None) else 0.0
+            except Exception:
+                hva_perf = 0.0
+
+            weight = 3.0 if h in t1 else 1.0
+            # Same perf multiplier bounds as Discord bot.
+            perf_mult = max(0.5, min(2.0, hva_perf / 50.0)) if hva_perf > 0 else 1.0
+            score += 15.0 * weight * perf_mult
+    finally:
+        conn.close()
+
+    for row in interactions:
+        try:
+            it = str((row or [None, None])[1] or "").strip().lower()
+        except Exception:
+            it = ""
+        if it == "retweet":
+            score += 5.0
+        elif it == "reply":
+            score += 3.0
+
+    if len(unique_hvas) >= 3:
+        score += 20.0
+    elif len(unique_hvas) >= 2:
+        score += 10.0
+
+    score_i = min(max(int(round(score)), 0), 100)
+    return score_i, len(unique_hvas)
+
+
 @app.get("/api/kol/dashboard")
 async def api_kol_dashboard(
     request: Request,
@@ -1610,7 +1677,7 @@ async def api_kol_dashboard(
         raise HTTPException(400, "Missing KOLFI_API_KEY")
     hours = float(hours or 24.0)
     top = max(1, min(10, int(top or 5)))
-    per_bucket = max(1, min(25, int(per_bucket or 5)))
+    per_bucket = max(1, min(50, int(per_bucket or 5)))
 
     cache_key = f"kol_dashboard:v7_direct_kolfi:{hours:.2f}:{top}:{per_bucket}"
 
@@ -2093,7 +2160,8 @@ async def api_project_detail(request: Request, handle: str):
     row = database.get_project_by_handle(h)
     if not row:
         raise HTTPException(404, "Project not found")
-    twitter_id, hdl, name, desc, created_at, alerted_at, cat, summ, followers, score = row
+    twitter_id, hdl, name, desc, created_at, alerted_at, cat, summ, followers, _legacy_smarts = row
+    score, _score_hvas = _calculate_discord_style_project_score(str(twitter_id or ""))
     smarts = database.get_project_smart_followers(str(twitter_id or ""), limit=120)
     hkey = str(hdl or h).strip().lstrip("@").lower()
     prof = _latest_profile_map(limit=700)

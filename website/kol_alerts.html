@@ -478,10 +478,10 @@
       try{
         var d;
         try{
-          d = await fetchJsonWithTimeout("/api/kol/dashboard?hours=24&top=10&per_bucket=20", 20000);
+          d = await fetchJsonWithTimeout("/api/kol/dashboard?hours=24&top=10&per_bucket=50", 20000);
         }catch(e1){
           // Retry once with a lighter payload before surfacing an error.
-          d = await fetchJsonWithTimeout("/api/kol/dashboard?hours=24&top=10&per_bucket=12", 12000);
+          d = await fetchJsonWithTimeout("/api/kol/dashboard?hours=24&top=10&per_bucket=30", 12000);
         }
         renderTop("top", (d&&d.top)||[]);
         var b = (d&&d.buckets)||{};
