@@ -360,3 +360,26 @@ def get_event(event_id: int) -> Optional[Dict[str, Any]]:
         "extra": extra,
     }
 
+
+def delete_events_by_kind(kind: str) -> int:
+    """Delete all events of one kind; returns deleted row count."""
+    k = str(kind or "").strip()[:48]
+    if not k:
+        return 0
+    init_db()
+    if _use_pg():
+        conn = _conn_pg()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM feed_events WHERE kind = %s", (k,))
+        n = int(cur.rowcount or 0)
+        conn.commit()
+        conn.close()
+        return n
+    conn = _conn_sqlite()
+    c = conn.cursor()
+    c.execute("DELETE FROM feed_events WHERE kind = ?", (k,))
+    n = int(c.rowcount or 0)
+    conn.commit()
+    conn.close()
+    return n
+

@@ -256,7 +256,7 @@
     <div class="grid">
       <div class="card span6">
         <div class="ph">
-          <div class="pt">Token alerts (last 24h) · exact time &amp; hours ago · ranked by ATHx</div>
+          <div class="pt">Top performing alerts (7 days) · ranked by ATHx</div>
           <div class="loadWrap">
             <span class="livePill" title="Live feed"><i></i>LIVE</span>
             <div class="ps" id="stat">—</div>
@@ -267,7 +267,7 @@
 
       <div class="card span6">
         <div class="ph">
-          <div class="pt">Top performing coins (all time) · our discord &amp; website alerts · ranked by ATHx</div>
+          <div class="pt">Top daily callers (24h) · Kolfi leaderboard style</div>
           <div class="loadWrap">
             <span class="livePill" title="Live feed"><i></i>LIVE</span>
             <div class="ps" id="stat30">—</div>
@@ -358,16 +358,17 @@
     }
     function renderTop(elId, items){
       var el=document.getElementById(elId);
-      if(!items||!items.length){el.innerHTML='<div class="ps">No leaderboard yet.</div>';return;}
+      if(!items||!items.length){el.innerHTML='<div class="ps">No alerts yet.</div>';return;}
       var html="";
       html+='<div class="tableScroll">';
       html+='<div class="topHeader">'
         +'<div></div>'
-        +'<div class="colH">Top performing calls</div>'
-        +'<div class="colH">Call time</div>'
+        +'<div class="colH">Token alerts</div>'
+        +'<div class="colH">First call (Kolfi)</div>'
         +'<div class="colH">MC@call</div>'
+        +'<div class="colH">Current MC</div>'
         +'<div class="colH">ATH</div>'
-        +'<div class="colH">ATHx</div>'
+        +'<div class="colH">Since call</div>'
         +'<div class="colH">Caller</div>'
         +'<div class="colH">Links</div>'
         +'</div>';
@@ -387,12 +388,14 @@
         var _ago=hoursAgo(r.call_ts||""); var _hr=fmtHour(r.call_ts||"");
         html+='<div class="colTime"><span class="timeExact">'+esc(_hr)+'</span>'+(_ago?'<br><span class="agoTag">'+esc(_ago)+'</span>':'')+'</div>';
         html+='<div class="colCall">'+badge("MC", fmtMc(r.call_mc), "k")+'</div>';
-        html+='<div class="colAth">'+badge("ATH", fmtMc(r.ath_mc), "g")+'</div>';
-        html+='<div class="colAthx">'+badge("x", fmtX(r.ath_x), "g")+'</div>';
+        html+='<div class="colAth">'+badge("Now", fmtMc(r.cur_mc), "g")+'</div>';
+        html+='<div class="colAthx">'+badge("Since", fmtX(r.since_x), "g")+'</div>';
         html+='<div class="colCaller">'+(callerLink?('<a class="badge r" target="_blank" rel="noreferrer" href="'+esc(callerLink)+'"><b>'+esc(r.caller||"Caller")+'</b></a>'):badge("Caller", r.caller||"—", "r"))+'</div>';
         html+='<div class="colLinks">'
           +(chart?('<a class="badge" target="_blank" rel="noreferrer" href="'+esc(chart)+'"><b>Chart</b></a>'):'')
           +(dex?('<a class="badge p" target="_blank" rel="noreferrer" href="'+esc(dex)+'"><b>Dex</b></a>'):'')
+          +(r.token_x_url?('<a class="badge r" target="_blank" rel="noreferrer" href="'+esc(r.token_x_url)+'"><b>X</b></a>'):'')
+          +(r.token_site_url?('<a class="badge" target="_blank" rel="noreferrer" href="'+esc(r.token_site_url)+'"><b>Site</b></a>'):'')
           +'</div>';
         html+='</div>';
       });
@@ -421,16 +424,65 @@
           +'<div style="text-align:right"><span class="timeExact">'+esc(_hr2)+'</span>'+(_ago2?'<br><span class="agoTag">'+esc(_ago2)+'</span>':'')+'</div></div>';
         html+='<div class="sub">'
           +badge("MC@call", fmtMc(r.call_mc), "k")
+          +badge("Now", fmtMc(r.cur_mc), "g")
           +badge("ATH", fmtMc(r.ath_mc), "g")
+          +badge("Since", fmtX(r.since_x), "g")
           +badge("ATHx", fmtX(r.ath_x), "g")
           +'</div>';
+        var callers = Array.isArray(r.callers) ? r.callers : [];
+        var callersHtml = "";
+        if(callers.length){
+          callersHtml = callers.slice(0,3).map(function(c){
+            var cLink = c.x ? ("https://x.com/" + String(c.x).replace(/^@/,"")) : "";
+            var label = (c.name || c.x || "caller");
+            return cLink
+              ? '<a class="badge r" target="_blank" rel="noreferrer" href="'+esc(cLink)+'"><b>Caller</b> '+esc(label)+'</a>'
+              : badge("Caller", label, "r");
+          }).join("");
+        } else {
+          callersHtml = (callerLink?('<a class="badge r" target="_blank" rel="noreferrer" href="'+esc(callerLink)+'"><b>Caller</b> '+esc(r.caller||"")+'</a>'):(r.caller?badge("Caller", r.caller, "r"):""));
+        }
         html+='<div class="sub">'
-          +(callerLink?('<a class="badge r" target="_blank" rel="noreferrer" href="'+esc(callerLink)+'"><b>Caller</b> '+esc(r.caller||"")+'</a>'):(r.caller?badge("Caller", r.caller, "r"):""))
+          +callersHtml
           +(chart?('<a class="badge" target="_blank" rel="noreferrer" href="'+esc(chart)+'"><b>Chart</b> gmgn</a>'):'')
           +(r.dex_url?('<a class="badge" target="_blank" rel="noreferrer" href="'+esc(r.dex_url)+'"><b>Dex</b> link</a>'):'')
+          +(r.token_x_url?('<a class="badge r" target="_blank" rel="noreferrer" href="'+esc(r.token_x_url)+'"><b>Token X</b></a>'):'')
+          +(r.token_site_url?('<a class="badge" target="_blank" rel="noreferrer" href="'+esc(r.token_site_url)+'"><b>Site</b></a>'):'')
           +'</div>';
         html+='</div>';
       });
+      el.innerHTML=html;
+    }
+    function renderCallers(elId, items){
+      var el=document.getElementById(elId);
+      if(!items||!items.length){el.innerHTML='<div class="ps">No daily callers yet.</div>';return;}
+      var html="";
+      html+='<div class="tableScroll">';
+      html+='<div class="topHeader">'
+        +'<div></div>'
+        +'<div class="colH">Top daily callers</div>'
+        +'<div class="colH">Last call</div>'
+        +'<div class="colH">Calls</div>'
+        +'<div class="colH">Tokens</div>'
+        +'<div class="colH">Best x</div>'
+        +'<div class="colH">Profile</div>'
+        +'<div class="colH">Links</div>'
+        +'</div>';
+      items.forEach(function(r, idx){
+        var callerLink = r.caller_x ? ("https://x.com/" + String(r.caller_x).replace(/^@/,"")) : "";
+        var _ago=hoursAgo(r.last_call_ts||""); var _hr=fmtHour(r.last_call_ts||"");
+        html+='<div class="tokRow">';
+        html+='<div class="av"></div>';
+        html+='<div><div class="row"><div class="ttl">'+esc(String(idx+1)+". ")+(callerLink?('<a href="'+esc(callerLink)+'" target="_blank" rel="noreferrer" style="color:#ffcc00">'+esc(r.caller||"Caller")+'</a>'):esc(r.caller||"Caller"))+'</div></div></div>';
+        html+='<div class="colTime"><span class="timeExact">'+esc(_hr)+'</span>'+(_ago?'<br><span class="agoTag">'+esc(_ago)+'</span>':'')+'</div>';
+        html+='<div class="colCall">'+badge("Calls", String(r.calls_count||0), "k")+'</div>';
+        html+='<div class="colAth">'+badge("Tokens", String(r.tokens_count||0), "g")+'</div>';
+        html+='<div class="colAthx">'+badge("Best", fmtX(r.best_since_x), "g")+'</div>';
+        html+='<div class="colCaller">'+(callerLink?('<a class="badge r" target="_blank" rel="noreferrer" href="'+esc(callerLink)+'"><b>@</b> '+esc(r.caller_x)+'</a>'):badge("X", "—", "r"))+'</div>';
+        html+='<div class="colLinks">'+(callerLink?('<a class="badge p" target="_blank" rel="noreferrer" href="'+esc(callerLink)+'"><b>Profile</b></a>'):'')+'</div>';
+        html+='</div>';
+      });
+      html+='</div>';
       el.innerHTML=html;
     }
     var _refreshBusy = false;
@@ -444,11 +496,7 @@
         var stat30 = document.getElementById("stat30");
         if (stat30) stat30.textContent = "Updating…";
 
-        var res = await Promise.all([
-          fetch("/api/kol/dashboard?hours=24&top=20&per_bucket=20",{credentials:"include"}),
-          fetch("/api/kol/alerts/top-performers?days=0&top=20",{credentials:"include"})
-        ]);
-        var r = res[0], r30 = res[1];
+        var r = await fetch("/api/kol/dashboard?hours=24&top=20&per_bucket=20",{credentials:"include"});
 
         if(!r.ok){
           var txt = "";
@@ -461,27 +509,18 @@
         } else {
           var d=await r.json();
           renderTop("top", (d&&d.top)||[]);
+          renderCallers("top30", (d&&d.daily_callers)||[]);
           var b = (d&&d.buckets)||{};
           renderBucket("b_low", b.low||[]);
           renderBucket("b_100k", b["100k"]||[]);
           renderBucket("b_1m", b["1m"]||[]);
           if (stat) stat.textContent="Updated " + new Date().toLocaleTimeString();
-        }
-
-        if(!r30.ok){
-          var txt30 = "";
-          try{ txt30 = (await r30.text()) || ""; }catch(e){}
-          document.getElementById("top30").innerHTML = '<div class="err">Failed to load: HTTP '+esc(r30.status)+'<br/>'+esc(txt30.slice(0,220))+'</div>';
-          if (stat30) stat30.textContent = "Error";
-        } else {
-          var d30=await r30.json();
-          renderTop("top30", (d30&&d30.items)||[]);
           if (stat30) stat30.textContent="Updated " + new Date().toLocaleTimeString();
         }
       } catch(e){
         document.getElementById("top").innerHTML = '<div class="err">Failed to load: '+esc(String(e||""))+'</div>';
         if (stat) stat.textContent = "Error";
-        document.getElementById("top30").innerHTML = '<div class="err">Failed to load: '+esc(String(e||""))+'</div>';
+        document.getElementById("top30").innerHTML = '<div class="err">Failed to load callers: '+esc(String(e||""))+'</div>';
         var stat30 = document.getElementById("stat30");
         if (stat30) stat30.textContent = "Error";
       } finally {

@@ -5,6 +5,7 @@ import os
 import sys
 import threading
 import warnings
+import sqlite3
 from pathlib import Path
 
 from discord_bot import BlockBrainBot
@@ -106,6 +107,64 @@ def _start_website_server() -> None:
         print(f"[Velcor3] Website server failed to start: {e}", flush=True)
 
 
+def _hard_reset_token_alerts_once() -> None:
+    """
+    One-time hard reset for coin/token alert history on the current DATA_DIR.
+    This is intentionally one-shot (marker file) to avoid wiping data every restart.
+    """
+    from app_paths import DATA_DIR, ensure_dirs
+    import feed_events
+
+    ensure_dirs()
+    marker = Path(DATA_DIR) / ".token_alert_hard_reset_v1.done"
+    if marker.is_file():
+        return
+
+    # Reset event-history source used by website alert panels.
+    deleted_events = 0
+    try:
+        deleted_events = int(feed_events.delete_events_by_kind("token_alert"))
+    except Exception as e:
+        print(f"[Velcor3] Hard reset warning (feed_events): {e}", flush=True)
+
+    # Reset local Kolfi state files used for alert tracking/history.
+    removed_files: list[str] = []
+    for name in (
+        "kolfi_alert_watchlist.json",
+        "kolfi_first_calls.json",
+        "kolfi_feed_state.json",
+    ):
+        p = Path(DATA_DIR) / name
+        try:
+            if p.exists():
+                p.unlink()
+                removed_files.append(name)
+        except Exception as e:
+            print(f"[Velcor3] Hard reset warning (unlink {name}): {e}", flush=True)
+
+    # Best-effort clear token_alert rows from SQLite directly (if DB exists on this node).
+    try:
+        db_file = Path(DATA_DIR) / "feed_events.db"
+        if db_file.is_file():
+            conn = sqlite3.connect(str(db_file))
+            cur = conn.cursor()
+            cur.execute("DELETE FROM feed_events WHERE kind = ?", ("token_alert",))
+            conn.commit()
+            conn.close()
+    except Exception:
+        pass
+
+    try:
+        marker.write_text("done\n", encoding="utf-8")
+    except Exception:
+        pass
+    print(
+        f"[Velcor3] HARD RESET complete: token_alert events deleted={deleted_events}, "
+        f"files_removed={removed_files or 'none'}",
+        flush=True,
+    )
+
+
 def main():
     # Windows consoles often default to cp1252, which crashes on emoji logs.
     # Force UTF-8 with replacement to keep the bot running.
@@ -138,6 +197,7 @@ def main():
 
     _materialize_cookies_from_env()
     _print_startup_paths()
+    _hard_reset_token_alerts_once()
 
     # Start the website server in a background thread (shares same process = same DB)
     web_thread = threading.Thread(target=_start_website_server, daemon=True, name="website-server")
