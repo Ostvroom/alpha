@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#090909" />
+  <title>Nerds Alpha — Project</title>
+  <link rel="icon" href="/logo.png" type="image/png" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{background:#090909;color:#f0e8c0;font-family:Inter,system-ui,sans-serif}
+    a{color:inherit;text-decoration:none}
+    .wrap{width:min(980px,100%);margin:0 auto;padding:22px}
+    .top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .brand{display:flex;align-items:center;gap:10px}
+    .brand img{width:30px;height:30px;border:1px solid rgba(255,204,0,.30);border-radius:6px}
+    .brand span{font-family:"JetBrains Mono",monospace;letter-spacing:.14em;text-transform:uppercase;color:#ffcc00;font-weight:700;font-size:12px}
+    .btn{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,204,0,.25);color:rgba(240,232,192,.80)}
+    .btn:hover{border-color:rgba(255,204,0,.45);color:#ffcc00}
+    .card{margin-top:18px;border:1px solid rgba(255,204,0,.18);border-radius:14px;overflow:hidden;background:rgba(9,9,9,.7)}
+    .head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:14px;border-bottom:1px solid rgba(255,204,0,.12)}
+    .h1{font-weight:800;color:#ffcc00;font-size:20px}
+    .meta{margin-top:6px;font-family:"JetBrains Mono",monospace;font-size:11px;color:rgba(240,232,192,.55)}
+    .body{padding:14px;font-size:14px;line-height:1.45;color:rgba(240,232,192,.86);white-space:pre-wrap}
+    .fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:14px;border-top:1px solid rgba(255,204,0,.10)}
+    .field{border:1px solid rgba(255,204,0,.12);border-radius:12px;padding:10px 12px;background:rgba(0,0,0,.18)}
+    .field.full{grid-column:1/-1}
+    .k{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:rgba(240,232,192,.55)}
+    .v{margin-top:6px;font-size:13px;color:rgba(240,232,192,.82);overflow-wrap:anywhere}
+    .err{margin-top:14px;font-family:"JetBrains Mono",monospace;font-size:12px;color:rgba(255,120,120,.9)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <a class="brand" href="/projects"><img src="/logo.png" alt="Nerds Alpha" /><span>Nerds Alpha · Project</span></a>
+      <div style="display:flex;gap:8px;">
+        <a class="btn" id="xBtn" href="#" target="_blank" rel="noreferrer" style="display:none;">X</a>
+        <a class="btn" id="backBtn" href="/projects">Back</a>
+      </div>
+    </div>
+    <div class="card" id="card" style="display:none;">
+      <div class="head">
+        <div>
+          <div class="h1" id="title"></div>
+          <div class="meta" id="meta"></div>
+        </div>
+      </div>
+      <div class="body" id="summary"></div>
+      <div class="fields" id="fields"></div>
+    </div>
+    <div class="err" id="err" style="display:none;"></div>
+  </div>
+  <script>
+    function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;").replace(/'/g,"&#39;");}
+    function fmtTime(iso){try{var d=new Date(iso);if(!isNaN(d.getTime())) return d.toLocaleString();}catch(e){} return iso||"—";}
+    function fmtFollowers(n){var v=Number(n); if(!isFinite(v)) return "—"; return v.toLocaleString();}
+    function getHandle(){
+      var m = window.location.pathname.match(/\/project\/([^/?#]+)/);
+      return m ? decodeURIComponent(m[1]).replace(/^@/,"") : "";
+    }
+    function addField(k,v,full){
+      var fields=document.getElementById("fields");
+      var div=document.createElement("div");
+      div.className="field"+(full?" full":"");
+      div.innerHTML='<div class="k">'+esc(k)+'</div><div class="v">'+(v||"—")+'</div>';
+      fields.appendChild(div);
+    }
+    async function main(){
+      var h=getHandle();
+      if(!h){ document.getElementById("err").style.display="block"; document.getElementById("err").textContent="Missing project handle."; return; }
+      var r = await fetch("/api/project/"+encodeURIComponent(h), {credentials:"include"});
+      if(!r.ok){ document.getElementById("err").style.display="block"; document.getElementById("err").textContent="Could not load project ("+r.status+")."; return; }
+      var p = await r.json();
+      document.getElementById("card").style.display="block";
+      document.getElementById("title").innerHTML = "@"+esc(p.handle||h);
+      document.getElementById("meta").textContent = "Category: " + (p.category||"—") + " · Alerted: " + fmtTime(p.alerted_at||"");
+      document.getElementById("summary").innerHTML = esc((p.summary||p.description||"No summary."));
+      addField("Name", esc(p.name||"—"), false);
+      addField("Score", esc(String(p.score||0)), false);
+      addField("Age", esc(p.created_at ? fmtTime(p.created_at) : "—"), false);
+      addField("Followers", esc(fmtFollowers(p.followers)), false);
+      if(Array.isArray(p.smart_followers) && p.smart_followers.length){
+        var names = p.smart_followers.map(function(x){
+          var h = String(x||"").replace(/^@/,"");
+          return '<a href="https://x.com/'+esc(h)+'" target="_blank" rel="noreferrer" style="color:#ffcc00">@'+esc(h)+'</a>';
+        }).join(" · ");
+        addField("Smart followers", names, true);
+      }
+      if(p.x_url){
+        var x=document.getElementById("xBtn");
+        x.href=p.x_url; x.style.display="inline-block";
+      }
+    }
+    main();
+  </script>
+</body>
+</html>
+

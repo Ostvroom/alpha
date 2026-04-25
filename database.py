@@ -1187,6 +1187,65 @@ def get_projects_alerted_since_utc(since_iso: str, limit: int = 200):
     return out
 
 
+def get_project_by_handle(handle: str):
+    """
+    Project row by handle (case-insensitive).
+    Returns: (twitter_id, handle, name, description, created_at, alerted_at, ai_category, ai_summary, followers_count, last_posted_smarts)
+    """
+    h = str(handle or "").strip().lstrip("@").lower()
+    if not h:
+        return None
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT
+            p.twitter_id, p.handle, p.name, p.description, p.created_at,
+            p.alerted_at, p.ai_category, p.ai_summary, p.followers_count, p.last_posted_smarts
+        FROM projects p
+        WHERE lower(p.handle) = ?
+        LIMIT 1
+        """,
+        (h,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+
+def get_project_smart_followers(project_id: str, limit: int = 80) -> list[str]:
+    """
+    Distinct HVA handles that interacted with a project, most recent first.
+    """
+    pid = str(project_id or "").strip()
+    if not pid:
+        return []
+    lim = max(1, min(300, int(limit or 80)))
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT f.hva_id, MAX(f.followed_at) AS last_ts
+        FROM follows f
+        WHERE f.project_id = ?
+        GROUP BY f.hva_id
+        ORDER BY datetime(last_ts) DESC
+        LIMIT ?
+        """,
+        (pid, lim),
+    )
+    rows = cursor.fetchall() or []
+    conn.close()
+    out: list[str] = []
+    for r in rows:
+        if not r:
+            continue
+        h = str(r[0] or "").strip()
+        if h:
+            out.append(h)
+    return out
+
+
 def get_trending_projects_24h(limit=5):
     """
     For ENABLE_X_POST_DAILY tweet: (id, handle, name, description, created_at, smarts_24h).

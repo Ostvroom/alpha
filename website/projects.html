@@ -274,14 +274,14 @@
       if(!items||!items.length) return '<div class="ps">No data yet.</div>';
       var html="";
       items.forEach(function(p, idx){
-        var url = p.url || ("https://x.com/" + (p.handle||""));
+        var url = "/project/" + encodeURIComponent((p.handle||"").replace(/^@/,""));
         var av = _img(p.pfp_url);
         html+='<div class="projRow">';
         html+='<div class="av">'+(av?('<img src="'+esc(av)+'" loading="lazy" />'):'')+'</div>';
         html+='<div>';
-        html+='<div class="titleLine"><span class="rank">'+(idx+1)+'</span><a class="handle" href="'+esc(url)+'" target="_blank" rel="noreferrer">@'+esc(p.handle||p.name||"")+'</a></div>';
+        html+='<div class="titleLine"><span class="rank">'+(idx+1)+'</span><a class="handle" href="'+esc(url)+'">@'+esc(p.handle||p.name||"")+'</a></div>';
         html+='<div class="sub">'
-          +badge("HVA", (p.hva_smarts||0), "y")
+          +badge("Score", (p.hva_smarts||0), "y")
           +badge("AGE", fmtAgeDays(p.age_days), "k")
           +'</div>';
         if (p.description) html+='<div class="desc">'+esc(p.description).slice(0,180)+'</div>';
@@ -313,7 +313,7 @@
         if (hvaN === undefined || hvaN === null || hvaN === "") hvaN = extra.num_hvas;
         var hvaNum = (hvaN !== undefined && hvaN !== null && hvaN !== "") ? Number(hvaN) : NaN;
         html+='<div class="sub">'
-          +((!isNaN(hvaNum) && hvaNum > 0) ? badge("HVAs", String(hvaNum), "y") : "")
+          +((!isNaN(hvaNum) && hvaNum > 0) ? badge("Score", String(hvaNum), "y") : "")
           +badge("TYPE", (extra.interaction||"signal").toString(), "p")
           +badge("AT", fmtTime(p.ts||""), "k")
           +'</div>';
@@ -335,12 +335,12 @@
         +'<div class="colH" style="text-align:left">Category</div>'
         +'</div>';
       items.forEach(function(p){
-        var src=(p.url||"").trim();
+        var src=("/project/" + encodeURIComponent((p.handle||"").replace(/^@/,"")));
         var av = _img(p.pfp_url);
         html+='<div class="findsRow">';
         html+='<div class="av">'+(av?('<img src="'+esc(av)+'" loading="lazy" />'):'')+'</div>';
         html+='<div>';
-        html+='<div class="titleLine"><a class="handle" href="'+esc(src)+'" target="_blank" rel="noreferrer">@'+esc(p.handle||p.name||"")+'</a>'
+        html+='<div class="titleLine"><a class="handle" href="'+esc(src)+'">@'+esc(p.handle||p.name||"")+'</a>'
           +'</div>';
         if (p.summary) html+='<div class="desc">'+esc(p.summary).slice(0,220)+'</div>';
         html+='<div class="sub">'+badge("ALERT", fmtTime(p.alerted_at||""), "p")+'</div>';
@@ -400,7 +400,7 @@
         if (hvaN2 === undefined || hvaN2 === null || hvaN2 === "") hvaN2 = extra.num_hvas;
         var hvaNum2 = (hvaN2 !== undefined && hvaN2 !== null && hvaN2 !== "") ? Number(hvaN2) : NaN;
         html+='<div class="sub">'
-          +((!isNaN(hvaNum2) && hvaNum2 > 0) ? badge("HVAs", String(hvaNum2), "y") : "")
+          +((!isNaN(hvaNum2) && hvaNum2 > 0) ? badge("Score", String(hvaNum2), "y") : "")
           +badge("TYPE", (extra.interaction||"signal").toString(), "p")
           +badge("AT", fmtTime(p.ts||""), "k")
           +'</div>';

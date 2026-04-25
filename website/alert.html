@@ -55,7 +55,7 @@
           <div class="h1" id="title"></div>
           <div class="meta" id="meta"></div>
         </div>
-        <a class="btn" id="sourceLink" href="#" target="_blank" rel="noreferrer" style="display:none;">Open source</a>
+        <a class="btn" id="sourceLink" href="#" target="_blank" rel="noreferrer" style="display:none;">X</a>
       </div>
       <img id="banner" class="banner" alt="" style="display:none;" />
       <div class="body" id="body"></div>
@@ -84,6 +84,9 @@
       }
       return "";
     }
+    function stripAnsi(s){
+      return String(s||"").replace(/\u001b\[[0-9;]*m/g, "");
+    }
     function richText(s){
       // Render a small subset of Discord/Markdown nicely:
       // - **bold**
@@ -91,7 +94,7 @@
       // - [label](url)
       // - bare http(s):// urls
       // Keep newlines.
-      var t = String(s||"");
+      var t = stripAnsi(String(s||""));
       if (t.length > 50000) t = t.slice(0, 50000) + "\n…";
       var out = esc(t);
 
@@ -235,6 +238,22 @@
         a.href = ev.url;
         a.style.display = "inline-block";
       }
+      // Smart followers list (detail-only).
+      try{
+        var sf = (extra && extra.smart_followers) ? extra.smart_followers : [];
+        if (Array.isArray(sf) && sf.length){
+          var fieldsEl = document.getElementById("fields");
+          if (fieldsEl) fieldsEl.style.display = "grid";
+          var div = document.createElement("div");
+          div.className = "field full";
+          var links = sf.slice(0,120).map(function(h){
+            var xh = String(h||"").replace(/^@/,"");
+            return '<a href="https://x.com/'+esc(xh)+'" target="_blank" rel="noreferrer" style="color:#ffcc00">@'+esc(xh)+'</a>';
+          }).join(" · ");
+          div.innerHTML = '<div class="k">Smart followers</div><div class="v">'+links+'</div>';
+          fieldsEl.appendChild(div);
+        }
+      }catch(e){}
       // Keep the raw key/value block hidden by default (fields render is nicer).
     }
     // Back button: prefer same-origin referrer; fallback to /projects

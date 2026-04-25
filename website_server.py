@@ -1098,6 +1098,11 @@ async def page_projects(request: Request):
     return _serve_page(request, "projects.html")
 
 
+@app.get("/project/{handle}", response_class=HTMLResponse)
+async def page_project_detail(request: Request, handle: str):
+    return _serve_page(request, "project_detail.html")
+
+
 @app.get("/kol-alerts", response_class=HTMLResponse)
 async def page_kol_alerts(request: Request):
     return _serve_page(request, "kol_alerts.html")
@@ -2058,7 +2063,52 @@ async def api_feed_event(request: Request, event_id: int):
     ev = feed_events.get_event(event_id)
     if not ev:
         raise HTTPException(404, "Not found")
+    # Enrich escalation details with smart follower names (detail page only).
+    try:
+        if str((ev or {}).get("kind") or "") == "escalation":
+            extra = (ev or {}).get("extra") or {}
+            h = str(extra.get("handle") or "").strip().lstrip("@")
+            if h:
+                row = database.get_project_by_handle(h)
+                if row:
+                    pid = str(row[0] or "")
+                    names = database.get_project_smart_followers(pid, limit=120)
+                    if names:
+                        extra["smart_followers"] = names
+                        extra["smart_followers_count"] = len(names)
+                        ev["extra"] = extra
+    except Exception:
+        pass
     return ev
+
+
+@app.get("/api/project/{handle}")
+async def api_project_detail(request: Request, handle: str):
+    """Project detail page payload with smart followers list."""
+    if not _DEV_PREVIEW and not _has_access(request):
+        raise HTTPException(401, "Unauthorized")
+    h = str(handle or "").strip().lstrip("@")
+    if not h:
+        raise HTTPException(400, "Missing handle")
+    row = database.get_project_by_handle(h)
+    if not row:
+        raise HTTPException(404, "Project not found")
+    twitter_id, hdl, name, desc, created_at, alerted_at, cat, summ, followers, score = row
+    smarts = database.get_project_smart_followers(str(twitter_id or ""), limit=120)
+    return {
+        "twitter_id": str(twitter_id or ""),
+        "handle": str(hdl or h),
+        "name": str(name or ""),
+        "description": str(desc or ""),
+        "created_at": str(created_at or ""),
+        "alerted_at": str(alerted_at or ""),
+        "category": str(cat or ""),
+        "summary": str(summ or ""),
+        "followers": int(followers or 0) if followers is not None else None,
+        "score": int(score or 0),
+        "x_url": f"https://x.com/{str(hdl or h).lstrip('@')}",
+        "smart_followers": smarts,
+    }
 
 
 @app.get("/alert/{event_id}", response_class=HTMLResponse)
