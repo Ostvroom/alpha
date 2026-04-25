@@ -2095,6 +2095,13 @@ async def api_project_detail(request: Request, handle: str):
         raise HTTPException(404, "Project not found")
     twitter_id, hdl, name, desc, created_at, alerted_at, cat, summ, followers, score = row
     smarts = database.get_project_smart_followers(str(twitter_id or ""), limit=120)
+    hkey = str(hdl or h).strip().lstrip("@").lower()
+    prof = _latest_profile_map(limit=700)
+    p = prof.get(hkey) or {}
+    pfp_url = str(p.get("pfp_url") or "").strip()
+    if not pfp_url and hdl:
+        pfp_url = f"https://unavatar.io/twitter/{str(hdl).lstrip('@')}"
+    banner_url = str(p.get("banner_url") or "").strip()
     return {
         "twitter_id": str(twitter_id or ""),
         "handle": str(hdl or h),
@@ -2106,6 +2113,9 @@ async def api_project_detail(request: Request, handle: str):
         "summary": str(summ or ""),
         "followers": int(followers or 0) if followers is not None else None,
         "score": int(score or 0),
+        "smart_followers_count": len(smarts),
+        "pfp_url": pfp_url,
+        "banner_url": banner_url,
         "x_url": f"https://x.com/{str(hdl or h).lstrip('@')}",
         "smart_followers": smarts,
     }

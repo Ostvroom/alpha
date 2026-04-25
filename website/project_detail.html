@@ -20,8 +20,11 @@
     .btn:hover{border-color:rgba(255,204,0,.45);color:#ffcc00}
     .card{margin-top:18px;border:1px solid rgba(255,204,0,.18);border-radius:14px;overflow:hidden;background:rgba(9,9,9,.7)}
     .head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:14px;border-bottom:1px solid rgba(255,204,0,.12)}
+    .headL{display:flex;gap:12px;align-items:flex-start}
+    .pfp{width:56px;height:56px;border-radius:12px;object-fit:cover;border:1px solid rgba(255,204,0,.25);background:#0b0b0d}
     .h1{font-weight:800;color:#ffcc00;font-size:20px}
     .meta{margin-top:6px;font-family:"JetBrains Mono",monospace;font-size:11px;color:rgba(240,232,192,.55)}
+    .banner{width:100%;height:220px;object-fit:cover;background:#0b0b0d;display:none}
     .body{padding:14px;font-size:14px;line-height:1.45;color:rgba(240,232,192,.86);white-space:pre-wrap;border-bottom:1px solid rgba(255,204,0,.10)}
     .fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:14px;border-top:1px solid rgba(255,204,0,.10)}
     .field{border:1px solid rgba(255,204,0,.12);border-radius:12px;padding:10px 12px;background:rgba(0,0,0,.18)}
@@ -48,11 +51,15 @@
     </div>
     <div class="card" id="card" style="display:none;">
       <div class="head">
-        <div>
-          <div class="h1" id="title"></div>
-          <div class="meta" id="meta"></div>
+        <div class="headL">
+          <img id="pfp" class="pfp" alt="" style="display:none;" />
+          <div>
+            <div class="h1" id="title"></div>
+            <div class="meta" id="meta"></div>
+          </div>
         </div>
       </div>
+      <img id="banner" class="banner" alt="" />
       <div class="body" id="summary"></div>
       <div class="section" id="profileSec" style="display:none;"></div>
       <div class="section" id="scoreSec" style="display:none;"></div>
@@ -78,6 +85,12 @@
         return days + " days ago";
       }catch(e){ return "—"; }
     }
+    function scoreStatus(s){
+      var n = Number(s||0);
+      if(n >= 70) return "Strong";
+      if(n >= 40) return "Could be Something";
+      return "Early";
+    }
     async function main(){
       var h=getHandle();
       if(!h){ document.getElementById("err").style.display="block"; document.getElementById("err").textContent="Missing project handle."; return; }
@@ -88,6 +101,18 @@
       document.getElementById("title").innerHTML = "@"+esc(p.handle||h);
       document.getElementById("meta").textContent = "Category: " + (p.category||"—") + " · Alerted: " + fmtTime(p.alerted_at||"");
       document.getElementById("summary").innerHTML = esc((p.summary||p.description||"No summary."));
+      if (p.pfp_url){
+        var pfp = document.getElementById("pfp");
+        pfp.src = p.pfp_url;
+        pfp.style.display = "block";
+        pfp.onerror = function(){ try{ pfp.style.display="none"; }catch(e){} };
+      }
+      if (p.banner_url){
+        var ban = document.getElementById("banner");
+        ban.src = p.banner_url;
+        ban.style.display = "block";
+        ban.onerror = function(){ try{ ban.style.display="none"; }catch(e){} };
+      }
 
       var profile = document.getElementById("profileSec");
       profile.style.display = "block";
@@ -106,7 +131,7 @@
         '<div class="k">Social Score</div>'
         + '<div class="chips"><span class="badge"><b>Score</b> '+esc(String(score))+'%</span></div>'
         + '<div class="bar"><i style="width:'+esc(String(score))+'%;"></i></div>'
-        + '<div class="v">Status: <b>'+(score>=70?'Strong':(score>=40?'Could be Something':'Early'))+'</b></div>';
+        + '<div class="v">Status: <b>'+scoreStatus(score)+'</b> | Verified: ✅</div>';
 
       var researchSec = document.getElementById("researchSec");
       researchSec.style.display = "block";
@@ -123,7 +148,8 @@
         folSec.style.display = "block";
         folSec.innerHTML =
           '<div class="k">Smart Followers</div>'
-          + '<div class="v">'+names+'</div>';
+          + '<div class="v">'+names+'</div>'
+          + '<div class="chips"><span class="badge"><b>Velcor3 engaged</b> '+esc(String(p.smart_followers_count||p.smart_followers.length||0))+' smart followers</span></div>';
       }
       if(p.x_url){
         var x=document.getElementById("xBtn");
