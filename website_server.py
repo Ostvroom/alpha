@@ -1616,9 +1616,10 @@ async def api_kol_dashboard(
             items, err = await kolfi.fetch_tokens_overview(
                 session,
                 api_key,
-                limit=150,
-                include_calls=50,
-                max_pages=28,
+                # Keep website fetch lighter/faster than bot-side jobs.
+                limit=100,
+                include_calls=30,
+                max_pages=8,
             )
             if err and not items:
                 raise HTTPException(502, err)

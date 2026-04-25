@@ -356,6 +356,28 @@
       var v = (value===null||value===undefined||value==="") ? "—" : String(value);
       return '<span class="badge '+esc(cls||"")+'"><b>'+esc(label)+'</b> '+esc(v)+'</span>';
     }
+    async function fetchJsonWithTimeout(url, timeoutMs){
+      var ms = Number(timeoutMs||12000);
+      var ctrl = null;
+      var timer = null;
+      try{
+        if (typeof AbortController !== "undefined"){
+          ctrl = new AbortController();
+          timer = setTimeout(function(){ try{ ctrl.abort(); }catch(e){} }, ms);
+        }
+        var res = await fetch(url, {credentials:"include", signal: ctrl ? ctrl.signal : undefined});
+        if (timer) clearTimeout(timer);
+        if(!res.ok){
+          var txt = "";
+          try{ txt = (await res.text()) || ""; }catch(e){}
+          throw new Error("HTTP " + res.status + (txt ? (": " + txt.slice(0,180)) : ""));
+        }
+        return await res.json();
+      }catch(e){
+        if (timer) clearTimeout(timer);
+        throw e;
+      }
+    }
     function renderTop(elId, items){
       var el=document.getElementById(elId);
       if(!items||!items.length){el.innerHTML='<div class="ps">No alerts yet.</div>';return;}
@@ -496,29 +518,20 @@
         var stat30 = document.getElementById("stat30");
         if (stat30) stat30.textContent = "Updating…";
 
-        var r = await fetch("/api/kol/dashboard?hours=24&top=20&per_bucket=20",{credentials:"include"});
-
-        if(!r.ok){
-          var txt = "";
-          try{ txt = (await r.text()) || ""; }catch(e){}
-          document.getElementById("top").innerHTML = '<div class="err">Failed to load: HTTP '+esc(r.status)+'<br/>'+esc(txt.slice(0,220))+'</div>';
-          document.getElementById("b_low").innerHTML = '<div class="ps">—</div>';
-          document.getElementById("b_100k").innerHTML = '<div class="ps">—</div>';
-          document.getElementById("b_1m").innerHTML = '<div class="ps">—</div>';
-          if (stat) stat.textContent = "Error";
-        } else {
-          var d=await r.json();
-          renderTop("top", (d&&d.top)||[]);
-          renderCallers("top30", (d&&d.daily_callers)||[]);
-          var b = (d&&d.buckets)||{};
-          renderBucket("b_low", b.low||[]);
-          renderBucket("b_100k", b["100k"]||[]);
-          renderBucket("b_1m", b["1m"]||[]);
-          if (stat) stat.textContent="Updated " + new Date().toLocaleTimeString();
-          if (stat30) stat30.textContent="Updated " + new Date().toLocaleTimeString();
-        }
+        var d = await fetchJsonWithTimeout("/api/kol/dashboard?hours=24&top=20&per_bucket=20", 12000);
+        renderTop("top", (d&&d.top)||[]);
+        renderCallers("top30", (d&&d.daily_callers)||[]);
+        var b = (d&&d.buckets)||{};
+        renderBucket("b_low", b.low||[]);
+        renderBucket("b_100k", b["100k"]||[]);
+        renderBucket("b_1m", b["1m"]||[]);
+        if (stat) stat.textContent="Updated " + new Date().toLocaleTimeString();
+        if (stat30) stat30.textContent="Updated " + new Date().toLocaleTimeString();
       } catch(e){
         document.getElementById("top").innerHTML = '<div class="err">Failed to load: '+esc(String(e||""))+'</div>';
+        document.getElementById("b_low").innerHTML = '<div class="ps">—</div>';
+        document.getElementById("b_100k").innerHTML = '<div class="ps">—</div>';
+        document.getElementById("b_1m").innerHTML = '<div class="ps">—</div>';
         if (stat) stat.textContent = "Error";
         document.getElementById("top30").innerHTML = '<div class="err">Failed to load callers: '+esc(String(e||""))+'</div>';
         var stat30 = document.getElementById("stat30");
