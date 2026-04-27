@@ -2773,20 +2773,25 @@ async def api_admin_projects_search(request: Request, q: str = "", limit: int = 
     _require_admin(request)
     _admin_init_tables()
     limit = max(1, min(200, int(limit or 50)))
-    needle = f"%{str(q or '').strip().lower()}%"
+    q_raw = str(q or "").strip().lower()
+    q_no_at = q_raw.lstrip("@")
+    needle = f"%{q_raw}%"
+    needle_no_at = f"%{q_no_at}%"
     conn = sqlite3.connect(database.DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-    if str(q or "").strip():
+    if q_raw:
         cur.execute(
             """
             SELECT twitter_id, handle, name, description, ai_category, ai_summary, followers_count, alerted_at
             FROM projects
-            WHERE lower(handle) LIKE ? OR lower(name) LIKE ?
+            WHERE lower(handle) LIKE ?
+               OR lower(handle) LIKE ?
+               OR lower(name) LIKE ?
             ORDER BY COALESCE(alerted_at, created_at) DESC
             LIMIT ?
             """,
-            (needle, needle, limit),
+            (needle, needle_no_at, needle, limit),
         )
     else:
         cur.execute(

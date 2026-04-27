@@ -239,6 +239,67 @@ def _apply_monkey_patch():
     _safe_init._is_patched = True
     ClientTransaction.init = _safe_init
 
+    # ── httpx: multiple __cf_bm (twitter.com + x.com) breaks dict(cookies) ──
+    # twikit backs up cookies before every request; duplicate names raise CookieConflict.
+    def _sanitize_httpx_cookies_for_duplicate_names(http) -> None:
+        try:
+            jar = http.cookies.jar
+        except Exception:
+            return
+        merged: dict = {}
+        for cookie in jar:
+            n = cookie.name
+            if n == "ct0" and "ct0" in merged:
+                continue
+            merged[n] = cookie.value
+        try:
+            http.cookies = list(merged.items())
+        except Exception:
+            return
+
+    try:
+        from twikit.client.client import Client
+
+        if not getattr(Client.request, "_cookie_dup_patch", False):
+            _orig_client_request = Client.request
+
+            async def _patched_client_request(
+                self, method, url, auto_unlock=True, raise_exception=True, **kwargs
+            ):
+                _sanitize_httpx_cookies_for_duplicate_names(self.http)
+                return await _orig_client_request(
+                    self,
+                    method,
+                    url,
+                    auto_unlock=auto_unlock,
+                    raise_exception=raise_exception,
+                    **kwargs,
+                )
+
+            _patched_client_request._cookie_dup_patch = True
+            Client.request = _patched_client_request
+            print("    [PATCH] twikit Client.request pre-sanitizes duplicate __cf_bm cookies.")
+    except Exception as e:
+        print(f"    [PATCH] Could not patch Client.request (cookie sanitize): {e}")
+
+    try:
+        from twikit.guest.client import GuestClient
+
+        if not getattr(GuestClient.request, "_cookie_dup_patch", False):
+            _orig_guest_request = GuestClient.request
+
+            async def _patched_guest_request(self, method, url, raise_exception=True, **kwargs):
+                _sanitize_httpx_cookies_for_duplicate_names(self.http)
+                return await _orig_guest_request(
+                    self, method, url, raise_exception=raise_exception, **kwargs
+                )
+
+            _patched_guest_request._cookie_dup_patch = True
+            GuestClient.request = _patched_guest_request
+            print("    [PATCH] twikit GuestClient.request pre-sanitizes duplicate __cf_bm cookies.")
+    except Exception as e:
+        print(f"    [PATCH] Could not patch GuestClient.request (cookie sanitize): {e}")
+
     # ── patch _get_user_state to prevent 429 infinite recursion ─────────────
     try:
         from twikit.client.client import Client
@@ -259,7 +320,10 @@ def _apply_monkey_patch():
     except Exception as e:
         print(f"    [PATCH] Could not patch Client._get_user_state: {e}")
 
-    print("    [PATCH] In-memory monkey-patch applied (get_indices, get_animation_key, init, _get_user_state).")
+    print(
+        "    [PATCH] In-memory monkey-patch applied "
+        "(get_indices, get_animation_key, init, _get_user_state, cookie dedupe)."
+    )
 
     # ── patch User.__init__ ─────────────────────────────────────────────────
     # The user.py file patch fixes the source on disk, but the User class is
