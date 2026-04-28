@@ -341,6 +341,13 @@
       if (!isFinite(v) || v<=0) return "—";
       return v.toFixed(2) + "x";
     }
+    function qualityBadge(q){
+      var v = String(q||"").toLowerCase();
+      if (v === "high") return '<span class="badge g"><b>Data</b> Verified</span>';
+      if (v === "medium") return '<span class="badge k"><b>Data</b> Cautious</span>';
+      if (v === "low") return '<span class="badge r"><b>Data</b> Fallback</span>';
+      return "";
+    }
     function badge(label, value, cls){
       var v = (value===null||value===undefined||value==="") ? "—" : String(value);
       return '<span class="badge '+esc(cls||"")+'"><b>'+esc(label)+'</b> '+esc(v)+'</span>';
@@ -414,6 +421,7 @@
           +(dex?('<a class="badge p" target="_blank" rel="noreferrer" href="'+esc(dex)+'"><b>Dex</b></a>'):'')
           +(r.token_x_url?('<a class="badge r" target="_blank" rel="noreferrer" href="'+esc(r.token_x_url)+'"><b>X</b></a>'):'')
           +(r.token_site_url?('<a class="badge" target="_blank" rel="noreferrer" href="'+esc(r.token_site_url)+'"><b>Site</b></a>'):'')
+          +(r.ath_confidence ? qualityBadge(r.ath_confidence) : '')
           +'</div>';
         html+='</div>';
       });
@@ -446,6 +454,7 @@
           +badge("ATH", fmtMc(r.ath_mc), "g")
           +badge("Since", fmtX(r.since_x), "g")
           +badge("ATHx", fmtX(r.ath_x), "g")
+          +(r.ath_confidence ? qualityBadge(r.ath_confidence) : "")
           +'</div>';
         var callers = Array.isArray(r.callers) ? r.callers : [];
         var callersHtml = "";

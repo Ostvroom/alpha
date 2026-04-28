@@ -24,7 +24,7 @@ import json
 import re
 import sqlite3
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import requests
 import aiohttp
@@ -379,6 +379,9 @@ _KOL_DASHBOARD_LAST_GOOD: Optional[dict] = None
 _FIRST_CALLS_PATH = str(DATA_DIR / "kolfi_first_calls.json")
 _FIRST_CALLS: dict[str, dict] = {}
 _FIRST_CALLS_LOADED = False
+_KOL_QUALITY_PATH = str(DATA_DIR / "kolfi_quality_state.json")
+_KOL_QUALITY_STATE: dict[str, Any] = {"version": 1, "by_mint": {}}
+_KOL_QUALITY_LOADED = False
 
 
 def _load_first_calls() -> dict[str, dict]:
@@ -463,6 +466,46 @@ def _get_persisted_first_call(mint: str) -> Optional[dict]:
     if isinstance(ent, dict) and isinstance(ent.get("call"), dict):
         return ent["call"]
     return None
+
+
+def _load_kol_quality_state() -> dict[str, Any]:
+    global _KOL_QUALITY_LOADED, _KOL_QUALITY_STATE
+    if _KOL_QUALITY_LOADED:
+        return _KOL_QUALITY_STATE
+    _KOL_QUALITY_LOADED = True
+    try:
+        p = Path(_KOL_QUALITY_PATH)
+        if p.exists():
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and isinstance(raw.get("by_mint"), dict):
+                _KOL_QUALITY_STATE = raw
+    except Exception:
+        _KOL_QUALITY_STATE = {"version": 1, "by_mint": {}}
+    if not isinstance(_KOL_QUALITY_STATE.get("by_mint"), dict):
+        _KOL_QUALITY_STATE["by_mint"] = {}
+    return _KOL_QUALITY_STATE
+
+
+def _save_kol_quality_state(state: dict[str, Any], max_mints: int = 12000) -> None:
+    try:
+        by_mint = state.get("by_mint") if isinstance(state, dict) else None
+        if not isinstance(by_mint, dict):
+            return
+        if len(by_mint) > max_mints:
+            items = sorted(
+                by_mint.items(),
+                key=lambda kv: str((kv[1] or {}).get("updated_at") or ""),
+            )
+            for k, _ in items[: max(0, len(by_mint) - max_mints)]:
+                by_mint.pop(k, None)
+        state["version"] = 1
+        state["updated_at"] = int(time.time())
+        Path(_KOL_QUALITY_PATH).write_text(
+            json.dumps(state, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        return
 
 
 async def _cache_get_or_set(key: str, ttl_sec: float, builder):
@@ -2198,6 +2241,9 @@ async def _apply_dex_sanitization_to_rows(
         if not unique_mints:
             return
         sem = asyncio.Semaphore(6)
+        q_state = _load_kol_quality_state()
+        by_mint_state = q_state.setdefault("by_mint", {})
+        state_changed = False
 
         async def _one(mint: str):
             async with sem:
@@ -2218,19 +2264,53 @@ async def _apply_dex_sanitization_to_rows(
                 m = str((row or {}).get("mint") or "").strip()
                 if not m:
                     continue
+                reasons: list[str] = []
                 dmc = dex_by_mint.get(m)
                 if not dmc or dmc <= 0:
-                    continue
+                    reasons.append("dex_missing")
                 try:
                     call_peak = float(row.get("call_mc") or 0.0)
                 except Exception:
                     call_peak = 0.0
-                new_cur, new_ath = _dex_validated_caps(
-                    row.get("cur_mc"),
-                    row.get("ath_mc"),
-                    dex_mc=float(dmc),
-                    call_peak_mc=call_peak,
-                )
+                old_cur = row.get("cur_mc")
+                old_ath = row.get("ath_mc")
+                new_cur, new_ath = old_cur, old_ath
+                if dmc and dmc > 0:
+                    new_cur, new_ath = _dex_validated_caps(
+                        old_cur,
+                        old_ath,
+                        dex_mc=float(dmc),
+                        call_peak_mc=call_peak,
+                    )
+                    if old_cur is not None and new_cur is not None and float(old_cur) != float(new_cur):
+                        reasons.append("kolfi_cur_outlier_vs_dex")
+                    if old_ath is not None and new_ath is not None and float(old_ath) != float(new_ath):
+                        reasons.append("kolfi_ath_outlier_vs_dex")
+
+                # Rolling observed ATH from our own history: never decrease ATH from
+                # previously verified snapshots for the same mint.
+                ent = by_mint_state.get(m)
+                if not isinstance(ent, dict):
+                    ent = {}
+                prev_observed = None
+                try:
+                    prev_observed = float(ent.get("observed_ath_mc") or 0.0) or None
+                except Exception:
+                    prev_observed = None
+                if prev_observed and prev_observed > 0 and (new_ath is None or new_ath < prev_observed):
+                    new_ath = prev_observed
+                    reasons.append("observed_ath_history_floor")
+                if new_ath is not None and new_ath > 0:
+                    next_observed = max(float(prev_observed or 0.0), float(new_ath))
+                    if float(ent.get("observed_ath_mc") or 0.0) != float(next_observed):
+                        ent["observed_ath_mc"] = next_observed
+                        state_changed = True
+                if dmc and dmc > 0:
+                    ent["last_dex_mc"] = float(dmc)
+                ent["updated_at"] = int(time.time())
+                if reasons:
+                    ent["last_reasons"] = reasons[:8]
+                by_mint_state[m] = ent
                 row["cur_mc"] = new_cur
                 row["ath_mc"] = new_ath
                 try:
@@ -2241,8 +2321,18 @@ async def _apply_dex_sanitization_to_rows(
                         row["ath_x"] = new_ath / ccm
                 except Exception:
                     pass
+                if not reasons and dmc and dmc > 0:
+                    reasons.append("dex_verified")
+                ath_conf = "high" if ("dex_verified" in reasons and len(reasons) == 1) else ("medium" if dmc else "low")
+                mc_conf = "high" if ("dex_verified" in reasons and len(reasons) == 1) else ("medium" if dmc else "low")
+                row["ath_confidence"] = ath_conf
+                row["mc_confidence"] = mc_conf
+                row["data_reasons"] = reasons
             except Exception:
                 continue
+        if state_changed:
+            q_state["by_mint"] = by_mint_state
+            _save_kol_quality_state(q_state)
     except Exception:
         return
 
@@ -2848,6 +2938,45 @@ async def api_kol_alerts_history(request: Request, days: int = 30, limit: int = 
             return {"days": days, "all_time": days <= 0, "items": top_rows}
 
     return await _cache_get_or_set(cache_key, 30.0, _build)
+
+
+@app.get("/api/kol/data-quality")
+async def api_kol_data_quality(request: Request, mint: str = "", limit: int = 100):
+    """Inspect data confidence and reason codes used by Kolfi sanitization."""
+    if not _DEV_PREVIEW and not _has_access(request):
+        raise HTTPException(401, "Unauthorized")
+    state = _load_kol_quality_state()
+    by_mint = state.get("by_mint") if isinstance(state, dict) else {}
+    if not isinstance(by_mint, dict):
+        by_mint = {}
+    mm = str(mint or "").strip()
+    if mm:
+        ent = by_mint.get(mm) or {}
+        return {
+            "mint": mm,
+            "entry": ent if isinstance(ent, dict) else {},
+            "updated_at": state.get("updated_at"),
+        }
+    lim = max(1, min(1000, int(limit or 100)))
+    items = sorted(
+        by_mint.items(),
+        key=lambda kv: str((kv[1] or {}).get("updated_at") or ""),
+        reverse=True,
+    )[:lim]
+    out = []
+    for m, ent in items:
+        if not isinstance(ent, dict):
+            continue
+        out.append(
+            {
+                "mint": m,
+                "observed_ath_mc": ent.get("observed_ath_mc"),
+                "last_dex_mc": ent.get("last_dex_mc"),
+                "last_reasons": ent.get("last_reasons") or [],
+                "updated_at": ent.get("updated_at"),
+            }
+        )
+    return {"count": len(out), "items": out, "updated_at": state.get("updated_at")}
 
 
 @app.get("/api/feed/event/{event_id}")
