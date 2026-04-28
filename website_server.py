@@ -481,7 +481,14 @@ async def _cache_get_or_set(key: str, ttl_sec: float, builder):
         return val
 
 
-async def _thumb_url_cached(session: aiohttp.ClientSession, item: dict, mint: str, ttl_sec: float = 3600.0) -> str:
+async def _thumb_url_cached(
+    session: aiohttp.ClientSession,
+    item: dict,
+    mint: str,
+    ttl_sec: float = 3600.0,
+    *,
+    allow_network_lookup: bool = True,
+) -> str:
     if not mint:
         return ""
     now = time.time()
@@ -499,6 +506,9 @@ async def _thumb_url_cached(session: aiohttp.ClientSession, item: dict, mint: st
         if v and isinstance(v, str) and v.startswith("http"):
             _THUMB_CACHE[mint] = (now, v)
             return v
+    if not allow_network_lookup:
+        _THUMB_CACHE[mint] = (now - (float(ttl_sec) - 45.0), dex_cdn)  # expires in ~45s
+        return dex_cdn
     try:
         url = await kolfi.resolve_token_thumbnail(session, item or {}, mint)
     except Exception:
@@ -2244,14 +2254,20 @@ async def api_kol_dashboard(
         global _KOL_DASHBOARD_LAST_GOOD
 
         async with aiohttp.ClientSession() as session:
-            items, err = await kolfi.fetch_tokens_overview(
-                session,
-                api_key,
-                # Keep website fetch lighter/faster than bot-side jobs.
-                limit=100,
-                include_calls=30,
-                max_pages=8,
-            )
+            try:
+                items, err = await asyncio.wait_for(
+                    kolfi.fetch_tokens_overview(
+                        session,
+                        api_key,
+                        # Keep website fetch lighter/faster than bot-side jobs.
+                        limit=100,
+                        include_calls=30,
+                        max_pages=8,
+                    ),
+                    timeout=14.0,
+                )
+            except asyncio.TimeoutError:
+                items, err = [], "Kolfi dashboard fetch timeout"
             if err and not items:
                 # Serve stale data rather than failing hard when Kolfi is slow/unreachable.
                 if isinstance(_KOL_DASHBOARD_LAST_GOOD, dict):
@@ -2322,7 +2338,11 @@ async def api_kol_dashboard(
                 caller_x = str((call or {}).get("kolXId") or (call or {}).get("kol_x_id") or "").strip()
                 token_x = str(it.get("twitter_url") or it.get("twitterUrl") or "")
                 token_site = str(it.get("website_url") or it.get("websiteUrl") or "")
-                thumb_url = await _thumb_url_cached(session, it, mint) if mint else ""
+                thumb_url = (
+                    await _thumb_url_cached(session, it, mint, allow_network_lookup=False)
+                    if mint
+                    else ""
+                )
                 call_ts = str((call or {}).get("messageTs") or "").strip()
                 callers_out = []
                 for c in callers_rows:
