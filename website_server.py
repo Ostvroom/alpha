@@ -373,6 +373,8 @@ _ROOT_DIR = Path(__file__).parent
 _CACHE: dict[str, tuple[float, object]] = {}
 _CACHE_LOCK = asyncio.Lock()
 _THUMB_CACHE: dict[str, tuple[float, str]] = {}
+# Dexscreener MC cross-check cache: mint -> (timestamp, market_cap_usd or 0)
+_DEX_MC_CACHE: dict[str, tuple[float, float]] = {}
 _KOL_DASHBOARD_LAST_GOOD: Optional[dict] = None
 _FIRST_CALLS_PATH = str(DATA_DIR / "kolfi_first_calls.json")
 _FIRST_CALLS: dict[str, dict] = {}
@@ -2100,6 +2102,151 @@ def _trusted_kolfi_caps(item: dict) -> tuple[Optional[float], Optional[float]]:
     return kolfi.sanitized_caps(item or {})  # type: ignore[attr-defined]
 
 
+async def _dex_market_cap_for_mint(
+    session: aiohttp.ClientSession,
+    mint: str,
+    *,
+    ttl_sec: float = 600.0,
+) -> Optional[float]:
+    """
+    Fetch Dexscreener best-pair market cap for a Solana mint, cached.
+    Returns None if unavailable. Used to validate Kolfi MC/ATH outliers.
+    """
+    if not mint:
+        return None
+    now = time.time()
+    hit = _DEX_MC_CACHE.get(mint)
+    if hit:
+        ts, val = hit
+        if now - ts <= float(ttl_sec):
+            return val if val > 0 else None
+    try:
+        from trackers.kolfi_market_enrichment import fetch_dexscreener_solana
+
+        info = await fetch_dexscreener_solana(session, mint)
+    except Exception:
+        info = None
+    mc = 0.0
+    if isinstance(info, dict) and info.get("ok"):
+        mc = float(info.get("market_cap_usd") or info.get("fdv_usd") or 0.0) or 0.0
+    _DEX_MC_CACHE[mint] = (now, mc)
+    return mc if mc > 0 else None
+
+
+def _dex_validated_caps(
+    cur_mc: Optional[float],
+    ath_mc: Optional[float],
+    *,
+    dex_mc: Optional[float],
+    call_peak_mc: Optional[float] = None,
+) -> tuple[Optional[float], Optional[float]]:
+    """
+    Cross-check Kolfi MC/ATH against live Dexscreener MC.
+    If Kolfi values are wildly above the live Dex MC and observed call peaks,
+    cap them to a safer ceiling derived from Dex/peak data.
+    """
+    try:
+        ratio = float(os.getenv("KOLFI_DEX_SANITY_RATIO", "5") or 5)
+    except Exception:
+        ratio = 5.0
+    ratio = max(2.0, min(20.0, ratio))
+
+    if dex_mc is None or dex_mc <= 0:
+        return cur_mc, ath_mc
+
+    ceiling = float(dex_mc) * ratio
+    if call_peak_mc and call_peak_mc > 0:
+        ceiling = max(ceiling, float(call_peak_mc))
+
+    safe_floor = max(float(dex_mc), float(call_peak_mc or 0.0))
+
+    if cur_mc is not None and cur_mc > ceiling:
+        cur_mc = safe_floor
+    if ath_mc is not None and ath_mc > ceiling:
+        ath_mc = safe_floor
+
+    if cur_mc is None or cur_mc <= 0:
+        cur_mc = float(dex_mc)
+    if ath_mc is None or ath_mc <= 0:
+        ath_mc = max(float(dex_mc), float(call_peak_mc or 0.0))
+    if cur_mc is not None and ath_mc is not None and ath_mc < cur_mc:
+        ath_mc = cur_mc
+    return cur_mc, ath_mc
+
+
+async def _apply_dex_sanitization_to_rows(
+    session: aiohttp.ClientSession,
+    rows: list[dict],
+    *,
+    max_lookups: int = 40,
+) -> None:
+    """
+    Best-effort: cross-check each row's Kolfi MC/ATH against live Dexscreener MC
+    and patch the row in place. Bounded fan-out so it never blocks UX.
+    """
+    try:
+        if not rows:
+            return
+        seen: set[str] = set()
+        unique_mints: list[str] = []
+        for r in rows:
+            m = str((r or {}).get("mint") or "").strip()
+            if m and m not in seen:
+                seen.add(m)
+                unique_mints.append(m)
+        unique_mints = unique_mints[: max(1, int(max_lookups or 40))]
+        if not unique_mints:
+            return
+        sem = asyncio.Semaphore(6)
+
+        async def _one(mint: str):
+            async with sem:
+                try:
+                    return mint, await asyncio.wait_for(
+                        _dex_market_cap_for_mint(session, mint),
+                        timeout=4.0,
+                    )
+                except Exception:
+                    return mint, None
+
+        results = await asyncio.gather(
+            *[_one(m) for m in unique_mints], return_exceptions=False
+        )
+        dex_by_mint: dict[str, Optional[float]] = {m: v for m, v in results}
+        for row in rows:
+            try:
+                m = str((row or {}).get("mint") or "").strip()
+                if not m:
+                    continue
+                dmc = dex_by_mint.get(m)
+                if not dmc or dmc <= 0:
+                    continue
+                try:
+                    call_peak = float(row.get("call_mc") or 0.0)
+                except Exception:
+                    call_peak = 0.0
+                new_cur, new_ath = _dex_validated_caps(
+                    row.get("cur_mc"),
+                    row.get("ath_mc"),
+                    dex_mc=float(dmc),
+                    call_peak_mc=call_peak,
+                )
+                row["cur_mc"] = new_cur
+                row["ath_mc"] = new_ath
+                try:
+                    ccm = float(row.get("call_mc") or 0)
+                    if ccm > 0 and new_cur and new_cur > 0:
+                        row["since_x"] = new_cur / ccm
+                    if ccm > 0 and new_ath and new_ath > 0:
+                        row["ath_x"] = new_ath / ccm
+                except Exception:
+                    pass
+            except Exception:
+                continue
+    except Exception:
+        return
+
+
 def _dashboard_bucket_thresholds() -> tuple[float, float]:
     """(low_max, mid_max) for MC@call tiers: <low_max, [low_max, mid_max), >=mid_max -> 1m column."""
     try:
@@ -2375,7 +2522,22 @@ async def api_kol_dashboard(
                 buckets_out[key] = [r for _, r in arr[:per_bucket]]
 
             top7_rows.sort(key=lambda r: float(r.get("ath_x") or 0), reverse=True)
-            built = {"top": top7_rows[:top], "buckets": buckets_out}
+            top_visible = top7_rows[:top]
+
+            # Dexscreener cross-check on the rows the UI will actually display.
+            # Kolfi sometimes reports wildly inflated MC/ATH where its own peak
+            # value is also bad, so peak-based sanitization alone misses them.
+            try:
+                rows_to_check: list[dict] = list(top_visible)
+                for k in ("low", "100k", "1m"):
+                    rows_to_check.extend(buckets_out.get(k) or [])
+                await _apply_dex_sanitization_to_rows(session, rows_to_check)
+                # Re-rank top after potential corrections.
+                top_visible.sort(key=lambda r: float(r.get("ath_x") or 0), reverse=True)
+            except Exception:
+                pass
+
+            built = {"top": top_visible, "buckets": buckets_out}
             _KOL_DASHBOARD_LAST_GOOD = dict(built)
             return built
     # Cache for 20 seconds; frontend refresh is also throttled.
@@ -2465,6 +2627,12 @@ async def api_kol_top_performers(request: Request, days: int = 30, top: int = 10
                     "thumb_url": thumb or "",
                 }
             )
+        try:
+            async with aiohttp.ClientSession() as _sess:
+                await _apply_dex_sanitization_to_rows(_sess, out)
+            out.sort(key=lambda r: float(r.get("ath_x") or 0), reverse=True)
+        except Exception:
+            pass
         return {"days": days, "items": out}
 
     return await _cache_get_or_set(cache_key, 60.0, _build)
@@ -2588,7 +2756,19 @@ async def api_kol_alerts_top_performers(request: Request, days: int = 30, top: i
                 ),
                 reverse=True,
             )
-            return {"days": days, "all_time": days <= 0, "items": rows[:top]}
+            top_rows = rows[:top]
+            try:
+                await _apply_dex_sanitization_to_rows(session, top_rows)
+                top_rows.sort(
+                    key=lambda r: (
+                        float(r.get("ath_x") or 0),
+                        str(r.get("first_alert_ts") or ""),
+                    ),
+                    reverse=True,
+                )
+            except Exception:
+                pass
+            return {"days": days, "all_time": days <= 0, "items": top_rows}
 
     return await _cache_get_or_set(cache_key, 60.0, _build)
 
@@ -2660,7 +2840,12 @@ async def api_kol_alerts_history(request: Request, days: int = 30, limit: int = 
                     }
                 )
             out.sort(key=lambda r: str(r.get("first_alert_ts") or ""), reverse=True)
-            return {"days": days, "all_time": days <= 0, "items": out[:limit]}
+            top_rows = out[:limit]
+            try:
+                await _apply_dex_sanitization_to_rows(session, top_rows)
+            except Exception:
+                pass
+            return {"days": days, "all_time": days <= 0, "items": top_rows}
 
     return await _cache_get_or_set(cache_key, 30.0, _build)
 
