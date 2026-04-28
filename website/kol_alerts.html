@@ -383,6 +383,7 @@
         +'<div class="colH">MC@call</div>'
         +'<div class="colH">Current MC</div>'
         +'<div class="colH">ATH</div>'
+        +'<div class="colH">ATHx</div>'
         +'<div class="colH">Since call</div>'
         +'<div class="colH">Caller</div>'
         +'<div class="colH">Links</div>'
@@ -404,6 +405,8 @@
         html+='<div class="colTime"><span class="timeExact">'+esc(_hr)+'</span>'+(_ago?'<br><span class="agoTag">'+esc(_ago)+'</span>':'')+'</div>';
         html+='<div class="colCall">'+badge("MC", fmtMc(r.call_mc), "k")+'</div>';
         html+='<div class="colAth">'+badge("Now", fmtMc(r.cur_mc), "g")+'</div>';
+        html+='<div class="colAth">'+badge("ATH", fmtMc(r.ath_mc), "g")+'</div>';
+        html+='<div class="colAthx">'+badge("ATHx", fmtX(r.ath_x), "g")+'</div>';
         html+='<div class="colAthx">'+badge("Since", fmtX(r.since_x), "g")+'</div>';
         html+='<div class="colCaller">'+(callerLink?('<a class="badge r" target="_blank" rel="noreferrer" href="'+esc(callerLink)+'"><b>'+esc(r.caller||"Caller")+'</b></a>'):badge("Caller", r.caller||"—", "r"))+'</div>';
         html+='<div class="colLinks">'

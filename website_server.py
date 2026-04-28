@@ -2085,6 +2085,43 @@ def _parse_iso_dt(s: str):
         return None
 
 
+def _trusted_kolfi_ath_mc(item: dict) -> Optional[float]:
+    """
+    Build a safer ATH MC from Kolfi snapshot data.
+    Prefer API ATH, but clamp obvious outliers when call peaks disagree strongly.
+    """
+    cur_mc = kolfi._safe_float((item or {}).get("last_market_cap"))  # type: ignore[attr-defined]
+    ath_api = kolfi._safe_float((item or {}).get("ath_market_cap"))  # type: ignore[attr-defined]
+
+    peak_mc = None
+    try:
+        calls = (item or {}).get("callsPreview") or (item or {}).get("calls") or []
+        if isinstance(calls, list):
+            for c in calls:
+                if not isinstance(c, dict):
+                    continue
+                p = kolfi._safe_float(c.get("peakMarketCap"))  # type: ignore[attr-defined]
+                if p is None or p <= 0:
+                    continue
+                peak_mc = p if peak_mc is None else max(float(peak_mc), float(p))
+    except Exception:
+        peak_mc = peak_mc
+
+    floor = None
+    for v in (cur_mc, peak_mc):
+        if v is not None and v > 0:
+            floor = v if floor is None else max(float(floor), float(v))
+
+    if ath_api is None or ath_api <= 0:
+        return floor
+
+    # If API ATH is wildly above all observed call peaks, treat it as unreliable.
+    if peak_mc is not None and peak_mc > 0 and ath_api > (peak_mc * 5.0):
+        return floor if floor is not None else ath_api
+
+    return max(ath_api, floor or 0.0)
+
+
 def _dashboard_bucket_thresholds() -> tuple[float, float]:
     """(low_max, mid_max) for MC@call tiers: <low_max, [low_max, mid_max), >=mid_max -> 1m column."""
     try:
@@ -2276,7 +2313,7 @@ async def api_kol_dashboard(
                 if call_mc is None or call_mc <= 0:
                     continue
                 cur_mc = kolfi._safe_float(it.get("last_market_cap"))  # type: ignore[attr-defined]
-                ath_mc = kolfi._safe_float(it.get("ath_market_cap"))  # type: ignore[attr-defined]
+                ath_mc = _trusted_kolfi_ath_mc(it)
                 since = (cur_mc / call_mc) if (call_mc and call_mc > 0 and cur_mc and cur_mc > 0) else None
                 ath_x = (ath_mc / call_mc) if (call_mc and call_mc > 0 and ath_mc and ath_mc > 0) else None
                 dex = str(it.get("dexscreener_url") or it.get("dexUrl") or "")
@@ -2497,7 +2534,7 @@ async def api_kol_alerts_top_performers(request: Request, days: int = 30, top: i
                 tick = str(ent.get("ticker") or "—")
 
                 snap = by_snap.get(mint) or {}
-                ath_mc = kolfi._safe_float((snap or {}).get("ath_market_cap"))  # type: ignore[attr-defined]
+                ath_mc = _trusted_kolfi_ath_mc(snap or {})
                 if ath_mc is None or ath_mc <= 0:
                     continue
 
@@ -2620,7 +2657,7 @@ async def api_kol_alerts_history(request: Request, days: int = 30, limit: int = 
                     continue
                 snap = by_snap.get(mint) or {}
                 cur_mc = kolfi._safe_float((snap or {}).get("last_market_cap"))  # type: ignore[attr-defined]
-                ath_mc = kolfi._safe_float((snap or {}).get("ath_market_cap"))  # type: ignore[attr-defined]
+                ath_mc = _trusted_kolfi_ath_mc(snap or {})
                 since_x = (cur_mc / first_alert_mc) if (cur_mc and cur_mc > 0) else None
                 ath_x = (ath_mc / first_alert_mc) if (ath_mc and ath_mc > 0) else None
                 out.append(
