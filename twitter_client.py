@@ -660,10 +660,17 @@ class TwitterClient:
             delta = current_count - last_count if last_count > 0 else current_count
             
             newly_followed_accounts = []
+            seen_ids = set()
             now = datetime.utcfromtimestamp(datetime.now().timestamp()).replace(tzinfo=timezone.utc)
             count_new = 0
             for user in following:
                 try:
+                    uid = getattr(user, "id", None)
+                    if uid is not None:
+                        uid_key = str(uid)
+                        if uid_key in seen_ids:
+                            continue
+                        seen_ids.add(uid_key)
                     created_at = user.created_at
                     if isinstance(created_at, str):
                         created_at = datetime.strptime(created_at, "%a %b %d %H:%M:%S %z %Y")

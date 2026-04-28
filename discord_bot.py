@@ -988,8 +988,20 @@ class BlockBrainBot(commands.Bot):
 
                         following, _ = await self.twitter.get_new_following_with_delta(hva_id, hva_handle)
                         if following:
-                            print(f"      ✅ SCAN COMPLETE: Found {len(following)} potential projects from @{hva_handle}")
+                            unique_following = []
+                            seen_follow_ids: Set[str] = set()
                             for account in following:
+                                aid = getattr(account, "id", None)
+                                if aid is None:
+                                    unique_following.append(account)
+                                    continue
+                                aid_key = str(aid)
+                                if aid_key in seen_follow_ids:
+                                    continue
+                                seen_follow_ids.add(aid_key)
+                                unique_following.append(account)
+                            print(f"      ✅ SCAN COMPLETE: Found {len(unique_following)} potential projects from @{hva_handle}")
+                            for account in unique_following:
                                 await self.process_discovery(account, hva_handle, 'follow', self.active_main_channels)
                         else:
                             print(f"      ℹ️ SCAN COMPLETE: No new projects found from @{hva_handle} (This scan logged in database)")

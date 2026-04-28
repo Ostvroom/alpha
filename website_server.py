@@ -2095,52 +2095,9 @@ def _parse_iso_dt(s: str):
         return None
 
 
-def _max_call_peak_mc(item: dict) -> Optional[float]:
-    """Best observed call peak MC in the payload (peakMarketCap/callMarketCap)."""
-    peak_mc: Optional[float] = None
-    calls = (item or {}).get("callsPreview") or (item or {}).get("calls") or []
-    if not isinstance(calls, list):
-        return None
-    for c in calls:
-        if not isinstance(c, dict):
-            continue
-        for key in ("peakMarketCap", "callMarketCap"):
-            v = kolfi._safe_float(c.get(key))  # type: ignore[attr-defined]
-            if v is None or v <= 0:
-                continue
-            peak_mc = v if peak_mc is None else max(float(peak_mc), float(v))
-    return peak_mc
-
-
 def _trusted_kolfi_caps(item: dict) -> tuple[Optional[float], Optional[float]]:
-    """
-    Return sanitized (current_mc, ath_mc) from Kolfi snapshot fields.
-    Protects website UI from occasional inflated MC/ATH values.
-    """
-    cur_mc = kolfi._safe_float((item or {}).get("last_market_cap"))  # type: ignore[attr-defined]
-    ath_mc = kolfi._safe_float((item or {}).get("ath_market_cap"))  # type: ignore[attr-defined]
-    peak_mc = _max_call_peak_mc(item or {})
-
-    try:
-        cap_mult = float(os.getenv("KOLFI_CAP_SANITY_PEAK_MULT", "6") or 6)
-    except Exception:
-        cap_mult = 6.0
-    cap_mult = max(2.0, min(20.0, cap_mult))
-
-    # Clamp obvious outliers when API MC/ATH are wildly above observed call peaks.
-    if peak_mc is not None and peak_mc > 0:
-        if cur_mc is not None and cur_mc > peak_mc * cap_mult:
-            cur_mc = peak_mc
-        if ath_mc is not None and ath_mc > peak_mc * cap_mult:
-            ath_mc = peak_mc
-
-    if (cur_mc is None or cur_mc <= 0) and peak_mc is not None and peak_mc > 0:
-        cur_mc = peak_mc
-    if ath_mc is None or ath_mc <= 0:
-        ath_mc = peak_mc if (peak_mc is not None and peak_mc > 0) else cur_mc
-    if cur_mc is not None and ath_mc is not None and ath_mc < cur_mc:
-        ath_mc = cur_mc
-    return cur_mc, ath_mc
+    """Wrapper using the shared sanitizer in kolfi_tokens_client to keep one source of truth."""
+    return kolfi.sanitized_caps(item or {})  # type: ignore[attr-defined]
 
 
 def _dashboard_bucket_thresholds() -> tuple[float, float]:

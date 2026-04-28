@@ -76,6 +76,54 @@ def _safe_float(v: Any) -> Optional[float]:
         return None
 
 
+def _max_call_peak_mc(item: Dict[str, Any]) -> Optional[float]:
+    """Best observed call peak/MC across the calls payload."""
+    peak_mc: Optional[float] = None
+    calls = (item or {}).get("callsPreview") or (item or {}).get("calls") or []
+    if not isinstance(calls, list):
+        return None
+    for c in calls:
+        if not isinstance(c, dict):
+            continue
+        for key in ("peakMarketCap", "callMarketCap"):
+            v = _safe_float(c.get(key))
+            if v is None or v <= 0:
+                continue
+            peak_mc = v if peak_mc is None else max(float(peak_mc), float(v))
+    return peak_mc
+
+
+def sanitized_caps(item: Dict[str, Any]) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Return (current_mc, ath_mc) clamped against observed call peaks to suppress
+    occasional outlier MC/ATH values from upstream. Used as the single source
+    of truth for both the bot alerts and the website dashboard.
+    """
+    cur_mc = _safe_float((item or {}).get("last_market_cap"))
+    ath_mc = _safe_float((item or {}).get("ath_market_cap"))
+    peak_mc = _max_call_peak_mc(item or {})
+
+    try:
+        cap_mult = float(os.getenv("KOLFI_CAP_SANITY_PEAK_MULT", "6") or 6)
+    except Exception:
+        cap_mult = 6.0
+    cap_mult = max(2.0, min(20.0, cap_mult))
+
+    if peak_mc is not None and peak_mc > 0:
+        if cur_mc is not None and cur_mc > peak_mc * cap_mult:
+            cur_mc = peak_mc
+        if ath_mc is not None and ath_mc > peak_mc * cap_mult:
+            ath_mc = peak_mc
+
+    if (cur_mc is None or cur_mc <= 0) and peak_mc is not None and peak_mc > 0:
+        cur_mc = peak_mc
+    if ath_mc is None or ath_mc <= 0:
+        ath_mc = peak_mc if (peak_mc is not None and peak_mc > 0) else cur_mc
+    if cur_mc is not None and ath_mc is not None and ath_mc < cur_mc:
+        ath_mc = cur_mc
+    return cur_mc, ath_mc
+
+
 def _item_mint(item: Dict[str, Any]) -> str:
     m = item.get("mint") or item.get("address") or ""
     return str(m).strip()
@@ -185,8 +233,7 @@ def register_alerted_mint(
         if not mint:
             return
         tick = _item_ticker(item)
-        mc = _safe_float(item.get("last_market_cap"))
-        ath = _safe_float(item.get("ath_market_cap"))
+        mc, ath = sanitized_caps(item)
         now = (str(at_iso).strip() if at_iso else "") or _iso_now()
 
         calls = item.get("callsPreview") or item.get("calls") or []
@@ -261,32 +308,37 @@ def _call_label(call: Dict[str, Any]) -> str:
 
 
 def _call_identity_set(calls: List[Dict[str, Any]]) -> Set[str]:
-    """Stable ids for calls (API callId, else fingerprint)."""
+    """
+    Stable ids for calls. Prefer API callId when present.
+    Falls back to a fingerprint that is **independent of array order**
+    so callers don't get re-detected as "new" between polls when upstream
+    re-sorts the callsPreview list.
+    """
     out: Set[str] = set()
-    for i, c in enumerate(calls):
+    for c in calls:
         cid = c.get("callId")
         if cid is not None and str(cid).strip() != "":
             out.add(f"id:{cid}")
-        else:
-            out.add(
-                "fp:"
-                + "|".join(
-                    str(x)
-                    for x in (
-                        c.get("messageTs"),
-                        c.get("kolXId"),
-                        c.get("callMarketCap"),
-                        i,
-                    )
+            continue
+        out.add(
+            "fp:"
+            + "|".join(
+                str(x or "")
+                for x in (
+                    c.get("messageTs"),
+                    c.get("kolXId") or c.get("kol_x_id"),
+                    c.get("kolUsername") or c.get("channelName") or c.get("kol_name"),
+                    c.get("callMarketCap"),
                 )
             )
+        )
     return out
 
 
 def bucket_items(items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
     out: Dict[str, List[Dict[str, Any]]] = {"low": [], "100k": [], "1m": []}
     for it in items:
-        mc = _safe_float(it.get("last_market_cap"))
+        mc, _ = sanitized_caps(it)
         out[_mc_bucket(mc)].append(it)
     return out
 
@@ -307,8 +359,14 @@ def _load_by_mint() -> Dict[str, Dict[str, Any]]:
 
 def _save_by_mint(by_mint: Dict[str, Dict[str, Any]], max_mints: int = 1500) -> None:
     if len(by_mint) > max_mints:
-        keys = list(by_mint.keys())[-max_mints:]
-        by_mint = {k: by_mint[k] for k in keys}
+        # Keep most recently updated mints (by ref MC/ATH timestamp proxy: insertion + last seen).
+        # Prefer recency from `last_seen_ts` if present, else fall back to insertion order.
+        def _ts_key(kv):
+            v = kv[1] if isinstance(kv[1], dict) else {}
+            return str(v.get("last_seen_ts") or "")
+        ordered = sorted(by_mint.items(), key=_ts_key)
+        keep = ordered[-max_mints:]
+        by_mint = {k: v for k, v in keep}
     try:
         with open(STATE_PATH, "w", encoding="utf-8") as f:
             json.dump({"version": 2, "by_mint": by_mint}, f, indent=0)
@@ -448,8 +506,7 @@ def _classify_alert_kinds(alert_lines: List[str]) -> List[str]:
 
 def _heuristic_tape_signals(item: Dict[str, Any]) -> str:
     """Deterministic hints the model can weigh (not predictions)."""
-    mc = _safe_float(item.get("last_market_cap"))
-    ath = _safe_float(item.get("ath_market_cap"))
+    mc, ath = sanitized_caps(item)
     vol = _safe_float(item.get("last_volume"))
     chg = _safe_float(item.get("change_5m"))
     parts: List[str] = []
@@ -508,8 +565,7 @@ def compile_alert_facts(
     enrichment: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Deterministic JSON: token snapshot + market enrichment (ground truth for LLMs)."""
-    mc = _safe_float(item.get("last_market_cap"))
-    ath = _safe_float(item.get("ath_market_cap"))
+    mc, ath = sanitized_caps(item)
     vol = _safe_float(item.get("last_volume"))
     chg = _safe_float(item.get("change_5m"))
     price = _safe_float(item.get("price"))
@@ -868,9 +924,8 @@ def build_token_embed(
     tick = _item_ticker(item)
     label = BUCKET_LABEL.get(bucket_key, bucket_key)
 
-    mc = _safe_float(item.get("last_market_cap"))
+    mc, ath = sanitized_caps(item)
     vol = _safe_float(item.get("last_volume"))
-    ath = _safe_float(item.get("ath_market_cap"))
     chg = _safe_float(item.get("change_5m"))
     dex = item.get("dexscreener_url") or item.get("dexUrl") or item.get("dexscreenerUrl")
     tw = item.get("twitter_url") or item.get("twitterUrl")
@@ -1037,8 +1092,7 @@ def _snapshot(
     ref_ath: Optional[float],
 ) -> Dict[str, Any]:
     """ref_* = baseline for % move / new ATH since last alert (or seed), not last poll."""
-    cur_mc = _safe_float(item.get("last_market_cap"))
-    cur_ath = _safe_float(item.get("ath_market_cap"))
+    cur_mc, cur_ath = sanitized_caps(item)
     return {
         "call_ids": sorted(call_ids),
         "last_mc": cur_mc,
@@ -1046,6 +1100,7 @@ def _snapshot(
         "last_vol": _safe_float(item.get("last_volume")),
         "ref_mc": ref_mc if ref_mc is not None else cur_mc,
         "ref_ath": ref_ath if ref_ath is not None else cur_ath,
+        "last_seen_ts": _iso_now(),
     }
 
 
@@ -1115,8 +1170,7 @@ async def run_kolfi_feed_once(
             if not isinstance(calls, list):
                 calls = []
             cur_ids = _call_identity_set(calls)
-            cur_mc = _safe_float(item.get("last_market_cap"))
-            cur_ath = _safe_float(item.get("ath_market_cap"))
+            cur_mc, cur_ath = sanitized_caps(item)
 
             prev = by_mint.get(mint)
             if prev is None:
@@ -1187,6 +1241,7 @@ async def run_kolfi_feed_once(
         queued_total += len(pending)
 
         for item, alert_lines, mint, cur_ids in pending:
+            _alert_mc_for_event, _alert_ath_for_event = sanitized_caps(item)
             thumb = await resolve_token_thumbnail(session, item, mint)
             ai_rev = None
             if enable_ai_review and not simple_alert:
@@ -1239,8 +1294,8 @@ async def run_kolfi_feed_once(
                             # Snapshot at OUR alert time — used by the website dashboard
                             # so MC@call reflects what MC was when WE alerted, not the
                             # Kolfi/Telegram KOL's original call (which could be weeks old).
-                            "alert_mc": _safe_float(item.get("last_market_cap")),
-                            "alert_ath": _safe_float(item.get("ath_market_cap")),
+                            "alert_mc": _alert_mc_for_event,
+                            "alert_ath": _alert_ath_for_event,
                             "alert_ts": alert_at,
                         },
                     )
@@ -1248,8 +1303,7 @@ async def run_kolfi_feed_once(
                     pass
             # Add this mint to the "alert watchlist" for daily performance tracking.
             register_alerted_mint(item, alert_lines, at_iso=alert_at)
-            cm = _safe_float(item.get("last_market_cap"))
-            ca = _safe_float(item.get("ath_market_cap"))
+            cm, ca = sanitized_caps(item)
             by_mint[mint] = _snapshot(item, cur_ids, ref_mc=cm, ref_ath=ca)
             sent += 1
             if send_delay_sec > 0:
@@ -1360,8 +1414,7 @@ def _entry_for_leaderboard(
     if max_call_age_hours > 0 and not _call_within_last_hours(fc.get("messageTs"), max_call_age_hours):
         return None
 
-    cur_mc = _safe_float(item.get("last_market_cap"))
-    ath_usd = _safe_float(item.get("ath_market_cap"))
+    cur_mc, ath_usd = sanitized_caps(item)
     if ath_usd is None or ath_usd <= 0:
         return None
 
@@ -1666,7 +1719,7 @@ def _format_earliest_kol_call_line(item: Dict[str, Any]) -> Optional[str]:
     who_link = f"[{who}](https://x.com/{str(kid).lstrip('@')})" if kid else who
     cmc_f = _safe_float(ec.get("callMarketCap"))
     cmc = _format_mc(cmc_f) if cmc_f else "—"
-    now_mc = _safe_float(item.get("last_market_cap"))
+    now_mc, _ = sanitized_caps(item)
     mult_s = "—"
     if cmc_f and cmc_f > 0 and now_mc and now_mc > 0:
         mult_s = _fmt_mult(now_mc / cmc_f)
@@ -2001,7 +2054,7 @@ async def run_kolfi_alert_watchlist_daily_once(
         if not dex or not dex.get("ok"):
             return None
         k_it = kolfi_by_mint.get(mint) or {}
-        now_ath = _safe_float(k_it.get("ath_market_cap"))
+        _now_mc_san, now_ath = sanitized_caps(k_it)
         if now_ath is None or now_ath <= 0:
             # fallback to last known ATH in watchlist
             now_ath = _safe_float(ent.get("last_kolfi_ath_usd"))
@@ -2138,7 +2191,7 @@ async def fetch_kolfi_top_movers_rows(
         chg = _safe_float(dex.get("price_change_h24_pct"))
         if chg is None:
             return None
-        now_mc = _safe_float(it.get("last_market_cap"))
+        now_mc, _ = sanitized_caps(it)
         bc = _best_recent_call(it, max_age_days=7)
         caller = ""
         call_mc = None
