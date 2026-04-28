@@ -955,25 +955,43 @@ class AIAnalyzer:
         
         # Priority: Check model prefix to decide provider
         is_openai_model = config.AI_MODEL.startswith('gpt')
+        self._provider_name = "disabled"
+        self._quota_cooldown_until = None
+        self._quota_log_suppressed_until = None
+        self._quota_cooldown_minutes = max(5, int(getattr(config, "AI_QUOTA_COOLDOWN_MIN", 15) or 15))
+        self._quota_log_window_seconds = max(30, int(getattr(config, "AI_QUOTA_LOG_WINDOW_SEC", 300) or 300))
         
         if is_openai_model and config.OPENAI_API_KEY:
             print(f"AI Analysis: Using OpenAI ({config.AI_MODEL})")
             self.client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
+            self._provider_name = "openai"
         elif config.XAI_API_KEY:
             print(f"AI Analysis: Using xAI (Grok - {config.AI_MODEL})")
             self.client = AsyncOpenAI(
                 api_key=config.XAI_API_KEY,
                 base_url="https://api.x.ai/v1"
             )
+            self._provider_name = "xai"
         elif config.OPENAI_API_KEY:
             print(f"AI Analysis: Using OpenAI ({config.AI_MODEL})")
             self.client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
+            self._provider_name = "openai"
         else:
             self.client = None
             print("WARN No suitable AI API Key found. AI Analysis disabled.")
 
     async def analyze_project(self, account, tweets):
         if not self.client:
+            return None
+        now = datetime.now(timezone.utc)
+        if self._quota_cooldown_until and now < self._quota_cooldown_until:
+            # Don't spam logs while quota is exhausted.
+            if not self._quota_log_suppressed_until or now >= self._quota_log_suppressed_until:
+                resume_at = self._quota_cooldown_until.strftime("%H:%M:%S UTC")
+                print(
+                    f"      ℹ️ AI analysis paused ({self._provider_name} quota cooldown) until {resume_at}"
+                )
+                self._quota_log_suppressed_until = now + timedelta(seconds=self._quota_log_window_seconds)
             return None
 
         # Prepare tweet text
@@ -1044,7 +1062,24 @@ class AIAnalyzer:
             import json
             return json.loads(response.choices[0].message.content)
         except Exception as e:
-            print(f"      🤖 AI Analysis Error: {e}")
+            err_msg = str(e)
+            err_lower = err_msg.lower()
+            is_quota_exhausted = (
+                "insufficient_quota" in err_lower
+                or ("error code: 429" in err_lower and "quota" in err_lower)
+                or ("429" in err_lower and "billing" in err_lower)
+            )
+            if is_quota_exhausted:
+                now = datetime.now(timezone.utc)
+                self._quota_cooldown_until = now + timedelta(minutes=self._quota_cooldown_minutes)
+                self._quota_log_suppressed_until = now + timedelta(seconds=self._quota_log_window_seconds)
+                resume_at = self._quota_cooldown_until.strftime("%H:%M:%S UTC")
+                print(
+                    f"      ⚠️ AI quota exhausted on {self._provider_name}; pausing AI calls until {resume_at}"
+                )
+                return None
+
+            print(f"      🤖 AI Analysis Error: {err_msg}")
             return None
 
 if __name__ == "__main__":

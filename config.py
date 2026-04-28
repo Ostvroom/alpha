@@ -268,6 +268,9 @@ TWIKIT_REQUEST_GAP_SEC = max(0.0, min(20.0, _env_float("TWIKIT_REQUEST_GAP_SEC",
 TWIKIT_429_SOFT_PER_SESSION = max(1, min(30, _env_int("TWIKIT_429_SOFT_PER_SESSION", 8)))
 # When every session is hard-blocked, pause the whole Twikit pool (minutes) before retrying.
 TWIKIT_ALL_SESSIONS_COOLDOWN_MIN = max(5, min(180, _env_int("TWIKIT_ALL_SESSIONS_COOLDOWN_MIN", 45)))
+# AI quota handling (prevents noisy repeated OpenAI insufficient_quota errors)
+AI_QUOTA_COOLDOWN_MIN = max(5, min(180, _env_int("AI_QUOTA_COOLDOWN_MIN", 15)))
+AI_QUOTA_LOG_WINDOW_SEC = max(30, min(3600, _env_int("AI_QUOTA_LOG_WINDOW_SEC", 300)))
 
 # X project-first discovery (keyword search → new accounts → discovery pipeline)
 ENABLE_X_PROJECT_SEARCH = _env_flag("ENABLE_X_PROJECT_SEARCH", "1")  # default ON
