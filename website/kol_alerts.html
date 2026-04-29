@@ -764,11 +764,24 @@
       var sx = Number(r.since_x||0);
       var axCls = athxClass(r.ath_x);
       var siCls = sinceClass(r.since_x);
-      var callers = Array.isArray(r.callers)?r.callers:[];
-      var mintFull = mint ? ('<span style="word-break:break-all;">'+esc(mint)+'</span>') : "";
       var mintShort = mint ? mint.slice(0,6)+"…"+mint.slice(-6) : "";
 
-      // Build callers table
+      // Sort callers ascending by call_ts so index 0 = genuinely the earliest caller
+      var callers = (Array.isArray(r.callers)?r.callers.slice():[]).sort(function(a,b){
+        var da = _parseDate(a.call_ts), db = _parseDate(b.call_ts);
+        if(!da&&!db) return 0; if(!da) return 1; if(!db) return -1;
+        return da.getTime()-db.getTime();
+      });
+
+      // Derive "first call MC" from the earliest caller, fall back to r.call_mc
+      var firstCallMc = (callers.length && callers[0].call_mc) ? callers[0].call_mc : r.call_mc;
+      // "latest call MC" from r.call_mc (most recent call within the 24h window)
+      var latestCallMc = r.call_mc;
+      // Recompute ATHx from the earliest call MC for accuracy
+      var firstAthX = (r.ath_mc && firstCallMc && firstCallMc>0) ? r.ath_mc/firstCallMc : ax;
+      var firstAxCls = athxClass(firstAthX);
+
+      // Build callers table (sorted earliest → latest)
       var callersHtml = "";
       if(callers.length){
         callers.forEach(function(c,i){
@@ -808,6 +821,12 @@
       if(r.token_site_url)linksHtml += '<a class="chip" href="'+esc(r.token_site_url)+'" target="_blank" rel="noreferrer">🌐 Site</a>';
       if(mint) linksHtml += '<button class="chip" onclick="navigator.clipboard&&navigator.clipboard.writeText(\''+esc(mint)+'\');this.textContent=\'✓ Copied!\';setTimeout(()=>{this.textContent=\'📋 Copy CA\'},1200);">📋 Copy CA</button>';
 
+      // Show firstCallMc chip only if different from latestCallMc
+      var firstChip = '<div class="mc call"><span class="mc-lbl">🥇 first call</span><span class="mc-val">'+esc(fmtMc(firstCallMc))+'</span></div>';
+      var latestChip = (latestCallMc && latestCallMc !== firstCallMc)
+        ? '<div class="mc call" style="opacity:.65;"><span class="mc-lbl">latest call</span><span class="mc-val">'+esc(fmtMc(latestCallMc))+'</span></div>'
+        : "";
+
       modal.className = "tok-modal-overlay";
       modal.style.display = "flex";
       modal.innerHTML =
@@ -822,13 +841,14 @@
             '<div class="m-close-btn" onclick="closeModal()">✕</div>'+
           '</div>'+
           '<div class="m-metrics">'+
-            '<div class="mc call"><span class="mc-lbl">MC@first call</span><span class="mc-val">'+esc(fmtMc(r.call_mc))+'</span></div>'+
+            firstChip+
+            latestChip+
             '<div class="mc now"><span class="mc-lbl">Now</span><span class="mc-val">'+esc(fmtMc(r.cur_mc))+'</span></div>'+
             '<div class="mc ath"><span class="mc-lbl">ATH</span><span class="mc-val">'+esc(fmtMc(r.ath_mc))+'</span></div>'+
             '<div class="mc '+esc(siCls)+'"><span class="mc-lbl">Since</span><span class="mc-val">'+esc(fmtX(r.since_x))+'</span></div>'+
-            '<div class="mc '+esc(axCls)+'"><span class="mc-lbl">ATHx</span><span class="mc-val">'+esc(fmtX(r.ath_x))+'</span></div>'+
+            '<div class="mc '+esc(firstAxCls)+'"><span class="mc-lbl">ATHx</span><span class="mc-val">'+esc(fmtX(firstAthX))+'</span></div>'+
           '</div>'+
-          (callersHtml?'<div class="m-section"><div class="m-sec-title">Callers · '+callers.length+' total</div>'+callersHtml+'</div>':"")+
+          (callersHtml?'<div class="m-section"><div class="m-sec-title">Callers · '+callers.length+' total · earliest first</div>'+callersHtml+'</div>':"")+
           (linksHtml?'<div class="m-section"><div class="m-sec-title">Links</div><div class="m-links">'+linksHtml+'</div></div>':"")+
         '</div>';
 
