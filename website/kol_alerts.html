@@ -9,14 +9,15 @@
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #090909; color: #f0e8c0; font-family: Inter, system-ui, sans-serif; min-height: 100vh; }
+    html, body { height: 100%; overflow: hidden; }
+    body { background: #090909; color: #f0e8c0; font-family: Inter, system-ui, sans-serif; display: flex; flex-direction: column; }
     a { color: inherit; text-decoration: none; }
 
-    /* ── Layout ── */
-    .wrap { width: 100%; max-width: 1680px; margin: 0 auto; padding: 16px 20px 32px; }
+    /* ── Layout: full-viewport flex column ── */
+    .wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; width: 100%; max-width: 1680px; margin: 0 auto; padding: 14px 20px 0; }
 
     /* ── Top nav ── */
-    .nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+    .nav { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
     .brand { display: flex; align-items: center; gap: 10px; }
     .brand img { width: 28px; height: 28px; border: 1px solid rgba(255,204,0,.30); border-radius: 6px; }
     .brand-name { font-family: "JetBrains Mono", monospace; letter-spacing: .14em; text-transform: uppercase; color: #ffcc00; font-weight: 700; font-size: 11px; }
@@ -25,12 +26,12 @@
     .nav-btn:hover { border-color: rgba(255,204,0,.50); color: #ffcc00; }
     .update-ts { font-family: "JetBrains Mono", monospace; font-size: 10px; color: rgba(240,232,192,.35); white-space: nowrap; }
 
-    /* ── 3-column grid ── */
-    .cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; align-items: start; }
+    /* ── 3-column grid: fills remaining height ── */
+    .cols { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; align-items: stretch; padding-bottom: 14px; }
     @media (max-width: 1100px) { .cols { grid-template-columns: repeat(2, 1fr); } }
     @media (max-width: 700px)  { .cols { grid-template-columns: 1fr; } }
 
-    /* ── Column card ── */
+    /* ── Column card: fills full grid cell height ── */
     .col-card {
       border-radius: 16px;
       border: 1px solid rgba(255,204,0,.14);
@@ -38,6 +39,7 @@
       overflow: hidden;
       display: flex;
       flex-direction: column;
+      height: 100%;
     }
     .col-card.low  { border-color: rgba(120,180,255,.22); --acc-r:120; --acc-g:180; --acc-b:255; }
     .col-card.mid  { border-color: rgba(255,215,80,.22);  --acc-r:255; --acc-g:215; --acc-b:80;  }
@@ -75,10 +77,11 @@
     .live-dot { width: 6px; height: 6px; border-radius: 50%; background: #5aff9f; box-shadow: 0 0 10px rgba(90,255,160,.60); display: inline-block; animation: blink 1.2s ease-in-out infinite; }
     @keyframes blink { 0%,100%{opacity:.30;transform:scale(.85)} 50%{opacity:1;transform:scale(1)} }
 
-    /* ── Scroll body ── */
+    /* ── Scroll body: flex-grows to fill remaining column height ── */
     .col-body {
+      flex: 1;
+      min-height: 0;
       padding: 0 12px;
-      max-height: min(72vh, 760px);
       overflow-y: auto;
       overflow-x: hidden;
       scrollbar-width: thin;
@@ -201,7 +204,30 @@
     .chip.link { background: rgba(255,204,0,.06); border-color: rgba(255,204,0,.16); color: rgba(240,220,140,.88); }
     .chip.link:hover { border-color: rgba(255,204,0,.40); color: #ffcc00; }
 
-    /* ── Empty / wait state ── */
+    /* ── Sort bar ── */
+    .col-sort {
+      flex: 0 0 auto;
+      display: flex; gap: 4px;
+      padding: 8px 12px;
+      border-bottom: 1px solid rgba(255,255,255,.05);
+      background: rgba(0,0,0,.15);
+    }
+    .sort-btn {
+      font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
+      padding: 4px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,.08);
+      background: transparent; color: rgba(240,232,192,.40); cursor: pointer;
+      transition: all .15s;
+    }
+    .sort-btn:hover  { border-color: rgba(255,204,0,.30); color: rgba(255,204,0,.80); }
+    .sort-btn.active { border-color: rgba(255,204,0,.45); background: rgba(255,204,0,.10); color: #ffcc00; }
+
+    /* ── Callers count badge ── */
+    .kols-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-family: "JetBrains Mono", monospace; font-size: 9px; font-weight: 700;
+      padding: 3px 8px; border-radius: 999px;
+      background: rgba(200,160,255,.09); border: 1px solid rgba(200,160,255,.22); color: rgba(210,180,255,.85);
+    }
     .col-empty { padding: 28px 16px; text-align: center; }
     .col-empty-icon { font-size: 24px; opacity: .35; }
     .col-empty-txt { margin-top: 8px; font-family: "JetBrains Mono", monospace; font-size: 10px; color: rgba(240,232,192,.35); letter-spacing: .10em; text-transform: uppercase; }
@@ -276,6 +302,11 @@
             <span class="live-pill"><span class="live-dot"></span>LIVE</span>
           </div>
         </div>
+        <div class="col-sort">
+          <button class="sort-btn active" onclick="setSort('low','newest',this)">Newest</button>
+          <button class="sort-btn" onclick="setSort('low','athx',this)">ATHx</button>
+          <button class="sort-btn" onclick="setSort('low','since',this)">Since</button>
+        </div>
         <div class="col-body" id="b_low"></div>
       </div>
 
@@ -290,6 +321,11 @@
             <span class="live-pill"><span class="live-dot"></span>LIVE</span>
           </div>
         </div>
+        <div class="col-sort">
+          <button class="sort-btn active" onclick="setSort('100k','newest',this)">Newest</button>
+          <button class="sort-btn" onclick="setSort('100k','athx',this)">ATHx</button>
+          <button class="sort-btn" onclick="setSort('100k','since',this)">Since</button>
+        </div>
         <div class="col-body" id="b_100k"></div>
       </div>
 
@@ -303,6 +339,11 @@
             <span class="col-count" id="cnt_1m">—</span>
             <span class="live-pill"><span class="live-dot"></span>LIVE</span>
           </div>
+        </div>
+        <div class="col-sort">
+          <button class="sort-btn active" onclick="setSort('1m','newest',this)">Newest</button>
+          <button class="sort-btn" onclick="setSort('1m','athx',this)">ATHx</button>
+          <button class="sort-btn" onclick="setSort('1m','since',this)">Since</button>
         </div>
         <div class="col-body" id="b_1m"></div>
       </div>
@@ -360,102 +401,121 @@
       return (isFinite(n)&&n>=1) ? "since" : "since down";
     }
 
-    /* ── Render one bucket column ── */
-    function renderBucket(elId, cntId, items){
-      var el=document.getElementById(elId);
-      var cntEl=document.getElementById(cntId);
-      if(cntEl) cntEl.textContent=(items&&items.length)?items.length+" alerts":"—";
-      if(!items||!items.length){
+    /* ── Sort state ── */
+    var _data  = {low:[], "100k":[], "1m":[]};
+    var _sorts = {low:"newest", "100k":"newest", "1m":"newest"};
+
+    function sortItems(items, mode){
+      var arr = items.slice();
+      if(mode === "athx")   arr.sort(function(a,b){ return (Number(b.ath_x||0))-(Number(a.ath_x||0)); });
+      else if(mode === "since") arr.sort(function(a,b){ return (Number(b.since_x||0))-(Number(a.since_x||0)); });
+      /* newest: keep original API order (already sorted by latest call time) */
+      return arr;
+    }
+
+    function setSort(colKey, mode, btn){
+      _sorts[colKey] = mode;
+      /* update active button within this column's sort bar */
+      if(btn){
+        var bar = btn.parentNode;
+        bar.querySelectorAll(".sort-btn").forEach(function(b){ b.classList.remove("active"); });
+        btn.classList.add("active");
+      }
+      paintBucket(colKey);
+    }
+
+    /* ── Render one bucket from stored data ── */
+    function paintBucket(colKey){
+      var elId  = "b_"  + colKey;
+      var cntId = "cnt_"+ colKey;
+      var items = sortItems(_data[colKey], _sorts[colKey]);
+      var el    = document.getElementById(elId);
+      var cntEl = document.getElementById(cntId);
+      if(cntEl) cntEl.textContent = items.length ? items.length+" alerts" : "—";
+      if(!items.length){
         el.innerHTML='<div class="col-empty"><div class="col-empty-icon">📡</div><div class="col-empty-txt">Waiting for signal</div></div>';
         return;
       }
       var html="";
       items.forEach(function(r){
-        var chart    = r.chart_url||"";
-        var av       = (r.thumb_url||"").trim();
-        var ticker   = r.ticker||"TOKEN";
-        var _ts      = r.call_ts||"";
-        var _ago     = hoursAgo(_ts);
-        var _hr      = fmtHour(_ts);
-        var _isNew   = isNew(_ts);
-        var mintShort= r.mint ? esc(r.mint).slice(0,4)+"…"+esc(r.mint).slice(-4) : "";
+        var chart  = r.chart_url||"";
+        var av     = (r.thumb_url||"").trim();
+        var ticker = r.ticker||"TOKEN";
+        var _ts    = r.call_ts||"";
+        var _ago   = hoursAgo(_ts);
+        var _hr    = fmtHour(_ts);
+        var _isNew = isNew(_ts);
+        var mintShort = r.mint ? r.mint.slice(0,4)+"…"+r.mint.slice(-4) : "";
+        var callers   = Array.isArray(r.callers) ? r.callers : [];
+        var nKols     = callers.length || (r.caller ? 1 : 0);
+        var axCls = athxClass(r.ath_x);
+        var siCls = sinceClass(r.since_x);
 
-        // Avatar fallback: first 2 chars of ticker
         var avHtml = av
           ? '<img src="'+esc(av)+'" loading="lazy" alt="" />'
           : '<span class="tok-av-placeholder">'+esc(ticker.slice(0,2).toUpperCase())+'</span>';
 
-        // ATHx class
-        var axCls = athxClass(r.ath_x);
-        var siCls = sinceClass(r.since_x);
+        html += '<div class="tok'+(_isNew?' is-new':'')+'">'; // open
 
-        html += '<div class="tok'+(_isNew?' is-new':'')+'">'; // item open
-
-        // ── Header row: avatar + name + time
+        /* ── header: avatar + name + time */
         html += '<div class="tok-head">';
         html +=   '<div class="tok-id">';
         html +=     '<div class="tok-av">'+avHtml+'</div>';
         html +=     '<div class="tok-names">';
         html +=       '<div class="tok-ticker">'+(chart?('<a href="'+esc(chart)+'" target="_blank" rel="noreferrer">'+esc(ticker)+'</a>'):esc(ticker))+'</div>';
-        if(mintShort) html += '<div class="tok-mint">'+mintShort+'</div>';
+        if(mintShort) html += '<div class="tok-mint">'+esc(mintShort)+'</div>';
         html +=     '</div>';
         html +=   '</div>';
-        // Time
         html +=   '<div class="tok-time">';
         if(_hr) html += '<div class="t-hm">'+esc(_hr)+'</div>';
         html +=   '<div class="t-ago">';
-        if(_isNew){
-          html += '<span class="new-pill"><span class="live-dot" style="width:5px;height:5px;"></span>NEW</span>';
-        } else if(_ago){
-          html += '<span class="ago-pill">'+esc(_ago)+'</span>';
-        }
-        html +=   '</div>';
-        html +=   '</div>';
-        html += '</div>'; // tok-head close
+        if(_isNew) html += '<span class="new-pill"><span class="live-dot" style="width:5px;height:5px;"></span>NEW</span>';
+        else if(_ago) html += '<span class="ago-pill">'+esc(_ago)+'</span>';
+        html +=   '</div></div>';
+        html += '</div>'; // tok-head
 
-        // ── Metrics row
+        /* ── metrics */
         html += '<div class="tok-metrics">';
         html +=   '<div class="mc call"><span class="mc-lbl">MC@call</span><span class="mc-val">'+esc(fmtMc(r.call_mc))+'</span></div>';
         html +=   '<div class="mc now"><span class="mc-lbl">Now</span><span class="mc-val">'+esc(fmtMc(r.cur_mc))+'</span></div>';
         html +=   '<div class="mc ath"><span class="mc-lbl">ATH</span><span class="mc-val">'+esc(fmtMc(r.ath_mc))+'</span></div>';
         html +=   '<div class="mc '+esc(siCls)+'"><span class="mc-lbl">Since</span><span class="mc-val">'+esc(fmtX(r.since_x))+'</span></div>';
         html +=   '<div class="mc '+esc(axCls)+'"><span class="mc-lbl">ATHx</span><span class="mc-val">'+esc(fmtX(r.ath_x))+'</span></div>';
+        if(nKols>1) html += '<span class="kols-badge">👥 '+nKols+' KOLs</span>';
         html += '</div>';
 
-        // ── Callers
-        var callers = Array.isArray(r.callers) ? r.callers : [];
+        /* ── callers */
         var callerHtml = "";
         if(callers.length){
           callerHtml = callers.slice(0,3).map(function(c){
-            var cLink = c.x ? "https://x.com/"+String(c.x).replace(/^@/,"") : "";
-            var label = c.name||c.x||"caller";
-            return cLink
-              ? '<a class="chip caller" href="'+esc(cLink)+'" target="_blank" rel="noreferrer"><b>@</b>'+esc(label)+'</a>'
-              : '<span class="chip caller"><b>@</b>'+esc(label)+'</span>';
+            var cl = c.x ? "https://x.com/"+String(c.x).replace(/^@/,"") : "";
+            var lb = c.name||c.x||"caller";
+            return cl
+              ? '<a class="chip caller" href="'+esc(cl)+'" target="_blank" rel="noreferrer"><b>@</b>'+esc(lb)+'</a>'
+              : '<span class="chip caller"><b>@</b>'+esc(lb)+'</span>';
           }).join("");
         } else if(r.caller_x||r.caller){
-          var cLink = r.caller_x ? "https://x.com/"+String(r.caller_x).replace(/^@/,"") : "";
-          var label = r.caller||r.caller_x||"caller";
-          callerHtml = cLink
-            ? '<a class="chip caller" href="'+esc(cLink)+'" target="_blank" rel="noreferrer"><b>@</b>'+esc(label)+'</a>'
-            : '<span class="chip caller"><b>@</b>'+esc(label)+'</span>';
+          var cl2 = r.caller_x ? "https://x.com/"+String(r.caller_x).replace(/^@/,"") : "";
+          var lb2 = r.caller||r.caller_x||"caller";
+          callerHtml = cl2
+            ? '<a class="chip caller" href="'+esc(cl2)+'" target="_blank" rel="noreferrer"><b>@</b>'+esc(lb2)+'</a>'
+            : '<span class="chip caller"><b>@</b>'+esc(lb2)+'</span>';
         }
 
-        // ── Links
-        var linksHtml = "";
-        if(chart)            linksHtml += '<a class="chip link" href="'+esc(chart)+'" target="_blank" rel="noreferrer">Chart</a>';
-        if(r.dex_url)        linksHtml += '<a class="chip link" href="'+esc(r.dex_url)+'" target="_blank" rel="noreferrer">Dex</a>';
-        if(r.token_x_url)    linksHtml += '<a class="chip" href="'+esc(r.token_x_url)+'" target="_blank" rel="noreferrer">X</a>';
-        if(r.token_site_url) linksHtml += '<a class="chip" href="'+esc(r.token_site_url)+'" target="_blank" rel="noreferrer">Site</a>';
+        /* ── links */
+        var linksHtml="";
+        if(chart)            linksHtml+='<a class="chip link" href="'+esc(chart)+'" target="_blank" rel="noreferrer">Chart</a>';
+        if(r.dex_url)        linksHtml+='<a class="chip link" href="'+esc(r.dex_url)+'" target="_blank" rel="noreferrer">Dex</a>';
+        if(r.token_x_url)    linksHtml+='<a class="chip" href="'+esc(r.token_x_url)+'" target="_blank" rel="noreferrer">X</a>';
+        if(r.token_site_url) linksHtml+='<a class="chip" href="'+esc(r.token_site_url)+'" target="_blank" rel="noreferrer">Site</a>';
 
-        if(callerHtml||linksHtml){
-          html += '<div class="tok-sub">'+callerHtml+linksHtml+'</div>';
-        }
-
+        if(callerHtml||linksHtml) html+='<div class="tok-sub">'+callerHtml+linksHtml+'</div>';
         html += '</div>'; // tok close
       });
       el.innerHTML = html;
     }
+
+    function renderBucket(colKey, items){ _data[colKey]=items||[]; paintBucket(colKey); }
 
     /* ── Fetch + refresh ── */
     async function fetchJ(url, ms){
@@ -478,9 +538,9 @@
         try{ d=await fetchJ("/api/kol/dashboard?hours=24&per_bucket=50",20000); }
         catch(e1){ d=await fetchJ("/api/kol/dashboard?hours=24&per_bucket=30",12000); }
         var b=(d&&d.buckets)||{};
-        renderBucket("b_low",  "cnt_low",  b.low||[]);
-        renderBucket("b_100k", "cnt_100k", b["100k"]||[]);
-        renderBucket("b_1m",   "cnt_1m",   b["1m"]||[]);
+        renderBucket("low",   b.low||[]);
+        renderBucket("100k",  b["100k"]||[]);
+        renderBucket("1m",    b["1m"]||[]);
         var ts=document.getElementById("updateTs");
         if(ts){ var now=new Date(); ts.textContent="Updated "+_pad2(now.getUTCHours())+":"+_pad2(now.getUTCMinutes())+":"+_pad2(now.getUTCSeconds())+" UTC"; }
       }catch(e){
