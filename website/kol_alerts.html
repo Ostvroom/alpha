@@ -230,6 +230,80 @@
       background: rgba(200,160,255,.09); border: 1px solid rgba(200,160,255,.22); color: rgba(210,180,255,.85);
     }
 
+    /* ── Leaderboard strip ── */
+    .lb-wrap {
+      flex: 0 0 auto;
+      margin-bottom: 12px;
+      border: 1px solid rgba(255,204,0,.14);
+      border-radius: 12px;
+      background: rgba(12,12,14,.80);
+      overflow: hidden;
+    }
+    .lb-head {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 14px;
+      border-bottom: 1px solid rgba(255,255,255,.06);
+      background: rgba(255,204,0,.04);
+    }
+    .lb-title {
+      font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: .16em;
+      text-transform: uppercase; font-weight: 700; color: rgba(255,204,0,.70);
+    }
+    .lb-sub {
+      font-family: "JetBrains Mono", monospace; font-size: 9px;
+      color: rgba(240,232,192,.28); letter-spacing: .06em;
+    }
+    .lb-body {
+      display: flex; gap: 0; overflow-x: auto; overflow-y: hidden;
+      scrollbar-width: none;
+    }
+    .lb-body::-webkit-scrollbar { display: none; }
+    .lb-item {
+      flex: 0 0 auto;
+      display: flex; align-items: center; gap: 9px;
+      padding: 9px 14px;
+      border-right: 1px solid rgba(255,255,255,.05);
+      min-width: 170px; max-width: 220px;
+      transition: background .12s;
+      cursor: pointer;
+      text-decoration: none; color: inherit;
+    }
+    .lb-item:last-child { border-right: none; }
+    .lb-item:hover { background: rgba(255,204,0,.05); }
+    .lb-rank {
+      font-family: "JetBrains Mono", monospace; font-size: 10px; font-weight: 700;
+      color: rgba(240,232,192,.25); min-width: 18px; text-align: right;
+    }
+    .lb-rank.gold   { color: #ffcc00; }
+    .lb-rank.silver { color: rgba(200,200,220,.70); }
+    .lb-rank.bronze { color: rgba(200,150,100,.70); }
+    .lb-av {
+      width: 28px; height: 28px; flex: 0 0 28px;
+      border-radius: 8px; border: 1px solid rgba(255,255,255,.09);
+      background: rgba(255,255,255,.04); overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .lb-av img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .lb-av-ph { font-family: "JetBrains Mono", monospace; font-size: 9px; font-weight: 700; color: rgba(255,204,0,.55); }
+    .lb-info { min-width: 0; flex: 1; }
+    .lb-ticker {
+      font-weight: 700; font-size: 12px; color: #fff;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .lb-meta {
+      display: flex; align-items: center; gap: 5px; margin-top: 2px; flex-wrap: nowrap;
+    }
+    .lb-athx {
+      font-family: "JetBrains Mono", monospace; font-size: 11px; font-weight: 700;
+    }
+    .lb-athx.hot  { color: #7aff9a; }
+    .lb-athx.warm { color: #ffcc00; }
+    .lb-athx.cold { color: rgba(240,232,192,.45); }
+    .lb-since {
+      font-family: "JetBrains Mono", monospace; font-size: 9px;
+      color: rgba(240,232,192,.38);
+    }
+
     /* ── Chain indicator badge ── */
     .chain-badge {
       display: inline-flex; align-items: center;
@@ -297,6 +371,15 @@
         <a class="nav-btn" href="/daily-finds">Daily Finds</a>
         <a class="nav-btn" href="/account">Account</a>
       </div>
+    </div>
+
+    <!-- Leaderboard strip -->
+    <div class="lb-wrap" id="lbWrap" style="display:none;">
+      <div class="lb-head">
+        <span class="lb-title">🏆 Top 10 ATHx</span>
+        <span class="lb-sub">ranked by highest ATH multiple · all buckets · last 24h</span>
+      </div>
+      <div class="lb-body" id="lbBody"></div>
     </div>
 
     <!-- 3 columns -->
@@ -551,7 +634,53 @@
       el.innerHTML = html;
     }
 
-    function renderBucket(colKey, items){ _data[colKey]=items||[]; paintBucket(colKey); }
+    function renderBucket(colKey, items){ _data[colKey]=items||[]; paintBucket(colKey); paintLeaderboard(); }
+
+    /* ── Leaderboard: top 10 tokens by ATHx across all buckets ── */
+    function paintLeaderboard(){
+      var all = (_data.low||[]).concat(_data["100k"]||[]).concat(_data["1m"]||[]);
+      all.sort(function(a,b){ return (Number(b.ath_x||0))-(Number(a.ath_x||0)); });
+      var top = all.slice(0,10);
+      var wrap = document.getElementById("lbWrap");
+      var body = document.getElementById("lbBody");
+      if(!wrap||!body) return;
+      if(!top.length){ wrap.style.display="none"; return; }
+      wrap.style.display="";
+      var rankClass = ["gold","gold","gold","silver","silver","silver","bronze","bronze","bronze","bronze"];
+      var html="";
+      top.forEach(function(r, i){
+        var ax = Number(r.ath_x||0);
+        var sx = Number(r.since_x||0);
+        var axCls = ax>=5?"hot":ax>=2?"warm":"cold";
+        var chain = (r.chain||"sol").toLowerCase();
+        var chainLabel = chain==="eth"?"ETH":chain==="base"?"BASE":"SOL";
+        var chainCls = "chain-badge chain-"+chain;
+        var av = (r.thumb_url||"").trim();
+        var ticker = r.ticker||"?";
+        var mint = r.mint||"";
+        var chart = r.chart_url||"";
+        var ds = chain==="eth"?"ethereum":chain==="base"?"base":"solana";
+
+        var avHtml = av
+          ? '<img src="'+esc(av)+'" loading="lazy" alt="" onerror="imgFallback(this,\''+esc(mint)+'\',\''+esc(chain)+'\',\''+esc(ticker)+'\')" />'
+          : (mint
+              ? '<img src="https://dd.dexscreener.com/ds-data/tokens/'+ds+'/'+esc(mint)+'.png" loading="lazy" alt="" onerror="imgFallback(this,\''+esc(mint)+'\',\''+esc(chain)+'\',\''+esc(ticker)+'\')" />'
+              : '<span class="lb-av-ph">'+esc(ticker.slice(0,2).toUpperCase())+'</span>');
+
+        html += (chart?'<a class="lb-item" href="'+esc(chart)+'" target="_blank" rel="noreferrer">':'<div class="lb-item">');
+        html +=   '<div class="lb-rank '+esc(rankClass[i]||'')+'">#'+(i+1)+'</div>';
+        html +=   '<div class="lb-av">'+avHtml+'</div>';
+        html +=   '<div class="lb-info">';
+        html +=     '<div class="lb-ticker" style="display:flex;align-items:center;gap:5px;">'+esc(ticker)+'<span class="'+esc(chainCls)+'">'+esc(chainLabel)+'</span></div>';
+        html +=     '<div class="lb-meta">';
+        html +=       '<span class="lb-athx '+esc(axCls)+'">'+esc(fmtX(ax))+'</span>';
+        if(sx>0) html += '<span class="lb-since">now '+esc(fmtX(sx))+'</span>';
+        html +=     '</div>';
+        html +=   '</div>';
+        html += (chart?'</a>':'</div>');
+      });
+      body.innerHTML = html;
+    }
 
     /* ── Fetch + refresh ── */
     async function fetchJ(url, ms){
