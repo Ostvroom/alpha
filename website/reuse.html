@@ -118,9 +118,10 @@
     function renderHistory(d){
       var out = document.getElementById("out");
       var arr = Array.isArray(d.history) ? d.history : [];
-      var html = '<div class="target">Current: <b>@'+esc(d.current_handle||d.query||"-")+'</b></div>';
+      var uid = d.user_id ? (' · id '+esc(d.user_id)) : '';
+      var html = '<div class="target">Current: <b>@'+esc(d.current_handle||d.query||"-")+'</b>'+uid+'</div>';
       if(!arr.length){
-        html += '<div class="empty">No previous usernames found yet.</div>';
+        html += '<div class="empty">No rename history from X (not exposed for this integration).</div>';
       }else{
         arr.forEach(function(h, i){
           html += '<div class="item"><div class="rank">#'+(i+1)+'</div><div class="nm">@'+esc(h)+'</div><div></div></div>';

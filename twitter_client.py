@@ -908,6 +908,39 @@ class TwitterClient:
                 return await self.get_hva_followers(user_id)
             return []
 
+    @staticmethod
+    async def _followers_list_paged_one_client(
+        client,
+        uid: str | None,
+        sn: str | None,
+        limit: int,
+    ) -> tuple[list, bool]:
+        """REST followers/list (newest first) for one twikit Client instance."""
+        if not hasattr(client, "get_latest_followers"):
+            return [], True
+        all_followers: list = []
+        cursor = None
+        count_target = max(1, int(limit or 1000))
+        while len(all_followers) < count_target:
+            page = min(200, max(1, count_target - len(all_followers)))
+            resp = await client.get_latest_followers(
+                user_id=uid,
+                screen_name=sn if not uid else None,
+                count=page,
+                cursor=cursor,
+            )
+            batch = list(resp)
+            if not batch:
+                break
+            all_followers.extend(batch)
+            nc = getattr(resp, "next_cursor", None)
+            if nc is None or nc == 0 or (isinstance(nc, str) and nc.strip() in ("", "0")):
+                break
+            cursor = nc
+            await asyncio.sleep(1.0)
+        is_partial = len(all_followers) >= count_target
+        return all_followers, is_partial
+
     async def _get_followers_via_followers_list(
         self,
         user_id: str | None,
@@ -915,129 +948,60 @@ class TwitterClient:
         limit: int,
     ) -> tuple[list, bool]:
         """
-        Fallback: REST 1.1 followers/list via twikit get_latest_followers.
-        Used when GraphQL Followers returns 404 or an empty graph (common after X API changes).
-        """
-        session = await self._ensure_session()
-        if not session:
-            return [], True
-        client = session["client"]
-        if not hasattr(client, "get_latest_followers"):
-            return [], True
+        REST 1.1 followers/list via twikit get_latest_followers (GraphQL Followers often 404s).
 
+        Tries every non-blocked cookie session; one account may hit limits while another works.
+        """
         uid = (str(user_id).strip() if user_id else "") or None
         sn = (str(screen_name or "").strip().lstrip("@") if screen_name else "") or None
         if not uid and not sn:
             return [], True
 
-        all_followers: list = []
-        cursor = None
-        try:
-            while len(all_followers) < int(limit or 0):
-                page = min(200, max(1, int(limit) - len(all_followers)))
-                resp = await client.get_latest_followers(
-                    user_id=uid,
-                    screen_name=sn if not uid else None,
-                    count=page,
-                    cursor=cursor,
-                )
-                batch = list(resp)
-                if not batch:
-                    break
-                all_followers.extend(batch)
-                nc = getattr(resp, "next_cursor", None)
-                # Twitter: 0 / None ends pagination; non-zero cursors (often negative) continue.
-                if nc is None or nc == 0 or (isinstance(nc, str) and nc.strip() in ("", "0")):
-                    break
-                cursor = nc
-                await asyncio.sleep(1.2)
+        sessions = list(self._sessions or [])
+        if not sessions:
+            return [], True
 
-            is_partial = len(all_followers) >= int(limit or 0) and int(limit or 0) > 0
-            if all_followers:
-                self._reset_soft_429(session)
-            return all_followers, is_partial
-        except Exception as e:
-            err_msg = str(e)
-            if any(code in err_msg for code in ["429", "503", "403", "502", "504"]):
-                self._mark_session_blocked(err_msg)
-            print(f"      WARN followers/list fallback: {err_msg[:220]}")
-            return all_followers, True
+        errs: list[str] = []
+        for si, sess in enumerate(sessions):
+            if sess.get("rate_limited"):
+                continue
+            ok, err = await self._login(sess)
+            if not ok:
+                errs.append(f"login:{err}")
+                continue
+            client = sess["client"]
+            un = (sess.get("account") or {}).get("username") or str(si)
+            try:
+                rows, partial = await self._followers_list_paged_one_client(
+                    client, uid, sn, int(limit or 1000)
+                )
+                if rows:
+                    self._reset_soft_429(sess)
+                    return rows, partial
+            except Exception as e:
+                msg = (str(e) or type(e).__name__)[:200]
+                errs.append(f"@{un}:{msg}")
+                continue
+
+        if errs:
+            print(
+                f"      WARN followers/list: no session returned data ({len(errs)} tries). "
+                f"First: {errs[0]}"
+            )
+        return [], True
 
     async def get_first_followers(self, user_id, limit=1000, screen_name: str | None = None):
-        """Fetch ~limit followers (newest-first from API) and return (list, is_partial).
-
-        GraphQL followers often 404s on X; we fall back to REST followers/list.
-        """
+        """Fetch followers (newest-first). Uses REST followers/list only; retries all sessions."""
         if self.is_rate_limited:
             return None
-        session = await self._ensure_session()
-        if not session:
+        if not await self._ensure_session():
             return None
 
         uid_s = (str(user_id).strip() if user_id is not None else "") or None
         sn_s = (str(screen_name).strip().lstrip("@") if screen_name else "") or None
-
-        all_followers: list = []
-        cursor = None
         count_target = int(limit or 0) or 1000
 
-        def _should_try_v11_fallback(exc: BaseException | None, gql_rows: int) -> bool:
-            if gql_rows > 0:
-                return False
-            if exc is not None:
-                msg = str(exc).lower()
-                if "404" in msg or "not found" in msg or "status: 404" in msg:
-                    return True
-                if "graphql" in msg and ("errors" in msg or "failed" in msg):
-                    return True
-            return exc is None
-
-        if not uid_s:
-            fb, partial = await self._get_followers_via_followers_list(None, sn_s, count_target)
-            return fb, partial
-
-        try:
-            while len(all_followers) < count_target:
-                response = await session["client"].get_user_followers(
-                    uid_s, count=100, cursor=cursor
-                )
-                if not response:
-                    break
-
-                batch = list(response)
-                all_followers.extend(batch)
-
-                if hasattr(response, "next_cursor") and response.next_cursor:
-                    cursor = response.next_cursor
-                else:
-                    break
-
-                await asyncio.sleep(1.5)
-
-            is_partial = len(all_followers) >= count_target
-            if not all_followers and _should_try_v11_fallback(None, len(all_followers)):
-                fb, partial = await self._get_followers_via_followers_list(
-                    uid_s, sn_s, count_target
-                )
-                if fb:
-                    return fb, partial or (len(fb) >= count_target)
-
-            return all_followers, is_partial
-
-        except Exception as e:
-            err_msg = str(e)
-            if any(code in err_msg for code in ["429", "503", "403", "502", "504"]):
-                self._mark_session_blocked(err_msg)
-            print(f"      ERROR First followers error: {err_msg}")
-
-            if _should_try_v11_fallback(e, len(all_followers)):
-                fb, partial = await self._get_followers_via_followers_list(
-                    uid_s, sn_s, count_target
-                )
-                if fb:
-                    return fb, partial or (len(fb) >= count_target)
-
-            return all_followers, True
+        return await self._get_followers_via_followers_list(uid_s, sn_s, count_target)
 
 class AIAnalyzer:
     def __init__(self):

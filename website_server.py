@@ -2108,9 +2108,9 @@ async def api_reuse_first_followers(request: Request, body: ReuseLookupRequest):
         "first_followers": out_rows,
         "is_partial": bool(is_partial or followers_count > 1000),
         "note": (
-            "First followers are best-effort from fetched follower window. "
-            "For very large accounts, Twitter pagination can hide true earliest followers. "
-            "If the list is empty, the profile may hide followers or the live session may be blocked."
+            "First followers use X REST followers/list (newest-first), rotating cookie sessions. "
+            "For large accounts you only see the tail of the list, not true earliest signups. "
+            "If empty: followers may be hidden, or every session was denied by X."
         ),
     }
     _REUSE_CACHE[cache_key] = (now, payload)
@@ -2131,11 +2131,17 @@ async def api_reuse_username_history(request: Request, body: ReuseLookupRequest)
         raise HTTPException(404, "Handle not found or Twitter session unavailable")
 
     current = str(getattr(user, "screen_name", "") or handle)
+    uid = str(getattr(user, "id", "") or "")
     return {
         "query": handle,
         "current_handle": current,
+        "user_id": uid,
         "history": [],
-        "note": "Username history is not available from current Twitter session data yet.",
+        "note": (
+            "X does not expose previous screen names through the Twikit session API. "
+            "This endpoint only confirms the account behind your query today. "
+            "For rename trails, use your own snapshots, web.archive.org, or dedicated OSINT tools."
+        ),
     }
 
 
