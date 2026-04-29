@@ -121,10 +121,13 @@
       var uid = d.user_id ? (' · id '+esc(d.user_id)) : '';
       var html = '<div class="target">Current: <b>@'+esc(d.current_handle||d.query||"-")+'</b>'+uid+'</div>';
       if(!arr.length){
-        html += '<div class="empty">No rename history from X (not exposed for this integration).</div>';
+        html += '<div class="empty">No About-account lines returned (see note below).</div>';
       }else{
         arr.forEach(function(h, i){
-          html += '<div class="item"><div class="rank">#'+(i+1)+'</div><div class="nm">@'+esc(h)+'</div><div></div></div>';
+          var s = String(h||"");
+          var plain = /^@?[A-Za-z0-9_]{1,15}$/.test(s.replace(/^@/,""));
+          var body = plain ? ("@"+esc(s.replace(/^@/,""))) : esc(s);
+          html += '<div class="item"><div class="rank">#'+(i+1)+'</div><div class="nm">'+body+'</div><div></div></div>';
         });
       }
       if(d.note){ html += '<div class="hint" style="margin-top:10px;">'+esc(d.note)+'</div>'; }

@@ -2132,16 +2132,38 @@ async def api_reuse_username_history(request: Request, body: ReuseLookupRequest)
 
     current = str(getattr(user, "screen_name", "") or handle)
     uid = str(getattr(user, "id", "") or "")
+
+    about = await tw.fetch_about_account(handle)
+    history: list[str] = []
+    if about:
+        cnt = about.get("username_change_count")
+        if cnt is not None:
+            line = f"X reports {cnt} username change(s) on record for this account."
+            iso = about.get("username_last_changed_iso")
+            if iso:
+                line += f" Last change: {iso}."
+            history.append(line)
+        reg = about.get("account_based_in")
+        if reg:
+            la = about.get("location_accurate")
+            acc = "yes" if la is True else ("no" if la is False else "n/a")
+            history.append(f"Account based in: {reg} (accurate flag: {acc}).")
+        if about.get("is_identity_verified"):
+            history.append("ID verification: completed per X About panel.")
+
+    note = (
+        "X does not list each old @handle in this response—only the official change count and last-change time from About this account."
+        if about
+        else "Could not load About this account (query may need updating, or every cookie session failed)."
+    )
+
     return {
         "query": handle,
         "current_handle": current,
         "user_id": uid,
-        "history": [],
-        "note": (
-            "X does not expose previous screen names through the Twikit session API. "
-            "This endpoint only confirms the account behind your query today. "
-            "For rename trails, use your own snapshots, web.archive.org, or dedicated OSINT tools."
-        ),
+        "about": about,
+        "history": history,
+        "note": note,
     }
 
 

@@ -1003,6 +1003,110 @@ class TwitterClient:
 
         return await self._get_followers_via_followers_list(uid_s, sn_s, count_target)
 
+    @staticmethod
+    def _about_account_url() -> str:
+        from twikit.constants import DOMAIN
+
+        # AboutAccountQuery (same operation as twikit PR #398 "About this account").
+        return f"https://{DOMAIN}/i/api/graphql/zs_jFPFT78rBpXv9Z3U2YQ/AboutAccountQuery"
+
+    @staticmethod
+    def _parse_about_account_response(response: dict) -> dict | None:
+        """Parse AboutAccountQuery JSON into a flat dict (count / region / verification)."""
+        data = (response or {}).get("data") or {}
+        ur = data.get("user_result_by_screen_name")
+        if not isinstance(ur, dict):
+            return None
+        user_data = ur.get("result")
+        if not isinstance(user_data, dict):
+            return None
+        if user_data.get("__typename") == "UserUnavailable":
+            return None
+
+        about = user_data.get("about_profile") or {}
+        core = user_data.get("core") or {}
+        verification = user_data.get("verification_info") or {}
+        reason = verification.get("reason") or {}
+        uc = about.get("username_changes") or {}
+
+        def _to_int(v):
+            if v is None:
+                return None
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return None
+
+        count = _to_int(uc.get("count"))
+        last_ms = _to_int(uc.get("last_changed_at_msec"))
+        verified_since = _to_int(reason.get("verified_since_msec"))
+
+        last_iso = None
+        if last_ms is not None:
+            try:
+                last_iso = datetime.fromtimestamp(
+                    last_ms / 1000.0, tz=timezone.utc
+                ).strftime("%Y-%m-%d %H:%M UTC")
+            except Exception:
+                last_iso = None
+
+        return {
+            "rest_id": user_data.get("rest_id"),
+            "screen_name": core.get("screen_name"),
+            "name": core.get("name"),
+            "account_based_in": about.get("account_based_in"),
+            "location_accurate": about.get("location_accurate"),
+            "affiliate_username": about.get("affiliate_username"),
+            "source": about.get("source"),
+            "username_change_count": count,
+            "username_last_changed_ms": last_ms,
+            "username_last_changed_iso": last_iso,
+            "is_identity_verified": verification.get("is_identity_verified"),
+            "verified_since_ms": verified_since,
+        }
+
+    async def fetch_about_account(self, screen_name: str) -> dict | None:
+        """
+        X "About this account" (GraphQL): username change count, last change time, region, etc.
+        Does not include the list of old @handles (X does not return them here).
+        """
+        sn = (screen_name or "").strip().lstrip("@")
+        if not sn:
+            return None
+        if self.is_rate_limited:
+            return None
+
+        url = self._about_account_url()
+        variables = {"screenName": sn}
+        features = {"responsive_web_graphql_timeline_navigation_enabled": True}
+
+        for sess in list(self._sessions or []):
+            if sess.get("rate_limited"):
+                continue
+            ok, _err = await self._login(sess)
+            if not ok:
+                continue
+            client = sess.get("client")
+            gql = getattr(client, "gql", None) if client else None
+            if gql is None:
+                continue
+            try:
+                await self._twikit_pace()
+                response, _ = await gql.gql_get(url, variables, features)
+                parsed = self._parse_about_account_response(response)
+                if parsed is not None:
+                    self._reset_soft_429(sess)
+                    return parsed
+            except Exception as e:
+                err_msg = str(e) or type(e).__name__
+                # Do not treat 403/404 as pool-wide blocks; try other sessions.
+                if any(code in err_msg for code in ["429", "503", "502", "504"]):
+                    self._mark_session_blocked(err_msg)
+                continue
+
+        return None
+
+
 class AIAnalyzer:
     def __init__(self):
         from openai import AsyncOpenAI
