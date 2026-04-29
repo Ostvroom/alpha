@@ -254,17 +254,6 @@
     </div>
 
     <div class="grid">
-      <div class="card span12">
-        <div class="ph">
-          <div class="pt">Top performing alerts (7 days) · ranked by ATHx</div>
-          <div class="loadWrap">
-            <span class="livePill" title="Live feed"><i></i>LIVE</span>
-            <div class="ps" id="stat">—</div>
-          </div>
-        </div>
-        <div class="pb pb-tight" id="top"></div>
-      </div>
-
       <div class="card accent accLow span4">
         <div class="ph">
           <div class="pt">Low cap alerts</div>
@@ -308,10 +297,6 @@
         return null;
       }catch(e){return null;}
     }
-    function fmtTime(v){
-      var d=_parseDate(v); if(!d) return String(v||"");
-      return _fmtUTC(d);
-    }
     function hoursAgo(v){
       var d=_parseDate(v); if(!d) return null;
       var diff=(Date.now()-d.getTime())/1000;
@@ -341,21 +326,13 @@
       if (!isFinite(v) || v<=0) return "—";
       return v.toFixed(2) + "x";
     }
-    function qualityBadge(q){
-      var v = String(q||"").toLowerCase();
-      if (v === "high") return '<span class="badge g"><b>Data</b> Verified</span>';
-      if (v === "medium") return '<span class="badge k"><b>Data</b> Cautious</span>';
-      if (v === "low") return '<span class="badge r"><b>Data</b> Fallback</span>';
-      return "";
-    }
     function badge(label, value, cls){
       var v = (value===null||value===undefined||value==="") ? "—" : String(value);
       return '<span class="badge '+esc(cls||"")+'"><b>'+esc(label)+'</b> '+esc(v)+'</span>';
     }
     async function fetchJsonWithTimeout(url, timeoutMs){
       var ms = Number(timeoutMs||12000);
-      var ctrl = null;
-      var timer = null;
+      var ctrl = null; var timer = null;
       try{
         if (typeof AbortController !== "undefined"){
           ctrl = new AbortController();
@@ -363,71 +340,12 @@
         }
         var res = await fetch(url, {credentials:"include", signal: ctrl ? ctrl.signal : undefined});
         if (timer) clearTimeout(timer);
-        if(!res.ok){
-          var txt = "";
-          try{ txt = (await res.text()) || ""; }catch(e){}
-          throw new Error("HTTP " + res.status + (txt ? (": " + txt.slice(0,180)) : ""));
-        }
+        if(!res.ok){ var txt=""; try{ txt=(await res.text())||""; }catch(e){} throw new Error("HTTP "+res.status+(txt?(": "+txt.slice(0,180)):"")); }
         return await res.json();
-      }catch(e){
-        if (timer) clearTimeout(timer);
-        throw e;
-      }
+      }catch(e){ if(timer) clearTimeout(timer); throw e; }
     }
-    function _isAbortError(e){
-      var s = String((e && (e.name || e.message || e)) || "");
-      return /AbortError|aborted/i.test(s);
-    }
-    function renderTop(elId, items){
-      var el=document.getElementById(elId);
-      if(!items||!items.length){el.innerHTML='<div class="ps">No alerts yet.</div>';return;}
-      var html="";
-      html+='<div class="tableScroll">';
-      html+='<div class="topHeader">'
-        +'<div></div>'
-        +'<div class="colH">Token alerts</div>'
-        +'<div class="colH">First call (Kolfi)</div>'
-        +'<div class="colH">MC@call</div>'
-        +'<div class="colH">Current MC</div>'
-        +'<div class="colH">ATH</div>'
-        +'<div class="colH">ATHx</div>'
-        +'<div class="colH">Since call</div>'
-        +'<div class="colH">Caller</div>'
-        +'<div class="colH">Links</div>'
-        +'</div>';
-      items.forEach(function(r, idx){
-        var av = (r.thumb_url||"").trim();
-        var chart = r.chart_url || "";
-        var dex = r.dex_url || "";
-        var callerLink = r.caller_x ? ("https://x.com/" + String(r.caller_x).replace(/^@/,"")) : "";
-        html+='<div class="tokRow">';
-        html+='<div class="av">'+(av?('<img src="'+esc(av)+'" loading="lazy" />'):'')+'</div>';
-        html+='<div>';
-        html+='<div class="row"><div class="ttl">'+esc(String(idx+1)+". ")+ '<a href="'+esc(chart)+'" target="_blank" rel="noreferrer" style="color:#ffcc00">'+esc(r.ticker||"—")+'</a></div></div>';
-        html+='<div class="body" style="margin-top:4px;color:rgba(240,232,192,.60);font-size:12px;">'
-          +esc(r.mint||"").slice(0,6)+'…'+esc(r.mint||"").slice(-6)
-          +'</div>';
-        html+='</div>';
-        var _ago=hoursAgo(r.call_ts||""); var _hr=fmtHour(r.call_ts||"");
-        html+='<div class="colTime"><span class="timeExact">'+esc(_hr)+'</span>'+(_ago?'<br><span class="agoTag">'+esc(_ago)+'</span>':'')+'</div>';
-        html+='<div class="colCall">'+badge("MC", fmtMc(r.call_mc), "k")+'</div>';
-        html+='<div class="colAth">'+badge("Now", fmtMc(r.cur_mc), "g")+'</div>';
-        html+='<div class="colAth">'+badge("ATH", fmtMc(r.ath_mc), "g")+'</div>';
-        html+='<div class="colAthx">'+badge("ATHx", fmtX(r.ath_x), "g")+'</div>';
-        html+='<div class="colAthx">'+badge("Since", fmtX(r.since_x), "g")+'</div>';
-        html+='<div class="colCaller">'+(callerLink?('<a class="badge r" target="_blank" rel="noreferrer" href="'+esc(callerLink)+'"><b>'+esc(r.caller||"Caller")+'</b></a>'):badge("Caller", r.caller||"—", "r"))+'</div>';
-        html+='<div class="colLinks">'
-          +(chart?('<a class="badge" target="_blank" rel="noreferrer" href="'+esc(chart)+'"><b>Chart</b></a>'):'')
-          +(dex?('<a class="badge p" target="_blank" rel="noreferrer" href="'+esc(dex)+'"><b>Dex</b></a>'):'')
-          +(r.token_x_url?('<a class="badge r" target="_blank" rel="noreferrer" href="'+esc(r.token_x_url)+'"><b>X</b></a>'):'')
-          +(r.token_site_url?('<a class="badge" target="_blank" rel="noreferrer" href="'+esc(r.token_site_url)+'"><b>Site</b></a>'):'')
-          +(r.ath_confidence ? qualityBadge(r.ath_confidence) : '')
-          +'</div>';
-        html+='</div>';
-      });
-      html+='</div>';
-      el.innerHTML=html;
-    }
+    function _isAbortError(e){ return /AbortError|aborted/i.test(String((e&&(e.name||e.message||e))||"")); }
+
     function renderBucket(elId, items){
       var el=document.getElementById(elId);
       if(!items||!items.length){
@@ -436,25 +354,23 @@
       }
       var html="";
       items.forEach(function(r){
-        var detail = r.event_id ? ("/alert/"+encodeURIComponent(r.event_id)) : "";
         var chart = r.chart_url || "";
         var callerLink = r.caller_x ? ("https://x.com/" + String(r.caller_x).replace(/^@/,"")) : "";
         var av = (r.thumb_url||"").trim();
-        var _ts=r.call_ts||r.ts||""; var _ago2=hoursAgo(_ts); var _hr2=fmtHour(_ts);
+        var _ts=r.call_ts||""; var _ago=hoursAgo(_ts); var _hr=fmtHour(_ts);
         html+='<div class="item">';
         html+='<div class="row"><div class="ttl" style="display:flex;align-items:center;gap:10px;min-width:0;">'
           +'<span class="av" style="width:32px;height:32px;border-radius:10px;flex:0 0 auto;">'+(av?('<img src="'+esc(av)+'" loading="lazy" />'):'')+'</span>'
           +'<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
-          +(detail?('<a href="'+esc(detail)+'">'+esc(r.ticker||r.title||"Token")+'</a>'):esc(r.ticker||r.title||"Token"))
+          +(chart?('<a href="'+esc(chart)+'" target="_blank" rel="noreferrer" style="color:#ffcc00">'+esc(r.ticker||"Token")+'</a>'):esc(r.ticker||"Token"))
           +'</span></div>'
-          +'<div style="text-align:right"><span class="timeExact">'+esc(_hr2)+'</span>'+(_ago2?'<br><span class="agoTag">'+esc(_ago2)+'</span>':'')+'</div></div>';
+          +'<div style="text-align:right"><span class="timeExact">'+esc(_hr)+'</span>'+(_ago?'<br><span class="agoTag">'+esc(_ago)+'</span>':'')+'</div></div>';
         html+='<div class="sub">'
           +badge("MC@call", fmtMc(r.call_mc), "k")
           +badge("Now", fmtMc(r.cur_mc), "g")
           +badge("ATH", fmtMc(r.ath_mc), "g")
           +badge("Since", fmtX(r.since_x), "g")
           +badge("ATHx", fmtX(r.ath_x), "g")
-          +(r.ath_confidence ? qualityBadge(r.ath_confidence) : "")
           +'</div>';
         var callers = Array.isArray(r.callers) ? r.callers : [];
         var callersHtml = "";
@@ -467,7 +383,9 @@
               : badge("Caller", label, "r");
           }).join("");
         } else {
-          callersHtml = (callerLink?('<a class="badge r" target="_blank" rel="noreferrer" href="'+esc(callerLink)+'"><b>Caller</b> '+esc(r.caller||"")+'</a>'):(r.caller?badge("Caller", r.caller, "r"):""));
+          callersHtml = callerLink
+            ? '<a class="badge r" target="_blank" rel="noreferrer" href="'+esc(callerLink)+'"><b>Caller</b> '+esc(r.caller||"")+'</a>'
+            : (r.caller ? badge("Caller", r.caller, "r") : "");
         }
         html+='<div class="sub">'
           +callersHtml
@@ -480,47 +398,40 @@
       });
       el.innerHTML=html;
     }
+
     var _refreshBusy = false;
     var _firstLoad = true;
     async function refresh(){
       if (_refreshBusy) return;
       _refreshBusy = true;
-      var stat = document.getElementById("stat");
-      if (stat) stat.textContent = "Updating…";
       try{
         var d;
         try{
-          d = await fetchJsonWithTimeout("/api/kol/dashboard?hours=24&top=10&per_bucket=50", 20000);
+          d = await fetchJsonWithTimeout("/api/kol/dashboard?hours=24&per_bucket=50", 20000);
         }catch(e1){
-          // Retry once with a lighter payload before surfacing an error.
-          d = await fetchJsonWithTimeout("/api/kol/dashboard?hours=24&top=10&per_bucket=30", 12000);
+          d = await fetchJsonWithTimeout("/api/kol/dashboard?hours=24&per_bucket=30", 12000);
         }
-        renderTop("top", (d&&d.top)||[]);
         var b = (d&&d.buckets)||{};
-        renderBucket("b_low", b.low||[]);
+        renderBucket("b_low",  b.low||[]);
         renderBucket("b_100k", b["100k"]||[]);
-        renderBucket("b_1m", b["1m"]||[]);
-        if (stat) stat.textContent="Updated " + new Date().toLocaleTimeString();
+        renderBucket("b_1m",   b["1m"]||[]);
       } catch(e){
         var msg = _isAbortError(e)
-          ? "Timeout while loading Kolfi data. Auto-refresh will retry."
+          ? "Timeout loading Kolfi data. Auto-refresh will retry."
           : ("Failed to load: " + String(e||""));
-        document.getElementById("top").innerHTML = '<div class="err">'+esc(msg)+'</div>';
-        document.getElementById("b_low").innerHTML = '<div class="ps">—</div>';
-        document.getElementById("b_100k").innerHTML = '<div class="ps">—</div>';
-        document.getElementById("b_1m").innerHTML = '<div class="ps">—</div>';
-        if (stat) stat.textContent = "Error";
+        ["b_low","b_100k","b_1m"].forEach(function(id){
+          document.getElementById(id).innerHTML = '<div class="err">'+esc(msg)+'</div>';
+        });
       } finally {
         _refreshBusy = false;
         if (_firstLoad){
           _firstLoad = false;
           var pl = document.getElementById("pageLoader");
-          if (pl) { pl.classList.add("hidden"); pl.setAttribute("aria-busy","false"); }
+          if (pl){ pl.classList.add("hidden"); pl.setAttribute("aria-busy","false"); }
         }
       }
     }
-    // Less aggressive refresh to avoid hammering APIs (each refresh can be expensive).
-    refresh(); setInterval(refresh,20000);
+    refresh(); setInterval(refresh, 20000);
   </script>
   <script src="/static/community_pulse.js" defer></script>
 </body>

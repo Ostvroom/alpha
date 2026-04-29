@@ -2506,7 +2506,6 @@ async def api_kol_dashboard(
                     kolfi.fetch_tokens_overview(
                         session,
                         api_key,
-                        # Keep website fetch lighter/faster than bot-side jobs.
                         limit=100,
                         include_calls=50,
                         max_pages=8,
@@ -2516,17 +2515,14 @@ async def api_kol_dashboard(
             except asyncio.TimeoutError:
                 items, err = [], "Kolfi dashboard fetch timeout"
             if err and not items:
-                # Serve stale data rather than failing hard when Kolfi is slow/unreachable.
                 if isinstance(_KOL_DASHBOARD_LAST_GOOD, dict):
                     return dict(_KOL_DASHBOARD_LAST_GOOD)
                 raise HTTPException(502, err)
 
             now = datetime.now(timezone.utc)
             cutoff = now - timedelta(hours=hours)
-            cutoff_top7 = now - timedelta(days=7)
             low_max, mid_max = _dashboard_bucket_thresholds()
             staged: dict[str, list] = {"low": [], "100k": [], "1m": []}
-            top7_rows: list[dict] = []
 
             for it in items or []:
                 if not isinstance(it, dict):
@@ -2534,129 +2530,85 @@ async def api_kol_dashboard(
                 mint = str(kolfi._item_mint(it) or "").strip()  # type: ignore[attr-defined]
                 if not mint:
                     continue
-                call = None
+
+                # Parse all valid calls with timestamps
+                dated: list[tuple] = []
                 try:
                     calls = it.get("callsPreview") or it.get("calls") or []
-                    if isinstance(calls, list) and calls:
-                        dated = []
-                        for c in calls:
-                            if not isinstance(c, dict):
-                                continue
-                            cm = kolfi._safe_float(c.get("callMarketCap"))  # type: ignore[attr-defined]
-                            if cm is None or cm <= 0:
-                                continue
-                            dt_c = _parse_iso_dt(str(c.get("messageTs") or ""))
-                            if dt_c is None:
-                                continue
+                    for c in (calls if isinstance(calls, list) else []):
+                        if not isinstance(c, dict):
+                            continue
+                        cm = kolfi._safe_float(c.get("callMarketCap"))  # type: ignore[attr-defined]
+                        if not cm or cm <= 0:
+                            continue
+                        dt_c = _parse_iso_dt(str(c.get("messageTs") or ""))
+                        if dt_c:
                             dated.append((dt_c, c))
-                        if dated:
-                            # Use the true FIRST call timestamp from Kolfi.
-                            dated.sort(key=lambda x: x[0])
-                            call = dated[0][1]
-                            call_dt = dated[0][0]
-                            callers_rows = [c for _, c in dated[:6]]
-                            # Latest call in preview for "recent alert" monitoring/buckets.
-                            latest_dt, latest_call = dated[-1]
-                        else:
-                            call_dt = None
-                            callers_rows = []
-                            latest_dt, latest_call = None, None
-                    else:
-                        call_dt = None
-                        callers_rows = []
-                        latest_dt, latest_call = None, None
                 except Exception:
-                    call = None
-                    call_dt = None
-                    callers_rows = []
-                    latest_dt, latest_call = None, None
-                if call is None or call_dt is None:
+                    pass
+                if not dated:
                     continue
-                call_mc = kolfi._safe_float((call or {}).get("callMarketCap"))  # type: ignore[attr-defined]
-                if call_mc is None or call_mc <= 0:
+                dated.sort(key=lambda x: x[0])
+
+                # Only include tokens with at least one call in the rolling window
+                calls_in_window = [(dt, c) for dt, c in dated if dt >= cutoff]
+                if not calls_in_window:
                     continue
-                # Collect the best peakMarketCap from all calls — more reliable ATH estimate
-                # than Kolfi's top-level ath_market_cap which is frequently wrong.
-                peak_mc_from_calls: Optional[float] = None
-                for _dt_c, _c in (dated if dated else []):
-                    _p = kolfi._safe_float(_c.get("peakMarketCap"))  # type: ignore[attr-defined]
-                    if _p and _p > 0:
-                        peak_mc_from_calls = max(peak_mc_from_calls or 0.0, _p) or None
-                cur_mc, ath_mc = _trusted_kolfi_caps(it)
-                since = (cur_mc / call_mc) if (call_mc and call_mc > 0 and cur_mc and cur_mc > 0) else None
-                ath_x = (ath_mc / call_mc) if (call_mc and call_mc > 0 and ath_mc and ath_mc > 0) else None
+                latest_dt, latest_call = calls_in_window[-1]
+                latest_call_mc = kolfi._safe_float(latest_call.get("callMarketCap"))  # type: ignore[attr-defined]
+                if not latest_call_mc or latest_call_mc <= 0:
+                    continue
+
+                # Raw Kolfi values — pass through exactly as returned, no sanitization
+                cur_mc = kolfi._safe_float(it.get("last_market_cap"))  # type: ignore[attr-defined]
+                ath_mc = kolfi._safe_float(it.get("ath_market_cap"))  # type: ignore[attr-defined]
+                if cur_mc and ath_mc and ath_mc < cur_mc:
+                    ath_mc = cur_mc
+
+                since_x = (cur_mc / latest_call_mc) if (cur_mc and cur_mc > 0) else None
+                ath_x = (ath_mc / latest_call_mc) if (ath_mc and ath_mc > 0) else None
+
+                # All callers (up to 6) for the caller badges row
+                callers_out = []
+                for _, c in dated[:6]:
+                    cmc = kolfi._safe_float(c.get("callMarketCap"))  # type: ignore[attr-defined]
+                    sx = (cur_mc / cmc) if (cmc and cmc > 0 and cur_mc and cur_mc > 0) else None
+                    callers_out.append({
+                        "name": kolfi._call_label(c),  # type: ignore[attr-defined]
+                        "x": str(c.get("kolXId") or c.get("kol_x_id") or "").strip(),
+                        "call_mc": cmc,
+                        "call_ts": str(c.get("messageTs") or "").strip(),
+                        "since_x": sx,
+                    })
+
                 dex = str(it.get("dexscreener_url") or it.get("dexUrl") or "")
                 chart = f"https://gmgn.ai/sol/token/{mint}" if mint else ""
-                caller_label = kolfi._call_label(call) if isinstance(call, dict) else ""  # type: ignore[attr-defined]
-                caller_x = str((call or {}).get("kolXId") or (call or {}).get("kol_x_id") or "").strip()
                 token_x = str(it.get("twitter_url") or it.get("twitterUrl") or "")
                 token_site = str(it.get("website_url") or it.get("websiteUrl") or "")
                 thumb_url = (
                     await _thumb_url_cached(session, it, mint, allow_network_lookup=False)
-                    if mint
-                    else ""
+                    if mint else ""
                 )
-                call_ts = str((call or {}).get("messageTs") or "").strip()
-                callers_out = []
-                for c in callers_rows:
-                    who = ""
-                    who_x = ""
-                    try:
-                        who = kolfi._call_label(c)  # type: ignore[attr-defined]
-                    except Exception:
-                        who = str((c or {}).get("kolUsername") or (c or {}).get("who") or "")
-                    who_x = str((c or {}).get("kolXId") or (c or {}).get("kol_x_id") or "").strip()
-                    cmc = kolfi._safe_float((c or {}).get("callMarketCap"))  # type: ignore[attr-defined]
-                    sx = (cur_mc / cmc) if (cmc and cmc > 0 and cur_mc and cur_mc > 0) else None
-                    callers_out.append(
-                        {
-                            "name": who,
-                            "x": who_x,
-                            "call_mc": cmc,
-                            "call_ts": str((c or {}).get("messageTs") or "").strip(),
-                            "since_x": sx,
-                        }
-                    )
-                row_b = {
-                    "call_ts": call_ts,
+
+                bucket = _dashboard_bucket_by_call_mc(latest_call_mc, low_max, mid_max)
+                staged[bucket].append((latest_dt, {
                     "mint": mint,
                     "ticker": kolfi._item_ticker(it),  # type: ignore[attr-defined]
-                    "caller": caller_label or (caller_x or ""),
-                    "caller_x": caller_x,
-                    "callers": callers_out,
-                    "call_mc": call_mc,
-                    "peak_mc": peak_mc_from_calls,  # best peakMarketCap from calls array
+                    "call_ts": str(latest_call.get("messageTs") or "").strip(),
+                    "call_mc": latest_call_mc,
                     "cur_mc": cur_mc,
                     "ath_mc": ath_mc,
-                    "since_x": since,
+                    "since_x": since_x,
                     "ath_x": ath_x,
+                    "caller": kolfi._call_label(latest_call),  # type: ignore[attr-defined]
+                    "caller_x": str(latest_call.get("kolXId") or latest_call.get("kol_x_id") or "").strip(),
+                    "callers": callers_out,
                     "chart_url": chart,
                     "dex_url": dex,
                     "token_x_url": token_x,
                     "token_site_url": token_site,
                     "thumb_url": thumb_url,
-                }
-
-                # Left panel: top performing alerts in last 7 days.
-                if call_dt >= cutoff_top7:
-                    top7_rows.append(row_b)
-
-                # Buckets: "recent alerts" use latest call within the selected rolling window.
-                if latest_call is not None and latest_dt is not None and latest_dt >= cutoff:
-                    latest_call_mc = kolfi._safe_float((latest_call or {}).get("callMarketCap"))  # type: ignore[attr-defined]
-                    if latest_call_mc and latest_call_mc > 0:
-                        bucket = _dashboard_bucket_by_call_mc(latest_call_mc, low_max, mid_max)
-                        latest_row = dict(row_b)
-                        latest_row["call_ts"] = str((latest_call or {}).get("messageTs") or "")
-                        latest_row["call_mc"] = latest_call_mc
-                        latest_row["caller"] = kolfi._call_label(latest_call)  # type: ignore[attr-defined]
-                        latest_row["caller_x"] = str(
-                            (latest_call or {}).get("kolXId") or (latest_call or {}).get("kol_x_id") or ""
-                        ).strip()
-                        # Recompute since_x and ath_x relative to THIS call's MC, not the first call MC.
-                        latest_row["since_x"] = (cur_mc / latest_call_mc) if (cur_mc and cur_mc > 0) else None
-                        latest_row["ath_x"] = (ath_mc / latest_call_mc) if (ath_mc and ath_mc > 0) else None
-                        staged[bucket].append((latest_dt, latest_row))
+                }))
 
             buckets_out = {"low": [], "100k": [], "1m": []}
             for key in ("low", "100k", "1m"):
@@ -2664,26 +2616,10 @@ async def api_kol_dashboard(
                 arr.sort(key=lambda t: t[0], reverse=True)
                 buckets_out[key] = [r for _, r in arr[:per_bucket]]
 
-            top7_rows.sort(key=lambda r: float(r.get("ath_x") or 0), reverse=True)
-            top_visible = top7_rows[:top]
-
-            # Dexscreener cross-check on the rows the UI will actually display.
-            # Kolfi sometimes reports wildly inflated MC/ATH where its own peak
-            # value is also bad, so peak-based sanitization alone misses them.
-            try:
-                rows_to_check: list[dict] = list(top_visible)
-                for k in ("low", "100k", "1m"):
-                    rows_to_check.extend(buckets_out.get(k) or [])
-                await _apply_dex_sanitization_to_rows(session, rows_to_check)
-                # Re-rank top after potential corrections.
-                top_visible.sort(key=lambda r: float(r.get("ath_x") or 0), reverse=True)
-            except Exception:
-                pass
-
-            built = {"top": top_visible, "buckets": buckets_out}
+            built = {"buckets": buckets_out}
             _KOL_DASHBOARD_LAST_GOOD = dict(built)
             return built
-    # Cache for 20 seconds; frontend refresh is also throttled.
+    # Cache for 20 seconds.
     return await _cache_get_or_set(cache_key, 20.0, _build)
 
 
