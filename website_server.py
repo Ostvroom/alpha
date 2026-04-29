@@ -2460,7 +2460,7 @@ async def api_kol_dashboard(
                         api_key,
                         # Keep website fetch lighter/faster than bot-side jobs.
                         limit=100,
-                        include_calls=30,
+                        include_calls=50,
                         max_pages=8,
                     ),
                     timeout=14.0,
@@ -2597,6 +2597,9 @@ async def api_kol_dashboard(
                         latest_row["caller_x"] = str(
                             (latest_call or {}).get("kolXId") or (latest_call or {}).get("kol_x_id") or ""
                         ).strip()
+                        # Recompute since_x and ath_x relative to THIS call's MC, not the first call MC.
+                        latest_row["since_x"] = (cur_mc / latest_call_mc) if (cur_mc and cur_mc > 0) else None
+                        latest_row["ath_x"] = (ath_mc / latest_call_mc) if (ath_mc and ath_mc > 0) else None
                         staged[bucket].append((latest_dt, latest_row))
 
             buckets_out = {"low": [], "100k": [], "1m": []}
@@ -2657,67 +2660,66 @@ async def api_kol_top_performers(request: Request, days: int = 30, top: int = 10
             if err and not items:
                 raise HTTPException(502, err)
 
-        scored = []
-        for it in items or []:
-            if not isinstance(it, dict):
-                continue
-            row = kolfi._entry_for_leaderboard(it, max_call_age_hours=hours)  # type: ignore[attr-defined]
-            if row:
-                scored.append(row)
+            scored = []
+            for it in items or []:
+                if not isinstance(it, dict):
+                    continue
+                row = kolfi._entry_for_leaderboard(it, max_call_age_hours=hours)  # type: ignore[attr-defined]
+                if row:
+                    scored.append(row)
 
-        def _athx_key(x: dict) -> float:
+            def _athx_key(x: dict) -> float:
+                try:
+                    ath = float(x.get("ath_usd") or 0)
+                    call = float(x.get("call_mc") or 0)
+                    if ath > 0 and call > 0:
+                        return ath / call
+                except Exception:
+                    pass
+                return 0.0
+
+            scored.sort(key=_athx_key, reverse=True)
+            scored = [s for s in scored if _athx_key(s) > 0][:top]
+
+            out = []
+            for r in scored:
+                it = r.get("item") or {}
+                bc = r.get("best_call") or {}
+                mint = str(r.get("mint") or "")
+                ticker = str(r.get("ticker") or "—")
+                call_mc = kolfi._safe_float(r.get("call_mc"))  # type: ignore[attr-defined]
+                cur_mc = kolfi._safe_float(r.get("cur_mc"))  # type: ignore[attr-defined]
+                ath_mc = kolfi._safe_float(r.get("ath_usd"))  # type: ignore[attr-defined]
+                since = (cur_mc / call_mc) if (call_mc and call_mc > 0 and cur_mc and cur_mc > 0) else None
+                ath_x = (ath_mc / call_mc) if (call_mc and call_mc > 0 and ath_mc and ath_mc > 0) else None
+                caller = kolfi._call_label(bc) if isinstance(bc, dict) else ""  # type: ignore[attr-defined]
+                caller_x = str((bc or {}).get("kolXId") or "").strip()
+                chart = f"https://gmgn.ai/sol/token/{mint}" if mint else ""
+                dex = str(it.get("dexscreener_url") or it.get("dexUrl") or "")
+                thumb = await _thumb_url_cached(session, it, mint) if mint else ""
+                out.append(
+                    {
+                        "ticker": ticker,
+                        "mint": mint,
+                        "caller": caller,
+                        "caller_x": caller_x,
+                        "call_mc": call_mc,
+                        "cur_mc": cur_mc,
+                        "ath_mc": ath_mc,
+                        "since_x": since,
+                        "ath_x": ath_x,
+                        "call_ts": (bc or {}).get("messageTs") or "",
+                        "chart_url": chart,
+                        "dex_url": dex,
+                        "thumb_url": thumb or "",
+                    }
+                )
             try:
-                ath = float(x.get("ath_usd") or 0)
-                call = float(x.get("call_mc") or 0)
-                if ath > 0 and call > 0:
-                    return ath / call
+                await _apply_dex_sanitization_to_rows(session, out)
+                out.sort(key=lambda r: float(r.get("ath_x") or 0), reverse=True)
             except Exception:
                 pass
-            return 0.0
-
-        scored.sort(key=_athx_key, reverse=True)
-        scored = [s for s in scored if _athx_key(s) > 0][:top]
-
-        out = []
-        for r in scored:
-            it = r.get("item") or {}
-            bc = r.get("best_call") or {}
-            mint = str(r.get("mint") or "")
-            ticker = str(r.get("ticker") or "—")
-            call_mc = kolfi._safe_float(r.get("call_mc"))  # type: ignore[attr-defined]
-            cur_mc = kolfi._safe_float(r.get("cur_mc"))  # type: ignore[attr-defined]
-            ath_mc = kolfi._safe_float(r.get("ath_usd"))  # type: ignore[attr-defined]
-            since = (cur_mc / call_mc) if (call_mc and call_mc > 0 and cur_mc and cur_mc > 0) else None
-            ath_x = (ath_mc / call_mc) if (call_mc and call_mc > 0 and ath_mc and ath_mc > 0) else None
-            caller = kolfi._call_label(bc) if isinstance(bc, dict) else ""  # type: ignore[attr-defined]
-            caller_x = str((bc or {}).get("kolXId") or "").strip()
-            chart = f"https://gmgn.ai/sol/token/{mint}" if mint else ""
-            dex = str(it.get("dexscreener_url") or it.get("dexUrl") or "")
-            thumb = await _thumb_url_cached(session, it, mint) if mint else ""
-            out.append(
-                {
-                    "ticker": ticker,
-                    "mint": mint,
-                    "caller": caller,
-                    "caller_x": caller_x,
-                    "call_mc": call_mc,
-                    "cur_mc": cur_mc,
-                    "ath_mc": ath_mc,
-                    "since_x": since,
-                    "ath_x": ath_x,
-                    "call_ts": (bc or {}).get("messageTs") or "",
-                    "chart_url": chart,
-                    "dex_url": dex,
-                    "thumb_url": thumb or "",
-                }
-            )
-        try:
-            async with aiohttp.ClientSession() as _sess:
-                await _apply_dex_sanitization_to_rows(_sess, out)
-            out.sort(key=lambda r: float(r.get("ath_x") or 0), reverse=True)
-        except Exception:
-            pass
-        return {"days": days, "items": out}
+            return {"days": days, "items": out}
 
     return await _cache_get_or_set(cache_key, 60.0, _build)
 

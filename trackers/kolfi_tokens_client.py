@@ -104,16 +104,16 @@ def sanitized_caps(item: Dict[str, Any]) -> Tuple[Optional[float], Optional[floa
     peak_mc = _max_call_peak_mc(item or {})
 
     try:
-        cap_mult = float(os.getenv("KOLFI_CAP_SANITY_PEAK_MULT", "6") or 6)
+        cap_mult = float(os.getenv("KOLFI_CAP_SANITY_PEAK_MULT", "20") or 20)
     except Exception:
-        cap_mult = 6.0
-    cap_mult = max(2.0, min(20.0, cap_mult))
+        cap_mult = 20.0
+    cap_mult = max(2.0, min(100.0, cap_mult))
 
     if peak_mc is not None and peak_mc > 0:
         if cur_mc is not None and cur_mc > peak_mc * cap_mult:
-            cur_mc = peak_mc
+            cur_mc = peak_mc * cap_mult  # clamp to the ceiling, not down to peak
         if ath_mc is not None and ath_mc > peak_mc * cap_mult:
-            ath_mc = peak_mc
+            ath_mc = peak_mc * cap_mult
 
     if (cur_mc is None or cur_mc <= 0) and peak_mc is not None and peak_mc > 0:
         cur_mc = peak_mc
@@ -1711,7 +1711,7 @@ def _earliest_call_with_mc(
 
 def _format_earliest_kol_call_line(item: Dict[str, Any]) -> Optional[str]:
     """One markdown line: earliest KOL, entry MC, x vs now MC, time ago."""
-    ec = _earliest_call_with_mc(item, max_age_days=30)
+    ec = _first_call_with_mc(item)  # use true first call, no age cap
     if not ec:
         return None
     who = _call_label(ec)
