@@ -700,9 +700,7 @@
         /* ── metrics */
         html += '<div class="tok-metrics">';
         html +=   '<div class="mc call"><span class="mc-lbl">MC@call</span><span class="mc-val">'+esc(fmtMc(r.call_mc))+'</span></div>';
-        html +=   '<div class="mc now"><span class="mc-lbl">Now</span><span class="mc-val">'+esc(fmtMc(r.cur_mc))+'</span></div>';
         html +=   '<div class="mc ath"><span class="mc-lbl">ATH</span><span class="mc-val">'+esc(fmtMc(r.ath_mc))+'</span></div>';
-        html +=   '<div class="mc '+esc(siCls)+'"><span class="mc-lbl">Since</span><span class="mc-val">'+esc(fmtX(r.since_x))+'</span></div>';
         html +=   '<div class="mc '+esc(axCls)+'"><span class="mc-lbl">ATHx</span><span class="mc-val">'+esc(fmtX(r.ath_x))+'</span></div>';
         if(nKols>1) html += '<span class="kols-badge">👥 '+nKols+' KOLs</span>';
         html += '</div>';
