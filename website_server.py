@@ -483,6 +483,20 @@ def _load_kol_quality_state() -> dict[str, Any]:
         _KOL_QUALITY_STATE = {"version": 1, "by_mint": {}}
     if not isinstance(_KOL_QUALITY_STATE.get("by_mint"), dict):
         _KOL_QUALITY_STATE["by_mint"] = {}
+    # One-time migration: wipe observed_ath_mc values that are clearly garbage.
+    # An ATH floor > 1000x the last known Dex MC is implausible and was likely
+    # written from a previous bad Kolfi ath_market_cap snapshot.
+    try:
+        by_mint = _KOL_QUALITY_STATE["by_mint"]
+        for ent in by_mint.values():
+            if not isinstance(ent, dict):
+                continue
+            obs = float(ent.get("observed_ath_mc") or 0)
+            last_dex = float(ent.get("last_dex_mc") or 0)
+            if obs > 0 and last_dex > 0 and obs > last_dex * 1000:
+                ent.pop("observed_ath_mc", None)
+    except Exception:
+        pass
     return _KOL_QUALITY_STATE
 
 
@@ -2190,6 +2204,8 @@ async def _dex_market_cap_for_mint(
     """
     Fetch Dexscreener best-pair market cap for a Solana mint, cached.
     Returns None if unavailable. Used to validate Kolfi MC/ATH outliers.
+    Successful lookups are cached for ttl_sec (600s default).
+    Failed lookups are cached for only 60s so they are retried promptly.
     """
     if not mint:
         return None
@@ -2208,7 +2224,13 @@ async def _dex_market_cap_for_mint(
     mc = 0.0
     if isinstance(info, dict) and info.get("ok"):
         mc = float(info.get("market_cap_usd") or info.get("fdv_usd") or 0.0) or 0.0
-    _DEX_MC_CACHE[mint] = (now, mc)
+    if mc > 0:
+        # Success: cache with full TTL.
+        _DEX_MC_CACHE[mint] = (now, mc)
+    else:
+        # Failure: cache with a 60s TTL so the mint is retried soon,
+        # not locked out for the full 600s like a successful hit.
+        _DEX_MC_CACHE[mint] = (now - ttl_sec + 60.0, 0.0)
     return mc if mc > 0 else None
 
 
@@ -2223,15 +2245,31 @@ def _dex_validated_caps(
     Cross-check Kolfi MC/ATH against live Dexscreener MC and the best observed
     peakMarketCap from the calls array.
 
-    Current MC: if Kolfi's value is > 3x the live Dex MC, trust Dex.
-    ATH MC: Kolfi's ath_market_cap is frequently wildly wrong. Use call_peak_mc
-            (from peakMarketCap fields in the calls array) as the ATH when available,
-            falling back to Kolfi's ath_mc only if it passes a sanity check.
+    ATH correction using call_peak_mc runs unconditionally — it does NOT require
+    a working Dex response, because peakMarketCap from Kolfi's calls array is
+    independent of the Dexscreener lookup.
+
+    Current MC correction requires Dex data (we have no other live price source).
     """
+    # --- Step 1: ATH correction from call peaks — independent of Dex ---
+    # This must run even when dex_mc is unavailable.
+    if call_peak_mc and call_peak_mc > 0:
+        # Accept Kolfi's ath_mc only if it is within 10x of the observed call peak.
+        # Anything beyond that is Kolfi's ath_market_cap garbage (e.g. $157M vs $4M peak).
+        if ath_mc is not None and ath_mc > call_peak_mc * 10.0:
+            ath_mc = call_peak_mc
+        # ATH must be at least the observed call peak.
+        if ath_mc is None or ath_mc < call_peak_mc:
+            ath_mc = call_peak_mc
+
+    # --- Step 2: Current MC — only correctable with a live Dex price ---
     if dex_mc is None or dex_mc <= 0:
+        # No Dex data: can't fix current MC, but ATH is already corrected above.
+        if cur_mc is not None and ath_mc is not None and ath_mc < cur_mc:
+            ath_mc = cur_mc
         return cur_mc, ath_mc
 
-    # --- Current MC: hard trust Dex when Kolfi diverges significantly ---
+    # Hard trust Dex when Kolfi's current MC diverges significantly (>3x).
     cur_ceiling = dex_mc * 3.0
     if cur_mc is not None and cur_mc > cur_ceiling:
         cur_mc = dex_mc  # Kolfi's live price is stale/wrong; use Dex
@@ -2239,20 +2277,11 @@ def _dex_validated_caps(
     if cur_mc is None or cur_mc <= 0:
         cur_mc = dex_mc
 
-    # --- ATH: use call_peak_mc (peakMarketCap from calls) as the ground truth.
-    # Kolfi's top-level ath_market_cap is unreliable and often inflated.
-    if call_peak_mc and call_peak_mc > 0:
-        # call_peak_mc is the best observed ATH from the calls array.
-        # Accept Kolfi's ath_mc only if it's within 10x of call_peak_mc.
-        if ath_mc is not None and ath_mc > call_peak_mc * 10.0:
-            # Clearly garbage vs the observed call peak — use call_peak instead.
-            ath_mc = call_peak_mc
-        # ATH must be at least call_peak if that data exists.
-        if ath_mc is None or ath_mc < call_peak_mc:
-            ath_mc = call_peak_mc
-    else:
-        # No call peak data — fall back to Dex-ratio ceiling for garbage filter.
-        ath_ceiling = dex_mc * 500.0  # tokens can 500x from current to ATH
+    # --- Step 3: ATH ceiling when no call peak exists (use Dex as reference) ---
+    if not (call_peak_mc and call_peak_mc > 0):
+        # No call peak available — apply a large-ratio ceiling relative to Dex MC
+        # to suppress absurdly inflated Kolfi ATH values.
+        ath_ceiling = dex_mc * 500.0  # tokens can reasonably 500x from current low
         if ath_mc is not None and ath_mc > ath_ceiling:
             ath_mc = ath_ceiling
 
