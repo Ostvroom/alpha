@@ -827,10 +827,10 @@ class BlockBrainBot(commands.Bot):
         val += "\n\u200b"
         return val
 
-    def is_personal_profile(self, account):
+    def is_personal_profile(self, account, extra_text: str = ""):
         """Checks if an account is likely a personal profile/worker instead of a project."""
-        text = f"{account.name} {account.description or ''}".lower()
-        handle = account.screen_name.lower()
+        text = f"{getattr(account, 'name', '')} {getattr(account, 'description', '') or ''} {extra_text or ''}".lower()
+        handle = str(getattr(account, "screen_name", "") or "").lower()
         
         # DISABLED: Was blocking real early projects like @Djinnmarket, @IntentLayerSOL
         # if account.followers_count < 100 and len(bio) < 50:
@@ -2081,13 +2081,55 @@ class BlockBrainBot(commands.Bot):
             print(f"         ❌ SKIP: Is already an HVA")
             return
 
-        # Personal Profile Filter
+        # Personal Profile Filter (bio/handle pre-check)
         is_personal, reason = self.is_personal_profile(account)
+        # For ambiguous profiles, inspect recent tweets before final decision.
+        timeline_tweets = None
+        tweet_text_blob = ""
+        if is_personal and reason == "no crypto context":
+            try:
+                timeline_tweets = await self.twitter.get_user_timeline(account.id, count=8)
+                parts = []
+                for t in (timeline_tweets or [])[:6]:
+                    tx = (getattr(t, "text", None) or getattr(t, "full_text", None) or "").strip()
+                    if tx:
+                        parts.append(tx)
+                tweet_text_blob = " ".join(parts)[:2500]
+            except Exception:
+                tweet_text_blob = ""
+            if tweet_text_blob:
+                is_personal, reason2 = self.is_personal_profile(account, extra_text=tweet_text_blob)
+                if not is_personal:
+                    print("         ✅ RESCUED by tweet context: looks like project")
+                else:
+                    reason = reason2 or reason
         if is_personal:
             print(f"         ❌ SKIP Personal: {reason}")
             return
 
+        age = self.get_account_age_days(account.created_at)
+
+        # Tweet-aware second pass for NEW accounts: catch personals that bio-only checks miss.
         is_new = database.is_project_new(account.id)
+        if is_new and age < config.SNIPER_MAX_AGE_DAYS:
+            if timeline_tweets is None:
+                try:
+                    timeline_tweets = await self.twitter.get_user_timeline(account.id, count=8)
+                except Exception:
+                    timeline_tweets = []
+            if not tweet_text_blob:
+                parts = []
+                for t in (timeline_tweets or [])[:6]:
+                    tx = (getattr(t, "text", None) or getattr(t, "full_text", None) or "").strip()
+                    if tx:
+                        parts.append(tx)
+                tweet_text_blob = " ".join(parts)[:2500]
+            if tweet_text_blob:
+                is_personal_tweet, tweet_reason = self.is_personal_profile(account, extra_text=tweet_text_blob)
+                if is_personal_tweet:
+                    print(f"         ❌ SKIP Personal (tweet context): {tweet_reason}")
+                    return
+
         is_new_follow = database.save_follow(account.id, hva_handle, interaction_type)
         if not is_new:
             database.update_project_followers_count(
@@ -2101,7 +2143,6 @@ class BlockBrainBot(commands.Bot):
                 print(f"         ✔ TRACKED: +1 Smart (Now: {database.get_posted_smarts(account.id)+1} HVAs)")
             else:
                 print(f"         ⏸️ TRACKED: Already recorded this follow")
-        age = self.get_account_age_days(account.created_at)
         
         # DISABLED: Sniper alerts now handled by age-based routing to prevent duplicates
         # if is_new and age < config.SNIPER_MAX_AGE_DAYS and age >= config.MAX_ACCOUNT_AGE_DAYS:
@@ -2118,7 +2159,7 @@ class BlockBrainBot(commands.Bot):
         ai_data = None
         if is_new and age < config.SNIPER_MAX_AGE_DAYS:
             print(f"      🤖 [AI] Analyzing @{account.screen_name}...")
-            tweets = await self.twitter.get_user_timeline(account.id, count=10)
+            tweets = timeline_tweets if timeline_tweets is not None else await self.twitter.get_user_timeline(account.id, count=10)
             ai_data = await self.ai.analyze_project(account, tweets)
             
             if ai_data:
