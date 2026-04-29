@@ -908,52 +908,135 @@ class TwitterClient:
                 return await self.get_hva_followers(user_id)
             return []
 
-    async def get_first_followers(self, user_id, limit=1000):
-        """Fetch ~1000 followers and return the OLDEST ones (last in the list)."""
-        if self.is_rate_limited: return None
+    async def _get_followers_via_followers_list(
+        self,
+        user_id: str | None,
+        screen_name: str | None,
+        limit: int,
+    ) -> tuple[list, bool]:
+        """
+        Fallback: REST 1.1 followers/list via twikit get_latest_followers.
+        Used when GraphQL Followers returns 404 or an empty graph (common after X API changes).
+        """
         session = await self._ensure_session()
-        if not session: return None
-        
-        all_followers = []
-        cursor = None
-        count_target = limit
-        
-        try:
-            while len(all_followers) < count_target:
-                # Fetch batch (twikit usually gives ~20-50 per call)
-                response = await session['client'].get_user_followers(user_id, count=100, cursor=cursor)
-                if not response: break
-                
-                batch = list(response)
-                all_followers.extend(batch)
-                
-                # Check pagination
-                if hasattr(response, 'next_cursor') and response.next_cursor:
-                    cursor = response.next_cursor
-                else:
-                    break # End of list
-                
-                import asyncio
-                await asyncio.sleep(1.5) # Gentle rate limit handling
+        if not session:
+            return [], True
+        client = session["client"]
+        if not hasattr(client, "get_latest_followers"):
+            return [], True
 
-            # If we hit the limit but didn't finish, we just take what we have.
-            # Twitter returns NEWEST first. So the limit cuts off the OLDEST.
-            # Wait, user wants FIRST followers.
-            # If account has 200 followers -> we get all 200. End is oldest.
-            # If account has 5000 followers -> we stop at 1000. 
-            # These 1000 are the NEWEST 1000. We unfortunately CANNOT reach the old ones without scrolling.
-            # SO: The logic "fetch 1000" only works for accounts with < 1000 followers.
-            # If len > limit, we return a warning flag.
-            
-            is_partial = len(all_followers) >= limit
+        uid = (str(user_id).strip() if user_id else "") or None
+        sn = (str(screen_name or "").strip().lstrip("@") if screen_name else "") or None
+        if not uid and not sn:
+            return [], True
+
+        all_followers: list = []
+        cursor = None
+        try:
+            while len(all_followers) < int(limit or 0):
+                page = min(200, max(1, int(limit) - len(all_followers)))
+                resp = await client.get_latest_followers(
+                    user_id=uid,
+                    screen_name=sn if not uid else None,
+                    count=page,
+                    cursor=cursor,
+                )
+                batch = list(resp)
+                if not batch:
+                    break
+                all_followers.extend(batch)
+                nc = getattr(resp, "next_cursor", None)
+                # Twitter: 0 / None ends pagination; non-zero cursors (often negative) continue.
+                if nc is None or nc == 0 or (isinstance(nc, str) and nc.strip() in ("", "0")):
+                    break
+                cursor = nc
+                await asyncio.sleep(1.2)
+
+            is_partial = len(all_followers) >= int(limit or 0) and int(limit or 0) > 0
+            if all_followers:
+                self._reset_soft_429(session)
             return all_followers, is_partial
-            
         except Exception as e:
             err_msg = str(e)
             if any(code in err_msg for code in ["429", "503", "403", "502", "504"]):
                 self._mark_session_blocked(err_msg)
-                # Retry once? No, expensive.
+            print(f"      WARN followers/list fallback: {err_msg[:220]}")
+            return all_followers, True
+
+    async def get_first_followers(self, user_id, limit=1000, screen_name: str | None = None):
+        """Fetch ~limit followers (newest-first from API) and return (list, is_partial).
+
+        GraphQL followers often 404s on X; we fall back to REST followers/list.
+        """
+        if self.is_rate_limited:
+            return None
+        session = await self._ensure_session()
+        if not session:
+            return None
+
+        uid_s = (str(user_id).strip() if user_id is not None else "") or None
+        sn_s = (str(screen_name).strip().lstrip("@") if screen_name else "") or None
+
+        all_followers: list = []
+        cursor = None
+        count_target = int(limit or 0) or 1000
+
+        def _should_try_v11_fallback(exc: BaseException | None, gql_rows: int) -> bool:
+            if gql_rows > 0:
+                return False
+            if exc is not None:
+                msg = str(exc).lower()
+                if "404" in msg or "not found" in msg or "status: 404" in msg:
+                    return True
+                if "graphql" in msg and ("errors" in msg or "failed" in msg):
+                    return True
+            return exc is None
+
+        if not uid_s:
+            fb, partial = await self._get_followers_via_followers_list(None, sn_s, count_target)
+            return fb, partial
+
+        try:
+            while len(all_followers) < count_target:
+                response = await session["client"].get_user_followers(
+                    uid_s, count=100, cursor=cursor
+                )
+                if not response:
+                    break
+
+                batch = list(response)
+                all_followers.extend(batch)
+
+                if hasattr(response, "next_cursor") and response.next_cursor:
+                    cursor = response.next_cursor
+                else:
+                    break
+
+                await asyncio.sleep(1.5)
+
+            is_partial = len(all_followers) >= count_target
+            if not all_followers and _should_try_v11_fallback(None, len(all_followers)):
+                fb, partial = await self._get_followers_via_followers_list(
+                    uid_s, sn_s, count_target
+                )
+                if fb:
+                    return fb, partial or (len(fb) >= count_target)
+
+            return all_followers, is_partial
+
+        except Exception as e:
+            err_msg = str(e)
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504"]):
+                self._mark_session_blocked(err_msg)
             print(f"      ERROR First followers error: {err_msg}")
+
+            if _should_try_v11_fallback(e, len(all_followers)):
+                fb, partial = await self._get_followers_via_followers_list(
+                    uid_s, sn_s, count_target
+                )
+                if fb:
+                    return fb, partial or (len(fb) >= count_target)
+
             return all_followers, True
 
 class AIAnalyzer:
@@ -1021,10 +1104,11 @@ class AIAnalyzer:
         Recent Tweets:
         {tweet_summary if tweet_summary else "NO TWEETS YET (Possibly a stealth launch or very early profile)"}
 
-        DECISION RULES (BE MORE LENIENT WITH EARLY PROJECTS):
+        DECISION RULES (BE MORE LENIENT WITH EARLY PROJECTS, BUT RESPECT TWEET EVIDENCE):
         1. POST (true): If it's a protocol, token, NFT collection, AI agent, infrastructure tool, gaming project, or anything that could be a Web3 initiative.
         2. POST (true): If the bio/handle suggests a project identity (even with 0 tweets) - examples: company names, product descriptions, .xyz/.com domains, official-looking handles.
         3. POST (true): If it mentions any Web3 keywords: DeFi, NFT, protocol, chain, network, DAO, dApp, mint, airdrop, testnet, mainnet, launch, building, ecosystem.
+        3b. SKIP (false): If the bio is empty/very short AND recent tweets clearly have nothing to do with Web3/crypto/projects (e.g. personal memes, movies, politics, generic life posts), you MUST set is_project to false. Do NOT infer Web3 relevance from who might follow them — only from this account's own bio, handle, and tweet text.
         4. SKIP (false): REJECT IMMEDIATELY if the summary/reasoning contains personal account indicators:
            - "associated with", "involvement in", "working with", "helping", "supporting", "advising"
            - "growth strategies", "marketing", "consultant", "advisor role"
@@ -1032,7 +1116,7 @@ class AIAnalyzer:
            - "potential involvement" (vague language = personal account)
         5. SKIP (false): If bio clearly states personal role: "founder of", "building at", "investor", "advisor", "content creator", "trader", "CT".
         6. SKIP (false): If the account is obviously engagement farming (asking for follows, generic spam, no clear project identity).
-        7. DEFAULT TO POST: When in doubt about NEW projects with minimal data, POST it. But ALWAYS reject consultants/advisors/marketers.
+        7. DEFAULT TO POST only when tweets/bio are ambiguous or empty (possible stealth). If tweets exist and are clearly non-crypto/non-project, SKIP. ALWAYS reject consultants/advisors/marketers.
 
         Examples of accounts to POST:
         - @LighterFluidxyz (Even with 0 tweets, the .xyz domain suggests a project)
@@ -1061,7 +1145,7 @@ class AIAnalyzer:
             response = await self.client.chat.completions.create(
                 model=config.AI_MODEL,
                 messages=[
-                    {"role": "system", "content": "You are the Velcor3 AI researcher. Your goal is to identify early, high-potential Web3 projects and filter out noise (personal accounts, engagement farmers, advisors). When in doubt, err on the side of posting - we prefer false positives (a few non-projects get through) over false negatives (missing real projects). Be especially lenient with brand-new accounts that have minimal tweets but show project indicators in their bio or handle."},
+                    {"role": "system", "content": "You are the Velcor3 AI researcher. Identify early Web3 projects and filter noise (personal accounts, engagement farmers, advisors). Prefer posting when data is missing (no tweets / stealth). If the bio is empty or generic and recent tweets are clearly unrelated to Web3 or a product launch, say is_project false — do not treat hypothetical follower interest as evidence."},
                     {"role": "user", "content": prompt}
                 ],
                 response_format={ "type": "json_object" }

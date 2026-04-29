@@ -56,6 +56,49 @@ try:
 except Exception:
     feed_events = None
 
+# Account-owned Web3 surface terms (avoid generic PROJECT_CATEGORIES words like "cat"/"world").
+_WEB3_OWN_SIGNAL_LONG = frozenset(
+    {
+        "solana",
+        "ethereum",
+        "bitcoin",
+        "blockchain",
+        "defi",
+        "airdrop",
+        "testnet",
+        "mainnet",
+        "protocol",
+        "liquidity",
+        "launchpad",
+        "whitelist",
+        "presale",
+        "staking",
+        "validator",
+        "rollup",
+        "launching",
+        "memecoin",
+        "web3",
+        "onchain",
+        "coinbase",
+        "metamask",
+        "opensea",
+        "uniswap",
+        "pancakeswap",
+        "minting",
+        "inscription",
+        "ordinals",
+        "dexscreener",
+        "dapp",
+        "airdrops",
+        "tokenomics",
+        "smart contract",
+        "contract address",
+    }
+)
+_WEB3_OWN_SIGNAL_SHORT = frozenset(
+    {"nft", "dao", "dex", "btc", "sol", "eth", "gm", "gn", "lfg", "wagmi", "degen"}
+)
+
 
 def _resolve_brand_assets():
     """Logo + banner for embeds: prefer project-root `banner.jpg`, then `v/banner.*`."""
@@ -387,7 +430,8 @@ class BlockBrainBot(commands.Bot):
         if not existing:
             print(f"📦 Initializing HVA list in database with {len(config.HVA_LIST)} accounts...")
             for hva in config.HVA_LIST:
-                database.add_hva(hva)
+                if not database.add_hva(hva):
+                    print(f"   ⚠️ Skipped blocklisted HVA seed: {hva}")
         else:
             print(f"📦 Loaded {len(existing)} HVAs from database.")
         
@@ -924,6 +968,27 @@ class BlockBrainBot(commands.Bot):
             return True, matched_ban
 
         return False, None
+
+    def account_has_own_web3_signal(self, account, tweet_blob: str = "") -> bool:
+        """True if name, handle, bio, or tweets show Web3/project surface text (not follow-graph only)."""
+        name = str(getattr(account, "name", "") or "")
+        handle = str(getattr(account, "screen_name", "") or "")
+        bio = str(getattr(account, "description", "") or "")
+        blob = f"{name}\n{handle}\n{bio}\n{tweet_blob or ''}".lower()
+        hl = handle.lower()
+        if re.search(r"\.(xyz|fun|io|app|art|link|defi)\b", hl):
+            return True
+        if re.search(r"0x[a-f0-9]{8,}", blob):
+            return True
+        if "$" in blob:
+            return True
+        for kw in _WEB3_OWN_SIGNAL_LONG:
+            if kw in blob:
+                return True
+        for kw in _WEB3_OWN_SIGNAL_SHORT:
+            if re.search(rf"\b{re.escape(kw)}\b", blob):
+                return True
+        return False
 
     async def on_command(self, ctx):
         print(f"{self._get_log_prefix()} 🤖 [COMMAND] {ctx.author}: {ctx.message.content}")
@@ -2147,6 +2212,29 @@ class BlockBrainBot(commands.Bot):
                     print(f"         ❌ SKIP Personal (tweet context): {tweet_reason}")
                     return
 
+        # Short bio: require Web3/project wording from the account itself (not only who followed them).
+        strict_len = int(getattr(config, "STRICT_WEB3_SIGNAL_MIN_BIO_LEN", 24) or 24)
+        if strict_len > 0 and is_new and age < config.SNIPER_MAX_AGE_DAYS:
+            bio_stripped = (getattr(account, "description", None) or "").strip()
+            if len(bio_stripped) < strict_len:
+                if timeline_tweets is None:
+                    try:
+                        timeline_tweets = await self.twitter.get_user_timeline(account.id, count=10)
+                    except Exception:
+                        timeline_tweets = []
+                parts_gate = []
+                for t in (timeline_tweets or [])[:8]:
+                    tx = (getattr(t, "text", None) or getattr(t, "full_text", None) or "").strip()
+                    if tx:
+                        parts_gate.append(tx)
+                blob_gate = " ".join(parts_gate)
+                if blob_gate.strip() and not self.account_has_own_web3_signal(account, blob_gate):
+                    print(
+                        f"         ❌ SKIP: bio shorter than {strict_len} chars and recent tweets "
+                        f"show no Web3/project terms (smart-follow signal alone is not enough)"
+                    )
+                    return
+
         is_new_follow = database.save_follow(account.id, hva_handle, interaction_type)
         if not is_new:
             database.update_project_followers_count(
@@ -2380,87 +2468,110 @@ class BlockBrainBot(commands.Bot):
                 if age < config.SNIPER_MAX_AGE_DAYS:
                     # Escalation requires: 1+ HVAs (catch early signals)
                     if num_hvas >= 1:
-                        # Check for velocity (🔥 HOT PROJECT)
-                        is_velocity = self.check_velocity(account.id)
-                        if is_velocity:
-                            print(f"{self._get_log_prefix()} 🔥 [VELOCITY ALERT!] @{account.screen_name} has {config.VELOCITY_THRESHOLD}+ HVAs in {config.VELOCITY_WINDOW_HOURS}h!")
-                        
-                        # Leaderboard-only channel (ESCALATION_DAILY_TOP_MOVERS_CHANNEL_ID) gets the daily
-                        # smart-follow top list only — never live Medium/Strong signal embeds.
-                        _lb_cid = config.ESCALATION_DAILY_TOP_MOVERS_CHANNEL_ID
-                        targets = [
-                            ch
-                            for ch in (self.active_escalation_channels or [])
-                            if not _lb_cid or ch.id != _lb_cid
-                        ]
-                        res = self.create_embed(account, hva_handle, interaction_type, is_escalation=True, is_velocity=is_velocity, ai_data=ai_data)
-                        
-                        sent_any = False
-                        _first_sent_ch = None
-                        _first_sent_emb0 = None
-                        for ch in targets:
-                            try:
-                                res = self.create_embed(account, hva_handle, interaction_type, is_escalation=True, is_velocity=is_velocity, ai_data=ai_data)
-                                files = []
-                                lf = self.brand_logo_file()
-                                if lf:
-                                    files.append(lf)
-                                
-                                if isinstance(res, tuple):
-                                    files.append(res[1]) # The banner.jpg
-                                    emb0, files = self._with_brand_banner_fallback(res[0], files)
-                                    await ch.send(embed=emb0, files=files)
-                                else:
-                                    emb0, files = self._with_brand_banner_fallback(res, files)
-                                    await ch.send(embed=emb0, files=files) if files else await ch.send(embed=emb0)
-                                sent_any = True
-                                if _first_sent_ch is None:
-                                    _first_sent_ch = ch
-                                    _first_sent_emb0 = emb0
-                            except Exception as e:
-                                print(f"      ❌ Failed to send escalation alert: {e}")
-                        
-                        if sent_any:
-                            if feed_events is not None:
+                        skip_escalation_discord = False
+                        _strict = int(getattr(config, "STRICT_WEB3_SIGNAL_MIN_BIO_LEN", 24) or 24)
+                        if _strict > 0:
+                            _bio_s = (getattr(account, "description", None) or "").strip()
+                            if len(_bio_s) < _strict:
                                 try:
-                                    _ch = _first_sent_ch or (targets[0] if targets else None)
-                                    embed_payload = {}
-                                    try:
-                                        embed_payload = _first_sent_emb0.to_dict() if _first_sent_emb0 else {}
-                                    except Exception:
-                                        embed_payload = {}
-                                    pfp = (
-                                        getattr(account, "profile_image_url_https", None)
-                                        or getattr(account, "profile_image_url", None)
-                                        or ""
-                                    )
-                                    ban = getattr(account, "profile_banner_url", None) or ""
-                                    feed_events.add_event(
-                                        kind="escalation",
-                                        guild_id=int(getattr(getattr(_ch, "guild", None), "id", 0) or 0),
-                                        channel_id=int(getattr(_ch, "id", 0) or 0),
-                                        title=f"@{account.screen_name} · Escalation",
-                                        body=(
-                                            (ai_data.get("summary") if isinstance(ai_data, dict) else "")
-                                            or (account.description or "")
-                                        )[:1500],
-                                        url=f"https://x.com/{account.screen_name}",
-                                        extra={
-                                            "handle": account.screen_name,
-                                            "age_days": int(age) if isinstance(age, (int, float)) else None,
-                                            "followers": int(getattr(account, "followers_count", 0) or 0),
-                                            "hva": str(hva_handle or ""),
-                                            "hva_count": int(num_hvas or 0),
-                                            "interaction": str(interaction_type or ""),
-                                            "pfp_url": str(pfp or ""),
-                                            "banner_url": str(ban or ""),
-                                            "embed": embed_payload,
-                                        },
-                                    )
+                                    _esc_tw = await self.twitter.get_user_timeline(account.id, count=10)
                                 except Exception:
-                                    pass
-                            database.mark_alerted(account.id) # Ensure it now shows in stats/trending
-                            print(f"      ✅ ESCALATION SENT: Alerted to escalation channel (HVAs: {num_hvas})")
+                                    _esc_tw = []
+                                _esc_parts = []
+                                for _t in (_esc_tw or [])[:8]:
+                                    _tx = (getattr(_t, "text", None) or getattr(_t, "full_text", None) or "").strip()
+                                    if _tx:
+                                        _esc_parts.append(_tx)
+                                _esc_blob = " ".join(_esc_parts)
+                                if _esc_blob.strip() and not self.account_has_own_web3_signal(account, _esc_blob):
+                                    skip_escalation_discord = True
+                                    print(
+                                        f"      ⏭️ SKIP escalation Discord: bio < {_strict} chars and tweets "
+                                        f"lack Web3/project terms (@{account.screen_name})"
+                                    )
+
+                        if not skip_escalation_discord:
+                            # Check for velocity (🔥 HOT PROJECT)
+                            is_velocity = self.check_velocity(account.id)
+                            if is_velocity:
+                                print(f"{self._get_log_prefix()} 🔥 [VELOCITY ALERT!] @{account.screen_name} has {config.VELOCITY_THRESHOLD}+ HVAs in {config.VELOCITY_WINDOW_HOURS}h!")
+                            
+                            # Leaderboard-only channel (ESCALATION_DAILY_TOP_MOVERS_CHANNEL_ID) gets the daily
+                            # smart-follow top list only — never live Medium/Strong signal embeds.
+                            _lb_cid = config.ESCALATION_DAILY_TOP_MOVERS_CHANNEL_ID
+                            targets = [
+                                ch
+                                for ch in (self.active_escalation_channels or [])
+                                if not _lb_cid or ch.id != _lb_cid
+                            ]
+                            res = self.create_embed(account, hva_handle, interaction_type, is_escalation=True, is_velocity=is_velocity, ai_data=ai_data)
+                            
+                            sent_any = False
+                            _first_sent_ch = None
+                            _first_sent_emb0 = None
+                            for ch in targets:
+                                try:
+                                    res = self.create_embed(account, hva_handle, interaction_type, is_escalation=True, is_velocity=is_velocity, ai_data=ai_data)
+                                    files = []
+                                    lf = self.brand_logo_file()
+                                    if lf:
+                                        files.append(lf)
+                                    
+                                    if isinstance(res, tuple):
+                                        files.append(res[1]) # The banner.jpg
+                                        emb0, files = self._with_brand_banner_fallback(res[0], files)
+                                        await ch.send(embed=emb0, files=files)
+                                    else:
+                                        emb0, files = self._with_brand_banner_fallback(res, files)
+                                        await ch.send(embed=emb0, files=files) if files else await ch.send(embed=emb0)
+                                    sent_any = True
+                                    if _first_sent_ch is None:
+                                        _first_sent_ch = ch
+                                        _first_sent_emb0 = emb0
+                                except Exception as e:
+                                    print(f"      ❌ Failed to send escalation alert: {e}")
+                            
+                            if sent_any:
+                                if feed_events is not None:
+                                    try:
+                                        _ch = _first_sent_ch or (targets[0] if targets else None)
+                                        embed_payload = {}
+                                        try:
+                                            embed_payload = _first_sent_emb0.to_dict() if _first_sent_emb0 else {}
+                                        except Exception:
+                                            embed_payload = {}
+                                        pfp = (
+                                            getattr(account, "profile_image_url_https", None)
+                                            or getattr(account, "profile_image_url", None)
+                                            or ""
+                                        )
+                                        ban = getattr(account, "profile_banner_url", None) or ""
+                                        feed_events.add_event(
+                                            kind="escalation",
+                                            guild_id=int(getattr(getattr(_ch, "guild", None), "id", 0) or 0),
+                                            channel_id=int(getattr(_ch, "id", 0) or 0),
+                                            title=f"@{account.screen_name} · Escalation",
+                                            body=(
+                                                (ai_data.get("summary") if isinstance(ai_data, dict) else "")
+                                                or (account.description or "")
+                                            )[:1500],
+                                            url=f"https://x.com/{account.screen_name}",
+                                            extra={
+                                                "handle": account.screen_name,
+                                                "age_days": int(age) if isinstance(age, (int, float)) else None,
+                                                "followers": int(getattr(account, "followers_count", 0) or 0),
+                                                "hva": str(hva_handle or ""),
+                                                "hva_count": int(num_hvas or 0),
+                                                "interaction": str(interaction_type or ""),
+                                                "pfp_url": str(pfp or ""),
+                                                "banner_url": str(ban or ""),
+                                                "embed": embed_payload,
+                                            },
+                                        )
+                                    except Exception:
+                                        pass
+                                database.mark_alerted(account.id) # Ensure it now shows in stats/trending
+                                print(f"      ✅ ESCALATION SENT: Alerted to escalation channel (HVAs: {num_hvas})")
                     else:
                         # This should never happen (num_hvas >= 1 always true if we're here)
                         print(f"      ⚠️ LOGIC ERROR: num_hvas={num_hvas} (should be >= 1)")
@@ -2655,7 +2766,11 @@ class BrainCommands(commands.Cog):
     @commands.command(name="add_hva")
     async def add_hva_cmd(self, ctx, handle: str):
         handle = handle.replace("@", "").strip()
-        database.add_hva(handle)
+        if not database.add_hva(handle):
+            return await ctx.send(
+                f"❌ **@{handle}** is blocklisted and cannot be added to the hunter fleet.",
+                delete_after=20,
+            )
         await ctx.send(f"✅ **@{handle}** added to tracking list!")
 
     @commands.command(name="remove_hva")
@@ -2847,7 +2962,9 @@ class BrainCommands(commands.Cog):
         await ctx.send(f"🔍 Analyzing first followers for @{handle}...")
         try:
             uid = await self.bot.twitter.get_user_id(handle)
-            fols, _ = await self.bot.twitter.get_first_followers(uid, limit=100)
+            fols, _ = await self.bot.twitter.get_first_followers(
+                uid, limit=100, screen_name=handle
+            )
             if not fols: return await ctx.send("❌ No followers found.")
             res = "\n".join([f"{i+1}. @{u.screen_name}" for i, u in enumerate(reversed(fols[:20]))])
             await self._send_brand_embed(ctx, self.bot._create_premium_embed(f"🌱 Early Followers: @{handle}", description=res))

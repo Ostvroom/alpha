@@ -2076,8 +2076,9 @@ async def api_reuse_first_followers(request: Request, body: ReuseLookupRequest):
         raise HTTPException(404, "Handle not found or Twitter session unavailable")
 
     user_id = str(getattr(user, "id", "") or "")
+    target_sn = str(getattr(user, "screen_name", "") or handle)
     followers_count = int(getattr(user, "followers_count", 0) or 0)
-    fetched = await tw.get_first_followers(user_id, limit=1000)
+    fetched = await tw.get_first_followers(user_id, limit=1000, screen_name=target_sn)
     rows, is_partial = fetched if isinstance(fetched, tuple) else ([], True)
     arr = list(rows or [])
     oldest_window = arr[-10:] if len(arr) > 10 else arr
@@ -2108,7 +2109,8 @@ async def api_reuse_first_followers(request: Request, body: ReuseLookupRequest):
         "is_partial": bool(is_partial or followers_count > 1000),
         "note": (
             "First followers are best-effort from fetched follower window. "
-            "For very large accounts, Twitter pagination can hide true earliest followers."
+            "For very large accounts, Twitter pagination can hide true earliest followers. "
+            "If the list is empty, the profile may hide followers or the live session may be blocked."
         ),
     }
     _REUSE_CACHE[cache_key] = (now, payload)

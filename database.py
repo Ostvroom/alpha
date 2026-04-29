@@ -154,6 +154,20 @@ def init_db():
     except Exception:
         pass
 
+    # Remove blocklisted HVAs from hva_stats (handles config/DB drift after edits to HVA_LIST).
+    try:
+        import config
+
+        block = {
+            str(h).strip().lower()
+            for h in (getattr(config, "HVA_BLOCKLIST", None) or [])
+            if str(h).strip()
+        }
+        for h in block:
+            cursor.execute("DELETE FROM hva_stats WHERE hva_handle = ?", (h,))
+    except Exception:
+        pass
+
     conn.commit()
     conn.close()
 
@@ -850,6 +864,19 @@ def get_trending_projects_30d(limit: int = 30):
 # HVA STATS FUNCTIONS (Priority Scanning & Delta Detection)
 # ═══════════════════════════════════════════════════════════════
 
+def _hva_blocklist_lower():
+    try:
+        import config
+
+        return {
+            str(h).strip().lower()
+            for h in (getattr(config, "HVA_BLOCKLIST", None) or [])
+            if str(h).strip()
+        }
+    except Exception:
+        return set()
+
+
 def increment_hva_discovery(hva_handle):
     """Increment discovery count for an HVA (for priority ranking)."""
     conn = sqlite3.connect(DB_PATH)
@@ -888,12 +915,20 @@ def get_hva_priority_list():
     
     data = cursor.fetchall()
     conn.close()
-    
+
+    block = _hva_blocklist_lower()
+    if block:
+        data = [row for row in data if row[0].lower() not in block]
+
     if not data:
         # Fallback to config list if DB is empty
         import config
-        return config.HVA_LIST
-    
+
+        cfg_list = list(config.HVA_LIST or [])
+        if block:
+            cfg_list = [h for h in cfg_list if str(h).strip().lower() not in block]
+        return cfg_list
+
     # Initialize tier buckets
     tier1_never_scanned = []      # Never scanned (highest priority)
     tier2_elite = []               # 5+ discoveries
@@ -960,15 +995,19 @@ def get_hva_priority_list():
     return final_list
 
 def add_hva(handle):
-    """Add a new HVA to tracking."""
+    """Add a new HVA to tracking. Returns False if handle is on HVA_BLOCKLIST."""
+    h = str(handle).replace("@", "").strip().lower()
+    if not h or h in _hva_blocklist_lower():
+        return False
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO hva_stats (hva_handle, status) VALUES (?, 'Active')
         ON CONFLICT(hva_handle) DO UPDATE SET status = 'Active'
-    """, (handle.lower(),))
+    """, (h,))
     conn.commit()
     conn.close()
+    return True
 
 def remove_hva(handle):
     """Optionally set status to Dead or actually delete. Let's delete for this command."""

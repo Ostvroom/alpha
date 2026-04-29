@@ -85,6 +85,11 @@ SNIPER_CHANNEL_ID = parse_channel_ids("OLDER_ACCS_CHANNEL_ID")[0] if parse_chann
 SNIPER_MAX_AGE_DAYS = 130
 SNIPER_MAX_TWEETS = 4
 
+# If bio is shorter than this (characters), Discord discovery + escalation require obvious
+# Web3/project terms in the account name, handle, bio, or recent tweets (not smart-follows alone).
+# Set to 0 to disable this gate.
+STRICT_WEB3_SIGNAL_MIN_BIO_LEN = 24
+
 # Consolidated list used by bot main loops
 MAIN_CHANNELS = list(set(DISCORD_CHANNEL_IDS + TRENDING_CHANNEL_IDS + ESCALATION_CHANNEL_IDS + NEW_PROJECTS_CHANNEL_IDS + ESTABLISHED_PROJECTS_CHANNEL_IDS))
 
@@ -213,6 +218,12 @@ HVA_LIST = [
     "CloutedMind", "zjbrenner", "CryptoGorilla", "AvgJoesCrypto", "momochenming",
     "ssheyii", "erichsu_eth", "ItsWolfsRain", "Totinhiiio", "Chidiebere69",
     "aditya_web3_", "kikiviell"
+]
+
+# Handles removed from HVA_LIST but still present in SQLite `hva_stats` are otherwise
+# scanned forever. Entries here are deleted from `hva_stats` on startup and excluded from scans.
+HVA_BLOCKLIST = [
+    "ferreweb3",
 ]
 
 # Twitter Client Settings
