@@ -114,6 +114,7 @@
       overflow: hidden; display: flex; align-items: center; justify-content: center;
     }
     .tok-av img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    /* ── Token avatar placeholder ── */
     .tok-av-placeholder { font-family: "JetBrains Mono", monospace; font-size: 13px; font-weight: 700; color: rgba(255,204,0,.55); }
     .tok-names { min-width: 0; }
     .tok-ticker {
@@ -364,6 +365,26 @@
   <script>
     /* ── Helpers ── */
     function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;").replace(/'/g,"&#39;");}
+
+    /* Image fallback cascade: dex CDN → Raydium (SOL only) → letter placeholder */
+    function imgFallback(img, mint, chain, ticker){
+      var tried = parseInt(img.dataset.tried||"0", 10);
+      img.dataset.tried = tried + 1;
+      var chainMap = {sol:"solana", eth:"ethereum", base:"base"};
+      var ds = chainMap[chain]||"solana";
+      var fallbacks = [
+        "https://dd.dexscreener.com/ds-data/tokens/"+ds+"/"+mint+".png",
+      ];
+      if(chain==="sol"||!chain) fallbacks.push("https://img.raydium.io/icon/"+mint+".png");
+      if(tried < fallbacks.length){
+        img.src = fallbacks[tried];
+      } else {
+        var ph = document.createElement("span");
+        ph.className = "tok-av-placeholder";
+        ph.textContent = String(ticker||"?").slice(0,2).toUpperCase();
+        if(img.parentNode) img.parentNode.replaceChild(ph, img);
+      }
+    }
     function _pad2(n){n=Number(n||0);return n<10?("0"+n):(""+n);}
     function _parseDate(v){
       try{
@@ -465,8 +486,10 @@
         var siCls = sinceClass(r.since_x);
 
         var avHtml = av
-          ? '<img src="'+esc(av)+'" loading="lazy" alt="" />'
-          : '<span class="tok-av-placeholder">'+esc(ticker.slice(0,2).toUpperCase())+'</span>';
+          ? '<img src="'+esc(av)+'" loading="lazy" alt="" onerror="imgFallback(this,\''+esc(r.mint||'')+'\',\''+esc(chain)+'\',\''+esc(ticker)+'\')" />'
+          : (r.mint
+              ? '<img src="https://dd.dexscreener.com/ds-data/tokens/'+(chain==="eth"?"ethereum":chain==="base"?"base":"solana")+'/'+esc(r.mint)+'.png" loading="lazy" alt="" onerror="imgFallback(this,\''+esc(r.mint||'')+'\',\''+esc(chain)+'\',\''+esc(ticker)+'\')" />'
+              : '<span class="tok-av-placeholder">'+esc(ticker.slice(0,2).toUpperCase())+'</span>');
 
         html += '<div class="tok'+(_isNew?' is-new':'')+'">'; // open
 

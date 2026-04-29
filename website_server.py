@@ -547,6 +547,7 @@ async def _thumb_url_cached(
     ttl_sec: float = 3600.0,
     *,
     allow_network_lookup: bool = True,
+    chain: str = "sol",
 ) -> str:
     if not mint:
         return ""
@@ -556,11 +557,12 @@ async def _thumb_url_cached(
         ts, url = hit
         if now - ts <= float(ttl_sec):
             return url or ""
-    # Deterministic fallback (no extra HTTP): Dexscreener CDN icon for Solana mints.
-    # Even if it 404s for some tokens, the browser will handle it and we avoid blocking the server.
-    dex_cdn = f"https://dd.dexscreener.com/ds-data/tokens/solana/{mint}.png"
+    # Chain-correct Dexscreener CDN URL (SOL/ETH/BASE)
+    _chain_map = {"sol": "solana", "eth": "ethereum", "base": "base"}
+    ds_chain = _chain_map.get(chain, "solana")
+    dex_cdn = f"https://dd.dexscreener.com/ds-data/tokens/{ds_chain}/{mint}.png"
     # Prefer URL already in payload (free)
-    for k in ("logo", "iconUrl", "image", "tokenImage", "icon_url", "imageUrl", "thumb_url"):
+    for k in ("logo", "iconUrl", "image", "tokenImage", "icon_url", "imageUrl", "thumb_url", "logoURI"):
         v = (item or {}).get(k)
         if v and isinstance(v, str) and v.startswith("http"):
             _THUMB_CACHE[mint] = (now, v)
@@ -573,7 +575,6 @@ async def _thumb_url_cached(
     except Exception:
         url = None
     u = str(url or "").strip()
-    # Avoid caching empty forever; use a short TTL for failures.
     if not u:
         _THUMB_CACHE[mint] = (now - (float(ttl_sec) - 45.0), dex_cdn)  # expires in ~45s
         return dex_cdn
@@ -2613,14 +2614,12 @@ async def api_kol_dashboard(
                 chart = _chain_chart_url(chain, mint)
                 token_x = str(it.get("twitter_url") or it.get("twitterUrl") or "")
                 token_site = str(it.get("website_url") or it.get("websiteUrl") or "")
-                thumb_url = (
-                    await _thumb_url_cached(session, it, mint, allow_network_lookup=False)
-                    if mint else ""
-                )
 
                 bucket = _dashboard_bucket_by_call_mc(latest_call_mc, low_max, mid_max)
                 staged[bucket].append((latest_dt, {
                     "mint": mint,
+                    "_it": it,        # kept temporarily for parallel thumb fetch
+                    "_chain": chain,  # kept temporarily for parallel thumb fetch
                     "ticker": kolfi._item_ticker(it),  # type: ignore[attr-defined]
                     "chain": chain,
                     "call_ts": str(latest_call.get("messageTs") or "").strip(),
@@ -2636,8 +2635,29 @@ async def api_kol_dashboard(
                     "dex_url": dex,
                     "token_x_url": token_x,
                     "token_site_url": token_site,
-                    "thumb_url": thumb_url,
+                    "thumb_url": "",  # filled in after parallel fetch below
                 }))
+
+            # ── Parallel thumbnail fetch (semaphore-capped to avoid hammering CDN) ──
+            _sem = asyncio.Semaphore(12)
+
+            async def _fetch_thumb(row: dict) -> None:
+                _mint = row.get("mint", "")
+                _it   = row.pop("_it", {})
+                _ch   = row.pop("_chain", "sol")
+                if not _mint:
+                    return
+                async with _sem:
+                    try:
+                        row["thumb_url"] = await _thumb_url_cached(
+                            session, _it, _mint, allow_network_lookup=True, chain=_ch,
+                        )
+                    except Exception:
+                        pass
+
+            all_rows = [r for bucket_list in staged.values() for _, r in bucket_list]
+            await asyncio.gather(*[_fetch_thumb(r) for r in all_rows], return_exceptions=True)
+            # ── End parallel thumbnail fetch ──
 
             buckets_out = {"low": [], "100k": [], "1m": []}
             for key in ("low", "100k", "1m"):
