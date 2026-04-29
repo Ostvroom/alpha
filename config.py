@@ -207,7 +207,12 @@ HVA_LIST = [
     # Added HVAs
     , "Amordeev", "xmartsol", "tenacious_ar", "seeyaarar", "0xJeeya",
     "Labosssxxf", "living_stone696", "XBukkyExplorer", "ChessDaoo", "stake_mm",
-    "StormFrens", "FerreWeb3", "sigmadaoo", "weingfo", "jayjaynft4", "GuarEmperor"
+    "StormFrens", "sigmadaoo", "weingfo", "jayjaynft4", "GuarEmperor",
+    "Jampzey", "CrypSaf", "SOLPlayboy", "Potterplays1", "thejasich",
+    "ImGroot66", "0xmmu", "zacxbt", "AzFlin", "frans6cur",
+    "CloutedMind", "zjbrenner", "CryptoGorilla", "AvgJoesCrypto", "momochenming",
+    "ssheyii", "erichsu_eth", "ItsWolfsRain", "Totinhiiio", "Chidiebere69",
+    "aditya_web3_", "kikiviell"
 ]
 
 # Twitter Client Settings
