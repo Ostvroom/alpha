@@ -3002,6 +3002,13 @@ async def api_feed_event(request: Request, event_id: int):
                         "hvas_7d": int(sf_v2.get("hvas_7d") or 0),
                         "hvas_30d": int(sf_v2.get("hvas_30d") or 0),
                     }
+                    # Structured project fields for rich UI rendering
+                    extra["name"] = str(row[2] or "")
+                    extra["category"] = str(row[6] or "")
+                    extra["summary"] = str(row[7] or row[3] or "")
+                    extra["created_at"] = str(row[4] or "")
+                    score_val, _ = _calculate_discord_style_project_score(pid)
+                    extra["score"] = int(min(100, max(0, score_val)))
                     ev["extra"] = extra
     except Exception:
         pass

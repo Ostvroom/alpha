@@ -8,34 +8,33 @@
   <link rel="icon" href="/logo.png" type="image/png" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background:#090909; color:#f0e8c0; font-family: Inter, system-ui, sans-serif; }
-    a { color: inherit; text-decoration: none; }
-    .wrap { width: min(980px, 100%); margin: 0 auto; padding: 22px; }
-    .top { display:flex; align-items:center; justify-content:space-between; gap:12px; }
-    .brand { display:flex; align-items:center; gap:10px; }
-    .brand img { width:30px; height:30px; border:1px solid rgba(255,204,0,.30); border-radius:6px; }
-    .brand span { font-family: "JetBrains Mono", monospace; letter-spacing:.14em; text-transform:uppercase; color:#ffcc00; font-weight:700; font-size:12px; }
-    .btn { font-family:"JetBrains Mono", monospace; font-size:11px; letter-spacing:.12em; text-transform:uppercase;
-      padding:10px 12px; border-radius:8px; border:1px solid rgba(255,204,0,.25); color:rgba(240,232,192,.80); }
-    .btn:hover { border-color: rgba(255,204,0,.45); color:#ffcc00; }
-    .card { margin-top:18px; border:1px solid rgba(255,204,0,.18); border-radius:14px; overflow:hidden; background:rgba(9,9,9,.7); }
-    .card-top { display:flex; gap:14px; padding:14px; border-bottom:1px solid rgba(255,204,0,.12); align-items:flex-start; }
-    .pfp { width:56px; height:56px; border-radius:12px; object-fit:cover; border:1px solid rgba(255,204,0,.25); background:#0b0b0d; }
-    .h1 { font-weight:800; color:#ffcc00; font-size:18px; line-height:1.2; }
-    .meta { margin-top:6px; font-family:"JetBrains Mono", monospace; font-size:11px; color:rgba(240,232,192,.55); }
-    .banner { width:100%; height:220px; object-fit:cover; background:#0b0b0d; }
-    .body { padding:14px; font-size:14px; line-height:1.45; color:rgba(240,232,192,.86); white-space:pre-wrap; }
-    .fields { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:10px; padding:14px; border-top:1px solid rgba(255,204,0,.10); }
-    .fields .field { border:1px solid rgba(255,204,0,.12); border-radius:12px; padding:10px 12px; background:rgba(0,0,0,.18); }
-    .fields .field.full { grid-column: 1 / -1; }
-    .fields .k { font-family:"JetBrains Mono", monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:rgba(240,232,192,.55); }
-    .fields .v { margin-top:6px; font-size:13px; color:rgba(240,232,192,.82); overflow-wrap:anywhere; white-space:pre-wrap; }
-    .kv { display:none; }
-    .kv div { border:1px solid rgba(255,204,0,.12); border-radius:12px; padding:10px 12px; background:rgba(0,0,0,.18); }
-    .k { font-family:"JetBrains Mono", monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:rgba(240,232,192,.55); }
-    .v { margin-top:6px; font-size:13px; color:rgba(240,232,192,.82); overflow-wrap:anywhere; }
-    .err { margin-top:14px; font-family:"JetBrains Mono", monospace; font-size:12px; color: rgba(255,120,120,.9); }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{background:#090909;color:#f0e8c0;font-family:Inter,system-ui,sans-serif}
+    a{color:inherit;text-decoration:none}
+    .wrap{width:min(980px,100%);margin:0 auto;padding:22px}
+    .top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .brand{display:flex;align-items:center;gap:10px}
+    .brand img{width:30px;height:30px;border:1px solid rgba(255,204,0,.30);border-radius:6px}
+    .brand span{font-family:"JetBrains Mono",monospace;letter-spacing:.14em;text-transform:uppercase;color:#ffcc00;font-weight:700;font-size:12px}
+    .btn{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,204,0,.25);color:rgba(240,232,192,.80)}
+    .btn:hover{border-color:rgba(255,204,0,.45);color:#ffcc00}
+    .card{margin-top:18px;border:1px solid rgba(255,204,0,.18);border-radius:14px;overflow:hidden;background:rgba(9,9,9,.7)}
+    .head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:14px;border-bottom:1px solid rgba(255,204,0,.12)}
+    .headL{display:flex;gap:12px;align-items:flex-start}
+    .pfp{width:56px;height:56px;border-radius:12px;object-fit:cover;border:1px solid rgba(255,204,0,.25);background:#0b0b0d}
+    .h1{font-weight:800;color:#ffcc00;font-size:20px}
+    .meta{margin-top:6px;font-family:"JetBrains Mono",monospace;font-size:11px;color:rgba(240,232,192,.55)}
+    .banner{width:100%;height:220px;object-fit:cover;background:#0b0b0d;display:none}
+    .body{padding:14px;font-size:14px;line-height:1.45;color:rgba(240,232,192,.86);white-space:pre-wrap;border-bottom:1px solid rgba(255,204,0,.10)}
+    .section{margin:0 14px 12px;border:1px solid rgba(255,204,0,.12);border-radius:12px;padding:10px 12px;background:rgba(0,0,0,.18)}
+    .chips{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
+    .badge{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:999px;font-family:"JetBrains Mono",monospace;font-size:10px;border:1px solid rgba(255,204,0,.12);background:rgba(255,204,0,.08);color:rgba(240,232,192,.88)}
+    .badge b{font-weight:800;color:#ffcc00}
+    .bar{margin-top:8px;height:10px;border:1px solid rgba(255,204,0,.2);border-radius:999px;overflow:hidden;background:rgba(0,0,0,.22)}
+    .bar > i{display:block;height:100%;background:linear-gradient(90deg, rgba(255,240,190,.95), rgba(255,204,0,.75))}
+    .k{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:rgba(240,232,192,.55)}
+    .v{margin-top:6px;font-size:13px;color:rgba(240,232,192,.82);overflow-wrap:anywhere}
+    .err{margin-top:14px;font-family:"JetBrains Mono",monospace;font-size:12px;color:rgba(255,120,120,.9)}
   </style>
 </head>
 <body>
@@ -45,22 +44,28 @@
         <img src="/logo.png" alt="Nerds Alpha" />
         <span>Nerds Alpha · Alert</span>
       </a>
-      <a class="btn" id="btnBack" href="/projects">Back</a>
+      <div style="display:flex;gap:8px;">
+        <a class="btn" id="xBtn" href="#" target="_blank" rel="noreferrer" style="display:none;">Open Source</a>
+        <a class="btn" id="backBtn" href="/projects">Back</a>
+      </div>
     </div>
 
     <div class="card" id="card" style="display:none;">
-      <div class="card-top">
-        <img id="pfp" class="pfp" alt="" />
-        <div style="flex:1; min-width:0;">
-          <div class="h1" id="title"></div>
-          <div class="meta" id="meta"></div>
+      <div class="head">
+        <div class="headL">
+          <img id="pfp" class="pfp" alt="" style="display:none;" />
+          <div>
+            <div class="h1" id="title"></div>
+            <div class="meta" id="meta"></div>
+          </div>
         </div>
-        <a class="btn" id="sourceLink" href="#" target="_blank" rel="noreferrer" style="display:none;">Open Source</a>
       </div>
-      <img id="banner" class="banner" alt="" style="display:none;" />
-      <div class="body" id="body"></div>
-      <div class="fields" id="fields" style="display:none;"></div>
-      <div class="kv" id="kv"></div>
+      <img id="banner" class="banner" alt="" />
+      <div class="body" id="summary"></div>
+      <div class="section" id="profileSec" style="display:none;"></div>
+      <div class="section" id="scoreSec" style="display:none;"></div>
+      <div class="section" id="researchSec" style="display:none;"></div>
+      <div class="section" id="followersSec" style="display:none;"></div>
     </div>
 
     <div class="err" id="err" style="display:none;"></div>
@@ -73,217 +78,194 @@
       return m ? parseInt(m[1], 10) : 0;
     }
     function fmtTime(iso){
-      try { var d=new Date(iso); if(!isNaN(d.getTime())) return d.toLocaleString(); } catch(e){}
+      try{var d=new Date(iso);if(!isNaN(d.getTime())) return d.toLocaleString();}catch(e){}
       return iso||"";
     }
-    function pickImg(extra, keys){
-      if(!extra) return "";
-      for (var i=0;i<keys.length;i++){
-        var v = extra[keys[i]];
-        if (v && String(v).trim()) return String(v).trim();
-      }
-      return "";
+    function fmtFollowers(n){var v=Number(n);if(!isFinite(v)) return "—";return v.toLocaleString();}
+    function ageFromDays(days){
+      var d=Number(days);
+      if(!isFinite(d)||d<0) return "—";
+      return Math.floor(d)+" days ago";
     }
-    function stripAnsi(s){
-      return String(s||"").replace(/\u001b\[[0-9;]*m/g, "");
+    function scoreStatus(s){
+      var n=Number(s||0);
+      if(n>=70) return "Strong";
+      if(n>=40) return "Could be Something";
+      return "Early";
     }
-    function richText(s){
-      // Render a small subset of Discord/Markdown nicely:
-      // - **bold**
-      // - `inline code`
-      // - [label](url)
-      // - bare http(s):// urls
-      // Keep newlines.
-      var t = stripAnsi(String(s||""));
-      if (t.length > 50000) t = t.slice(0, 50000) + "\n…";
-      var out = esc(t);
+    function stripAnsi(s){return String(s||"").replace(/\u001b\[[0-9;]*m/g,"");}
 
-      function linkifyText(txt){
-        return txt.replace(/https?:\/\/[^\s<]+/g, function(m){
-          return '<a href="'+m+'" target="_blank" rel="noreferrer" style="color:#ffcc00; text-decoration:none">'+m+'</a>';
-        });
-      }
-      function linkifyOutsideTags(html){
-        var res = "";
-        var i = 0;
-        while (i < html.length){
-          var lt = html.indexOf("<", i);
-          if (lt === -1){
-            res += linkifyText(html.slice(i));
-            break;
-          }
-          res += linkifyText(html.slice(i, lt));
-          var gt = html.indexOf(">", lt);
-          if (gt === -1){
-            res += html.slice(lt);
-            break;
-          }
-          res += html.slice(lt, gt + 1);
-          i = gt + 1;
-        }
-        return res;
-      }
-
-      // inline code (do before linkify so code isn't linkified)
-      out = out.replace(/`([^`]+)`/g, function(_, code){
-        return '<code style="font-family:JetBrains Mono,monospace;font-size:12px;background:rgba(0,0,0,.25);border:1px solid rgba(255,204,0,.14);padding:1px 6px;border-radius:6px;color:rgba(240,232,192,.92)">'+code+'</code>';
-      });
-      // bold
-      out = out.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
-      // markdown links: [label](url)
-      out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, function(_, label, url){
-        return '<a href="'+url+'" target="_blank" rel="noreferrer" style="color:#ffcc00; text-decoration:none">'+label+'</a>';
-      });
-      // bare urls (only outside tags to avoid corrupting href/src attributes)
-      out = linkifyOutsideTags(out);
-      // simple headings: "## " at start of line
-      out = out.replace(/(^|\n)##\s*([^\n]+)/g, '$1<span style="display:block;margin-top:10px;font-weight:900;color:#ffcc00">$2</span>');
-      return out;
-    }
-
-    function renderFieldsFromEmbed(embed){
-      var fieldsEl = document.getElementById("fields");
-      fieldsEl.innerHTML = "";
-      if (!embed || !embed.fields || !embed.fields.length) return false;
-      fieldsEl.style.display = "grid";
-      embed.fields.forEach(function(f){
-        var name = (f && f.name) ? String(f.name) : "";
-        var val = (f && f.value) ? String(f.value) : "";
-        var inline = !!(f && f.inline);
-        var div = document.createElement("div");
-        div.className = "field" + (inline ? "" : " full");
-        div.innerHTML = '<div class="k">'+esc(name)+'</div><div class="v">'+richText(val)+'</div>';
-        fieldsEl.appendChild(div);
-      });
-      return true;
-    }
-
-    function appendSmartFollowersV2(extra){
-      try{
-        var v2 = (extra && extra.smart_followers_v2) ? extra.smart_followers_v2 : null;
-        if (!v2) return;
-        var fieldsEl = document.getElementById("fields");
-        fieldsEl.style.display = "grid";
-        var raw = Number(v2.raw_score || 0);
-        var unique = Number(v2.unique_hvas || 0);
-        var h24 = Number(v2.hvas_24h || 0);
-        var h7 = Number(v2.hvas_7d || 0);
-        var h30 = Number(v2.hvas_30d || 0);
-        var div = document.createElement("div");
-        div.className = "field full";
-        div.innerHTML =
-          '<div class="k">🧪 Smart Followers v2</div>'
-          + '<div class="v">'
-          + '<span style="display:inline-block;margin-right:12px;"><b>Raw:</b> '+esc(String(Math.round(raw * 10) / 10))+'</span>'
-          + '<span style="display:inline-block;margin-right:12px;"><b>Unique:</b> '+esc(String(unique))+'</span>'
-          + '<span style="display:inline-block;margin-right:12px;"><b>24h:</b> '+esc(String(h24))+'</span>'
-          + '<span style="display:inline-block;margin-right:12px;"><b>7d:</b> '+esc(String(h7))+'</span>'
-          + '<span style="display:inline-block;"><b>30d:</b> '+esc(String(h30))+'</span>'
-          + '</div>';
-        fieldsEl.appendChild(div);
-      }catch(e){}
-    }
-
-    function applyEmbed(ev, embed){
-      // Prefer embed title/description/url when present.
-      if (embed && embed.title) {
-        document.getElementById("title").innerHTML = esc(embed.title);
-      }
-      if (embed && embed.description) {
-        document.getElementById("body").innerHTML = richText(embed.description);
-      } else {
-        document.getElementById("body").innerHTML = richText(ev.body || "");
-      }
-      if (embed && embed.url) {
-        var a = document.getElementById("sourceLink");
-        a.href = embed.url;
-        a.style.display = "inline-block";
-      }
-      // Images
-      var thumb = "";
-      try { thumb = (embed && embed.thumbnail && embed.thumbnail.url) ? String(embed.thumbnail.url) : ""; } catch(e) {}
-      var img = "";
-      try { img = (embed && embed.image && embed.image.url) ? String(embed.image.url) : ""; } catch(e) {}
-      if (thumb) {
-        var p = document.getElementById("pfp");
-        p.src = thumb;
-        p.style.display = "block";
-        p.onerror = function(){ try{ p.style.display="none"; }catch(e){} };
-      }
-      if (img) {
-        var b = document.getElementById("banner");
-        b.src = img;
-        b.style.display = "block";
-        b.onerror = function(){ try{ b.style.display="none"; }catch(e){} };
-      }
-      renderFieldsFromEmbed(embed);
-    }
     async function main(){
-      var id = getId();
-      if (!id){
+      var id=getId();
+      if(!id){
         document.getElementById("err").style.display="block";
         document.getElementById("err").textContent="Missing alert id.";
         return;
       }
-      var r = await fetch("/api/feed/event/" + id, {credentials:"include"});
-      if (!r.ok){
+      var r=await fetch("/api/feed/event/"+id,{credentials:"include"});
+      if(!r.ok){
         document.getElementById("err").style.display="block";
         document.getElementById("err").textContent="Could not load alert ("+r.status+").";
         return;
       }
-      var ev = await r.json();
-      var extra = ev.extra || {};
+      var ev=await r.json();
+      var extra=ev.extra||{};
+      var embed=(extra.embed)||null;
+
       document.getElementById("card").style.display="block";
-      document.getElementById("title").innerHTML = esc(ev.title || ("Alert #" + id));
-      document.getElementById("meta").textContent = (ev.kind || "event") + " · " + fmtTime(ev.ts);
-      document.getElementById("body").innerHTML = richText(ev.body || "");
 
-      // If we have a stored Discord embed payload, render from it.
-      var embedPayload = extra && extra.embed ? extra.embed : null;
-      if (embedPayload) {
-        applyEmbed(ev, embedPayload);
+      // Title: prefer embed title (e.g. "📢 Medium Signal: Momentum Level 2"), fallback to ev.title
+      var titleText=(embed&&embed.title)||(ev.title)||("Alert #"+id);
+      document.getElementById("title").innerHTML=esc(titleText);
+      document.getElementById("meta").textContent=(ev.kind||"event")+" · "+fmtTime(ev.ts);
+
+      // Summary body: prefer extra.summary (AI enriched), then embed description, then ev.body
+      var summaryText=stripAnsi(extra.summary||"");
+      if(!summaryText&&embed&&embed.description){
+        // strip ANSI codes and the [ANALYSIS] prefix from Discord embed
+        summaryText=stripAnsi(embed.description||"").replace(/```ansi\n?/g,"").replace(/```/g,"").replace(/\[ANALYSIS\]\s*/g,"").trim();
+      }
+      if(!summaryText) summaryText=stripAnsi(ev.body||"");
+      document.getElementById("summary").textContent=summaryText||"No summary.";
+
+      // PFP
+      var pfpUrl=(extra.pfp_url||"").trim()||((embed&&embed.thumbnail&&embed.thumbnail.url)||"");
+      if(pfpUrl){
+        var pfpEl=document.getElementById("pfp");
+        pfpEl.src=pfpUrl;
+        pfpEl.style.display="block";
+        pfpEl.onerror=function(){try{pfpEl.style.display="none";}catch(e){}};
       }
 
-      var pfp = pickImg(extra, ["pfp_url","icon_url","author_icon_url","thumb_url"]);
-      var banner = pickImg(extra, ["banner_url","image_url"]);
-      if (pfp){
-        var p = document.getElementById("pfp");
-        if (!p.getAttribute("src")) p.src = pfp;
-        p.style.display = "block";
-        p.onerror = function(){ try{ p.style.display="none"; }catch(e){} };
-      }
-      if (banner){
-        var b = document.getElementById("banner");
-        if (!b.getAttribute("src")) b.src = banner;
-        b.style.display = "block";
-        b.onerror = function(){ try{ b.style.display="none"; }catch(e){} };
+      // Banner
+      var bannerUrl=(extra.banner_url||"").trim()||((embed&&embed.image&&embed.image.url)||"");
+      if(bannerUrl){
+        var banEl=document.getElementById("banner");
+        banEl.src=bannerUrl;
+        banEl.style.display="block";
+        banEl.onerror=function(){try{banEl.style.display="none";}catch(e){}};
       }
 
-      if (ev.url && (!embedPayload || !embedPayload.url)){
-        var a = document.getElementById("sourceLink");
-        a.href = ev.url;
-        a.style.display = "inline-block";
+      // Open Source link
+      var handle=String(extra.handle||"").replace(/^@/,"");
+      if(handle){
+        var xBtn=document.getElementById("xBtn");
+        xBtn.href="https://x.com/"+handle;
+        xBtn.style.display="inline-block";
       }
-      appendSmartFollowersV2(extra);
-      // Smart follower names are intentionally hidden in detail views.
-      // Keep the raw key/value block hidden by default (fields render is nicer).
+
+      // Profile section
+      var name=extra.name||("@"+handle)||"—";
+      var category=extra.category||"—";
+      var ageDays=extra.age_days!=null?extra.age_days:null;
+      var followers=extra.followers!=null?extra.followers:null;
+
+      // Fallback: parse embed Profile field if structured data missing
+      if((!extra.name||!extra.category)&&embed&&embed.fields){
+        embed.fields.forEach(function(f){
+          var fn=String(f.name||"");
+          var fv=String(f.value||"");
+          if(fn.indexOf("Profile")!==-1){
+            var nm=fv.match(/\*\*Name:\*\*\s*\[?([^\]|\n]+)\]?/);
+            if(nm&&!extra.name) name=nm[1].replace(/\(https?:\/\/[^)]+\)/,"").trim();
+            var cat=fv.match(/\*\*Category:\*\*\s*([^\n\u200b|]+)/);
+            if(cat&&!extra.category) category=cat[1].trim();
+          }
+        });
+      }
+
+      var profileSec=document.getElementById("profileSec");
+      profileSec.style.display="block";
+      profileSec.innerHTML=
+        '<div class="k">👤 Profile</div>'
+        +'<div class="v">Name: <b style="color:#ffcc00;">'+esc(name)+'</b> | Category: <b>'+esc(category)+'</b></div>'
+        +'<div class="chips">'
+        +(ageDays!=null?'<span class="badge"><b>Age</b> '+esc(ageFromDays(ageDays))+'</span>':'')
+        +(followers!=null?'<span class="badge"><b>Followers</b> '+esc(fmtFollowers(followers))+'</span>':'')
+        +'</div>';
+
+      // Social Score section
+      var score=extra.score!=null?Math.max(0,Math.min(100,Number(extra.score))):0;
+      // Fallback: parse embed Score field
+      if(extra.score==null&&embed&&embed.fields){
+        embed.fields.forEach(function(f){
+          var fn=String(f.name||"");
+          var fv=String(f.value||"");
+          if(fn.indexOf("Social Score")!==-1){
+            var sm=fv.match(/\*\*(\d+)%\*\*/);
+            if(sm) score=Math.max(0,Math.min(100,parseInt(sm[1])));
+          }
+        });
+      }
+
+      var sfv2=(extra.smart_followers_v2)||{};
+      var sfRaw=Number(sfv2.raw_score||0);
+      var sfUnique=Number(sfv2.unique_hvas||0);
+      var sf24=Number(sfv2.hvas_24h||0);
+      var sf7=Number(sfv2.hvas_7d||0);
+      var sf30=Number(sfv2.hvas_30d||0);
+
+      var scoreSec=document.getElementById("scoreSec");
+      scoreSec.style.display="block";
+      scoreSec.innerHTML=
+        '<div class="k">📊 Social Score</div>'
+        +'<div class="chips"><span class="badge"><b>Score</b> '+esc(String(score))+'%</span></div>'
+        +'<div class="bar"><i style="width:'+esc(String(score))+'%;"></i></div>'
+        +'<div class="v">Status: <b>'+scoreStatus(score)+'</b> | Verified: ✅</div>'
+        +'<div class="k" style="margin-top:12px;">🧪 Smart Followers v2</div>'
+        +'<div class="chips">'
+        +'<span class="badge"><b>Raw</b> '+esc(String(Math.round(sfRaw*10)/10))+'</span>'
+        +'<span class="badge"><b>Unique</b> '+esc(String(sfUnique))+'</span>'
+        +'<span class="badge"><b>24h</b> '+esc(String(sf24))+'</span>'
+        +'<span class="badge"><b>7d</b> '+esc(String(sf7))+'</span>'
+        +'<span class="badge"><b>30d</b> '+esc(String(sf30))+'</span>'
+        +'</div>';
+
+      // Research section
+      if(summaryText){
+        var researchSec=document.getElementById("researchSec");
+        researchSec.style.display="block";
+        researchSec.innerHTML=
+          '<div class="k">🧠 Nerds Alpha Research</div>'
+          +'<div class="v">'+esc(summaryText)+'</div>';
+      }
+
+      // Velcor3 Engaged section
+      var smartCount=Number(extra.smart_followers_count||0);
+      var followersSec=document.getElementById("followersSec");
+      followersSec.style.display="block";
+      followersSec.innerHTML=
+        '<div class="k">🧬 Velcor3 Engaged</div>'
+        +'<div class="chips"><span class="badge"><b>Smart Engagers</b> '+esc(String(smartCount))+'</span></div>';
+
+      // Smart followers list
+      if(Array.isArray(extra.smart_followers)&&extra.smart_followers.length){
+        var names=extra.smart_followers.map(function(x){
+          var hh=String(x||"").replace(/^@/,"");
+          return '<a href="https://x.com/'+esc(hh)+'" target="_blank" rel="noreferrer" style="color:#ffcc00">@'+esc(hh)+'</a>';
+        }).join(" · ");
+        var listSec=document.createElement("div");
+        listSec.className="section";
+        listSec.innerHTML='<div class="k">👥 Smart Followers</div><div class="v">'+names+'</div>';
+        document.getElementById("card").appendChild(listSec);
+      }
     }
+
     // Back button: prefer same-origin referrer; fallback to /projects
     (function(){
-      var back = document.getElementById("btnBack");
-      if (!back) return;
-      try {
-        var ref = document.referrer || "";
-        if (ref) {
-          var u = new URL(ref);
-          if (u.origin === window.location.origin) {
-            back.href = u.pathname + u.search + u.hash;
+      var back=document.getElementById("backBtn");
+      if(!back) return;
+      try{
+        var ref=document.referrer||"";
+        if(ref){
+          var u=new URL(ref);
+          if(u.origin===window.location.origin){
+            back.href=u.pathname+u.search+u.hash;
           }
         }
-      } catch(e) {}
+      }catch(e){}
     })();
     main();
   </script>
 </body>
 </html>
-
