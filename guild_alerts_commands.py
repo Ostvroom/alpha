@@ -268,7 +268,7 @@ class GuildLicenseCommands(commands.Cog):
             ch_est = await guild.create_text_channel(
                 "velcor3-established",
                 category=category,
-                topic="Projects 30–100d — discovery alerts",
+                topic="Projects 31–130d — discovery alerts",
             )
             ch_esc = await guild.create_text_channel(
                 "velcor3-escalation",

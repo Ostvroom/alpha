@@ -1562,49 +1562,17 @@ def _is_personal_profile_like(
         if re.search(pattern, text):
             return True, reason
 
-    project_indicators = [
-        "official",
-        "building",
-        "$",
-        "coin",
-        "token",
-        "ecosystem",
-        "protocol",
-        "solana",
-        "ether",
-        "network",
-        "utility",
-        "launching",
-        "mainnet",
-        "testnet",
-        "whitelist",
-        "presale",
-        "airdrop",
-        "eth",
-        "web3",
-        "art",
-        ".art",
-        ".xyz",
-        ".com",
-        "pfp",
-        "collection",
-        "minting",
-        "meme",
-        "defi",
-        "game",
-        "infra",
-        "agent",
-        "neural",
-        "gpu",
-        "swap",
-        "liquidity",
-        "prediction",
-        "market",
-        "lab",
-        "velcor3",
+    influencer_patterns = [
+        (r"\bdm\s+for\s+(business|collab|promo|partnerships?)\b", "dm for business/collab"),
+        (r"\btg\s*[:\-]?\s*@\w+", "telegram contact"),
+        (r"\bnot\s+(financial|investment)\s+advice\b", "not financial advice"),
+        (r"\bdyor\b", "dyor"),
+        (r"\b(crypto|nft|memecoin)\s+(degen|gambler|trader)\b", "influencer/trader bio"),
+        (r"\b(simple tips|positivity|laughs)\b", "content creator bio"),
     ]
-    if any(indicator in text for indicator in project_indicators):
-        return False, None
+    for pattern, reason in influencer_patterns:
+        if re.search(pattern, text):
+            return True, reason
 
     ban_words = [
         "advisor",
@@ -1644,9 +1612,67 @@ def _is_personal_profile_like(
         "otaku",
         "cosplay",
     ]
+    matched_ban = None
     for word in ban_words:
         if re.search(rf"\b{re.escape(word)}\b", text):
-            return True, word
+            matched_ban = word
+            break
+
+    strong_project_indicators = [
+        "official",
+        "$",
+        "coin",
+        "token",
+        "ecosystem",
+        "protocol",
+        "network",
+        "utility",
+        "launching",
+        "mainnet",
+        "testnet",
+        "whitelist",
+        "presale",
+        "airdrop",
+        "minting",
+        "defi",
+        "infra",
+        "swap",
+        "liquidity",
+    ]
+    weak_project_indicators = [
+        "building",
+        "solana",
+        "ether",
+        "eth",
+        "web3",
+        "art",
+        ".art",
+        ".xyz",
+        ".com",
+        "pfp",
+        "collection",
+        "meme",
+        "game",
+        "agent",
+        "neural",
+        "gpu",
+        "prediction",
+        "market",
+        "lab",
+        "velcor3",
+    ]
+
+    has_strong_project_signal = any(indicator in text for indicator in strong_project_indicators)
+    weak_signal_hits = sum(1 for indicator in weak_project_indicators if indicator in text)
+
+    if matched_ban and not has_strong_project_signal:
+        return True, matched_ban
+    if has_strong_project_signal:
+        return False, None
+    if weak_signal_hits >= 2 and not matched_ban:
+        return False, None
+    if matched_ban:
+        return True, matched_ban
 
     return False, None
 
@@ -2373,17 +2399,9 @@ def _calculate_discord_style_project_score(project_id: str) -> tuple[int, int]:
     if not pid:
         return 0, 0
 
-    interactions = database.get_project_follows(pid) or []
-    unique_hvas = set()
-    score = 0.0
-
-    for row in interactions:
-        try:
-            h = str((row or [None])[0] or "").strip().lower()
-        except Exception:
-            h = ""
-        if h:
-            unique_hvas.add(h)
+    sf_v2 = database.calculate_project_smart_followers_v2(pid) or {}
+    score = float(sf_v2.get("raw_score") or 0.0)
+    unique_hvas_count = int(sf_v2.get("unique_hvas") or 0)
 
     ai_data = database.get_project_ai_data(pid) or {}
     try:
@@ -2393,42 +2411,8 @@ def _calculate_discord_style_project_score(project_id: str) -> tuple[int, int]:
     # Base AI boost (same as Discord bot): up to 30 points.
     score += ai_alpha * 0.3
 
-    t1 = {str(h or "").strip().lower() for h in (getattr(config, "TIER_1_HVAs", []) or []) if str(h or "").strip()}
-    conn = sqlite3.connect(database.DB_PATH)
-    cursor = conn.cursor()
-    try:
-        for h in unique_hvas:
-            cursor.execute("SELECT quality_score FROM hva_stats WHERE hva_handle = ?", (h,))
-            res = cursor.fetchone()
-            try:
-                hva_perf = float(res[0]) if (res and res[0] is not None) else 0.0
-            except Exception:
-                hva_perf = 0.0
-
-            weight = 3.0 if h in t1 else 1.0
-            # Same perf multiplier bounds as Discord bot.
-            perf_mult = max(0.5, min(2.0, hva_perf / 50.0)) if hva_perf > 0 else 1.0
-            score += 15.0 * weight * perf_mult
-    finally:
-        conn.close()
-
-    for row in interactions:
-        try:
-            it = str((row or [None, None])[1] or "").strip().lower()
-        except Exception:
-            it = ""
-        if it == "retweet":
-            score += 5.0
-        elif it == "reply":
-            score += 3.0
-
-    if len(unique_hvas) >= 3:
-        score += 20.0
-    elif len(unique_hvas) >= 2:
-        score += 10.0
-
     score_i = min(max(int(round(score)), 0), 100)
-    return score_i, len(unique_hvas)
+    return score_i, unique_hvas_count
 
 
 @app.get("/api/kol/dashboard")
@@ -3054,9 +3038,11 @@ async def api_project_detail(request: Request, handle: str):
     if row:
         score, _score_hvas = _calculate_discord_style_project_score(str(twitter_id or ""))
         smarts = database.get_project_smart_followers(str(twitter_id or ""), limit=120)
+        sf_v2 = database.calculate_project_smart_followers_v2(str(twitter_id or ""))
     else:
         score = int((manual or {}).get("score") or 0)
         smarts = []
+        sf_v2 = {"raw_score": 0.0, "unique_hvas": 0, "hvas_24h": 0, "hvas_7d": 0, "hvas_30d": 0}
     hkey = str(hdl or h).strip().lstrip("@").lower()
     prof = _latest_profile_map(limit=700)
     p = prof.get(hkey) or {}
@@ -3080,6 +3066,13 @@ async def api_project_detail(request: Request, handle: str):
         "banner_url": banner_url,
         "x_url": f"https://x.com/{str(hdl or h).lstrip('@')}",
         "smart_followers": smarts,
+        "smart_followers_v2": {
+            "raw_score": float((sf_v2 or {}).get("raw_score") or 0.0),
+            "unique_hvas": int((sf_v2 or {}).get("unique_hvas") or 0),
+            "hvas_24h": int((sf_v2 or {}).get("hvas_24h") or 0),
+            "hvas_7d": int((sf_v2 or {}).get("hvas_7d") or 0),
+            "hvas_30d": int((sf_v2 or {}).get("hvas_30d") or 0),
+        },
     }
 
 

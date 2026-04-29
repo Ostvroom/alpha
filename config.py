@@ -58,7 +58,7 @@ ESCALATION_CHANNEL_IDS = parse_channel_ids("ESCALATION_CHANNEL_ID")
 
 # Age-Based Discovery Routing (from .env)
 # NEW_ACCS_CHANNEL_ID -> ≤30 days
-# OLDER_ACCS_CHANNEL_ID -> 30-100 days
+# OLDER_ACCS_CHANNEL_ID -> 31-130 days
 NEW_PROJECTS_CHANNEL_IDS = parse_channel_ids("NEW_ACCS_CHANNEL_ID")
 ESTABLISHED_PROJECTS_CHANNEL_IDS = parse_channel_ids("OLDER_ACCS_CHANNEL_ID")
 
@@ -82,7 +82,7 @@ TRENDING_REPORT_SHOW_BANNER = os.getenv("TRENDING_REPORT_SHOW_BANNER", "0").stri
 
 # Sniper Filter Channel (Usually established projects or a dedicated feed)
 SNIPER_CHANNEL_ID = parse_channel_ids("OLDER_ACCS_CHANNEL_ID")[0] if parse_channel_ids("OLDER_ACCS_CHANNEL_ID") else (DISCORD_CHANNEL_IDS[0] if DISCORD_CHANNEL_IDS else 0)
-SNIPER_MAX_AGE_DAYS = 100
+SNIPER_MAX_AGE_DAYS = 130
 SNIPER_MAX_TWEETS = 4
 
 # Consolidated list used by bot main loops

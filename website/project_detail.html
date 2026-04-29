@@ -126,13 +126,27 @@
         + '</div>';
 
       var score = Math.max(0, Math.min(100, Number(p.score||0)));
+      var sfv2 = (p && p.smart_followers_v2) ? p.smart_followers_v2 : {};
+      var sfv2Raw = Number(sfv2.raw_score || 0);
+      var sfv2Unique = Number(sfv2.unique_hvas || 0);
+      var sfv2_24h = Number(sfv2.hvas_24h || 0);
+      var sfv2_7d = Number(sfv2.hvas_7d || 0);
+      var sfv2_30d = Number(sfv2.hvas_30d || 0);
       var scoreSec = document.getElementById("scoreSec");
       scoreSec.style.display = "block";
       scoreSec.innerHTML =
         '<div class="k">📊 Social Score</div>'
         + '<div class="chips"><span class="badge"><b>Score</b> '+esc(String(score))+'%</span></div>'
         + '<div class="bar"><i style="width:'+esc(String(score))+'%;"></i></div>'
-        + '<div class="v">Status: <b>'+scoreStatus(score)+'</b> | Verified: ✅</div>';
+        + '<div class="v">Status: <b>'+scoreStatus(score)+'</b> | Verified: ✅</div>'
+        + '<div class="k" style="margin-top:12px;">🧪 Smart Followers v2</div>'
+        + '<div class="chips">'
+        + '<span class="badge"><b>Raw</b> '+esc(String(Math.round(sfv2Raw * 10) / 10))+'</span>'
+        + '<span class="badge"><b>Unique</b> '+esc(String(sfv2Unique))+'</span>'
+        + '<span class="badge"><b>24h</b> '+esc(String(sfv2_24h))+'</span>'
+        + '<span class="badge"><b>7d</b> '+esc(String(sfv2_7d))+'</span>'
+        + '<span class="badge"><b>30d</b> '+esc(String(sfv2_30d))+'</span>'
+        + '</div>';
 
       var researchSec = document.getElementById("researchSec");
       researchSec.style.display = "block";

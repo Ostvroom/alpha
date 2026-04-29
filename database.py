@@ -580,6 +580,149 @@ def get_project_follows(project_id):
     conn.close()
     return res # List of tuples [(hva_id, type), ...]
 
+
+def get_project_follow_events(project_id: str, limit: int = 500):
+    """
+    Raw follow/interaction rows including timestamps, newest first.
+    Returns: [(hva_id, interaction_type, followed_at), ...]
+    """
+    pid = str(project_id or "").strip()
+    if not pid:
+        return []
+    lim = max(1, min(2000, int(limit or 500)))
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT hva_id, interaction_type, followed_at
+        FROM follows
+        WHERE project_id = ?
+        ORDER BY datetime(followed_at) DESC
+        LIMIT ?
+        """,
+        (pid, lim),
+    )
+    rows = cursor.fetchall() or []
+    conn.close()
+    return rows
+
+
+def calculate_project_smart_followers_v2(project_id: str) -> dict:
+    """
+    Quality-weighted + recency-aware smart followers signal (X-first scoring).
+    Returns:
+      {
+        "raw_score": float,
+        "unique_hvas": int,
+        "hvas_24h": int,
+        "hvas_7d": int,
+        "hvas_30d": int,
+      }
+    """
+    pid = str(project_id or "").strip()
+    if not pid:
+        return {"raw_score": 0.0, "unique_hvas": 0, "hvas_24h": 0, "hvas_7d": 0, "hvas_30d": 0}
+
+    events = get_project_follow_events(pid, limit=1200)
+    if not events:
+        return {"raw_score": 0.0, "unique_hvas": 0, "hvas_24h": 0, "hvas_7d": 0, "hvas_30d": 0}
+
+    now = datetime.now(timezone.utc)
+    unique_meta: dict = {}
+
+    for row in events:
+        if not row:
+            continue
+        hva = str(row[0] or "").strip().lower()
+        it = str(row[1] or "").strip().lower()
+        ts = _parse_sqlite_ts(row[2])
+        if not hva:
+            continue
+        if hva not in unique_meta:
+            unique_meta[hva] = {
+                "last_ts": ts,
+                "interactions": set([it] if it else []),
+            }
+        else:
+            if ts and (unique_meta[hva]["last_ts"] is None or ts > unique_meta[hva]["last_ts"]):
+                unique_meta[hva]["last_ts"] = ts
+            if it:
+                unique_meta[hva]["interactions"].add(it)
+
+    if not unique_meta:
+        return {"raw_score": 0.0, "unique_hvas": 0, "hvas_24h": 0, "hvas_7d": 0, "hvas_30d": 0}
+
+    import config  # local import avoids circulars
+    t1 = {str(h or "").strip().lower() for h in (getattr(config, "TIER_1_HVAs", []) or []) if str(h or "").strip()}
+    tier_w = getattr(config, "HVA_TIER_WEIGHTS", {}) or {}
+    t1_weight = float(tier_w.get("tier1", 3) or 3)
+    t3_weight = float(tier_w.get("tier3", 1) or 1)
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    raw_score = 0.0
+    hvas_24h, hvas_7d, hvas_30d = 0, 0, 0
+
+    try:
+        for hva, meta in unique_meta.items():
+            last_ts = meta.get("last_ts")
+            age_hours = None
+            if isinstance(last_ts, datetime):
+                age_hours = max(0.0, (now - last_ts).total_seconds() / 3600.0)
+                if age_hours <= 24:
+                    hvas_24h += 1
+                if age_hours <= 24 * 7:
+                    hvas_7d += 1
+                if age_hours <= 24 * 30:
+                    hvas_30d += 1
+
+            if age_hours is None:
+                recency_mult = 0.85
+            elif age_hours <= 24:
+                recency_mult = 1.35
+            elif age_hours <= 72:
+                recency_mult = 1.20
+            elif age_hours <= 24 * 7:
+                recency_mult = 1.05
+            elif age_hours <= 24 * 30:
+                recency_mult = 0.90
+            else:
+                recency_mult = 0.75
+
+            cursor.execute("SELECT quality_score FROM hva_stats WHERE hva_handle = ?", (hva,))
+            res = cursor.fetchone()
+            try:
+                perf = float(res[0]) if (res and res[0] is not None) else 0.0
+            except Exception:
+                perf = 0.0
+            perf_mult = max(0.5, min(2.0, perf / 50.0)) if perf > 0 else 1.0
+            tier_weight = t1_weight if hva in t1 else t3_weight
+
+            raw_score += 15.0 * tier_weight * perf_mult * recency_mult
+
+            interactions = meta.get("interactions") or set()
+            if "retweet" in interactions:
+                raw_score += 4.0
+            if "reply" in interactions:
+                raw_score += 2.0
+    finally:
+        conn.close()
+
+    if hvas_24h >= 3:
+        raw_score += 18.0
+    elif hvas_24h >= 2:
+        raw_score += 10.0
+    if hvas_7d >= 5:
+        raw_score += 8.0
+
+    return {
+        "raw_score": float(raw_score),
+        "unique_hvas": int(len(unique_meta)),
+        "hvas_24h": int(hvas_24h),
+        "hvas_7d": int(hvas_7d),
+        "hvas_30d": int(hvas_30d),
+    }
+
 def update_posted_smarts(project_id, count):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()

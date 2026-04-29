@@ -566,7 +566,7 @@ class BlockBrainBot(commands.Bot):
         await self.rebuild_channel_caches()
 
         print(f"📡 Channels loaded: {len(self.active_main_channels)} main, {len(self.active_escalation_channels)} escalation")
-        print(f"   Age-based: {len(self.new_projects_channels)} new (≤30d), {len(self.established_projects_channels)} established (30-100d)")
+        print(f"   Age-based: {len(self.new_projects_channels)} new (≤30d), {len(self.established_projects_channels)} established (31-130d)")
         n_tw = len(getattr(self.twitter, "_sessions", None) or [])
         if n_tw == 0:
             print(
@@ -866,17 +866,17 @@ class BlockBrainBot(commands.Bot):
             if re.search(pattern, text):
                 return True, reason
         
-        # 🛡️ PROJECT INDICATORS (Priority Overrides)
-        project_indicators = [
-            "official", "building", "$", "coin", "token", "ecosystem", "protocol", 
-            "solana", "ether", "network", "utility", "launching", "mainnet", 
-            "testnet", "whitelist", "presale", "airdrop", "eth", "web3", "art", 
-            ".art", ".xyz", ".com", "pfp", "collection", "minting", "meme",
-            "defi", "game", "infra", "agent", "neural", "gpu", "swap", "liquidity",
-            "prediction", "market", "lab", "velcor3"
+        influencer_patterns = [
+            (r"\bdm\s+for\s+(business|collab|promo|partnerships?)\b", "dm for business/collab"),
+            (r"\btg\s*[:\-]?\s*@\w+", "telegram contact"),
+            (r"\bnot\s+(financial|investment)\s+advice\b", "not financial advice"),
+            (r"\bdyor\b", "dyor"),
+            (r"\b(crypto|nft|memecoin)\s+(degen|gambler|trader)\b", "influencer/trader bio"),
+            (r"\b(simple tips|positivity|laughs)\b", "content creator bio"),
         ]
-        if any(indicator in text for indicator in project_indicators):
-            return False, None
+        for pattern, reason in influencer_patterns:
+            if re.search(pattern, text):
+                return True, reason
 
         # 🚫 OTHER BAN WORDS (Regex with word boundaries)
         ban_words = [
@@ -888,10 +888,35 @@ class BlockBrainBot(commands.Bot):
             "nft trader", "influencer", "advisor", "freelance",
             "waifu", "anime", "otaku", "cosplay"
         ]
-        
+        matched_ban = None
         for word in ban_words:
             if re.search(rf"\b{re.escape(word)}\b", text):
-                return True, word
+                matched_ban = word
+                break
+
+        # 🛡️ PROJECT INDICATORS (Priority Overrides)
+        strong_project_indicators = [
+            "official", "$", "coin", "token", "ecosystem", "protocol", "network",
+            "utility", "launching", "mainnet", "testnet", "whitelist", "presale",
+            "airdrop", "minting", "defi", "infra", "swap", "liquidity",
+        ]
+        weak_project_indicators = [
+            "building", "solana", "ether", "eth", "web3", "art", ".art", ".xyz",
+            ".com", "pfp", "collection", "meme", "game", "agent", "neural", "gpu",
+            "prediction", "market", "lab", "velcor3",
+        ]
+
+        has_strong_project_signal = any(indicator in text for indicator in strong_project_indicators)
+        weak_signal_hits = sum(1 for indicator in weak_project_indicators if indicator in text)
+
+        if matched_ban and not has_strong_project_signal:
+            return True, matched_ban
+        if has_strong_project_signal:
+            return False, None
+        if weak_signal_hits >= 2 and not matched_ban:
+            return False, None
+        if matched_ban:
+            return True, matched_ban
 
         return False, None
 
@@ -1145,7 +1170,7 @@ class BlockBrainBot(commands.Bot):
             )
 
         embed.add_field(name="🚀 New Projects (≤30d)", value=get_section_text(10, min_age=0, max_age=30), inline=False)
-        embed.add_field(name="📈 Established Projects (30-100d)", value=get_section_text(10, min_age=31, max_age=100), inline=False)
+        embed.add_field(name="📈 Established Projects (31-130d)", value=get_section_text(10, min_age=31, max_age=130), inline=False)
         foot = f"{BRAND_NAME} Trending Report • {datetime.now().strftime('%d %b %Y')} • by Sultan"
         if BRAND_LOGO_FILE:
             embed.set_footer(text=foot, icon_url=f"attachment://{BRAND_LOGO_FILE}")
@@ -2206,11 +2231,11 @@ class BlockBrainBot(commands.Bot):
             if age <= 30:
                 target_channels = self.new_projects_channels
                 age_label = "≤30d (NEW)"
-            elif 30 < age <= 100:
+            elif 30 < age <= 130:
                 target_channels = self.established_projects_channels
-                age_label = "30-100d (ESTABLISHED)"
+                age_label = "31-130d (ESTABLISHED)"
             else:
-                # Projects > 100 days are silently saved (handled earlier)
+                # Projects > 130 days are silently saved (handled earlier)
                 pass
             
             if target_channels:
@@ -2375,49 +2400,20 @@ class BlockBrainBot(commands.Bot):
                         print(f"      ⚠️ LOGIC ERROR: num_hvas={num_hvas} (should be >= 1)")
 
     def calculate_score(self, account, interactions):
-        """Calculate project score with HVA quality weighting and AI insights."""
-        score, unique_hvas = 0, set([i[0].lower() for i in interactions])
-        
-        # Get AI Brain Score if available
+        """Calculate score using smart_followers_v2 + AI boost."""
         ai_data = database.get_project_ai_data(account.id)
         ai_alpha = ai_data.get('alpha_score', 0) if ai_data else 0
-        
-        # Base AI Boost (30% of total score potential)
-        score += (ai_alpha * 0.3)
-        
-        # HVA Quality Weighting (Load dynamic weights from DB)
-        conn = database.sqlite3.connect(database.DB_PATH)
-        cursor = conn.cursor()
-        
-        t1 = [h.lower() for h in config.TIER_1_HVAs]
-        
-        for h in unique_hvas:
-            # Check if this HVA has a high quality score in DB
-            cursor.execute("SELECT quality_score FROM hva_stats WHERE hva_handle = ?", (h.lower(),))
-            res = cursor.fetchone()
-            hva_perf = res[0] if res else 0
-            
-            # Weighted addition
-            weight = 1.0
-            if h in t1: weight = 3.0
-            
-            # Performance multiplier (0.5x to 2.0x based on quality_score)
-            perf_mult = max(0.5, min(2.0, hva_perf / 50.0)) if hva_perf > 0 else 1.0
-            
-            score += 15 * weight * perf_mult
-        
-        conn.close()
-        
-        # Engagement type bonuses
-        for h, it in interactions:
-            if it == 'retweet': score += 5
-            elif it == 'reply': score += 3
-        
-        # Multi-HVA bonuses
-        if len(unique_hvas) >= 3: score += 20
-        elif len(unique_hvas) >= 2: score += 10
-        
-        return min(round(score), 100), len(unique_hvas)
+        try:
+            ai_alpha = float(ai_alpha or 0)
+        except Exception:
+            ai_alpha = 0.0
+
+        sf_v2 = database.calculate_project_smart_followers_v2(account.id)
+        raw = float((sf_v2 or {}).get("raw_score") or 0.0)
+        unique_hvas = int((sf_v2 or {}).get("unique_hvas") or len(set([i[0].lower() for i in interactions])))
+
+        score = raw + (ai_alpha * 0.3)
+        return min(max(round(score), 0), 100), unique_hvas
 
     def get_signal_tier(self, num_hvas):
         """Get signal strength tier based on HVA count."""
