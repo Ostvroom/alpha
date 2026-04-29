@@ -260,49 +260,153 @@
     .lb-body::-webkit-scrollbar { display: none; }
     .lb-item {
       flex: 0 0 auto;
-      display: flex; align-items: center; gap: 9px;
-      padding: 9px 14px;
+      display: flex; align-items: center; gap: 11px;
+      padding: 12px 18px;
       border-right: 1px solid rgba(255,255,255,.05);
-      min-width: 170px; max-width: 220px;
+      min-width: 200px; max-width: 260px;
       transition: background .12s;
       cursor: pointer;
       text-decoration: none; color: inherit;
     }
     .lb-item:last-child { border-right: none; }
-    .lb-item:hover { background: rgba(255,204,0,.05); }
+    .lb-item:hover { background: rgba(255,204,0,.06); }
     .lb-rank {
-      font-family: "JetBrains Mono", monospace; font-size: 10px; font-weight: 700;
-      color: rgba(240,232,192,.25); min-width: 18px; text-align: right;
+      font-family: "JetBrains Mono", monospace; font-size: 11px; font-weight: 700;
+      color: rgba(240,232,192,.25); min-width: 22px; text-align: right;
     }
-    .lb-rank.gold   { color: #ffcc00; }
-    .lb-rank.silver { color: rgba(200,200,220,.70); }
-    .lb-rank.bronze { color: rgba(200,150,100,.70); }
+    .lb-rank.gold   { color: #ffcc00; text-shadow: 0 0 8px rgba(255,204,0,.4); }
+    .lb-rank.silver { color: rgba(200,200,220,.80); }
+    .lb-rank.bronze { color: rgba(210,160,110,.80); }
     .lb-av {
-      width: 28px; height: 28px; flex: 0 0 28px;
-      border-radius: 8px; border: 1px solid rgba(255,255,255,.09);
+      width: 38px; height: 38px; flex: 0 0 38px;
+      border-radius: 10px; border: 1px solid rgba(255,255,255,.10);
       background: rgba(255,255,255,.04); overflow: hidden;
       display: flex; align-items: center; justify-content: center;
     }
     .lb-av img { width: 100%; height: 100%; object-fit: cover; display: block; }
-    .lb-av-ph { font-family: "JetBrains Mono", monospace; font-size: 9px; font-weight: 700; color: rgba(255,204,0,.55); }
+    .lb-av-ph { font-family: "JetBrains Mono", monospace; font-size: 11px; font-weight: 700; color: rgba(255,204,0,.55); }
     .lb-info { min-width: 0; flex: 1; }
     .lb-ticker {
-      font-weight: 700; font-size: 12px; color: #fff;
+      font-weight: 800; font-size: 14px; color: #fff;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      display: flex; align-items: center; gap: 6px;
     }
     .lb-meta {
-      display: flex; align-items: center; gap: 5px; margin-top: 2px; flex-wrap: nowrap;
+      display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: nowrap;
     }
     .lb-athx {
-      font-family: "JetBrains Mono", monospace; font-size: 11px; font-weight: 700;
+      font-family: "JetBrains Mono", monospace; font-size: 13px; font-weight: 700;
     }
     .lb-athx.hot  { color: #7aff9a; }
     .lb-athx.warm { color: #ffcc00; }
     .lb-athx.cold { color: rgba(240,232,192,.45); }
     .lb-since {
-      font-family: "JetBrains Mono", monospace; font-size: 9px;
-      color: rgba(240,232,192,.38);
+      font-family: "JetBrains Mono", monospace; font-size: 10px;
+      color: rgba(240,232,192,.40);
     }
+
+    /* ── Token detail modal ── */
+    .tok-modal-overlay {
+      position: fixed; inset: 0; z-index: 10000;
+      background: rgba(0,0,0,.75); backdrop-filter: blur(6px);
+      display: flex; align-items: center; justify-content: center;
+      padding: 20px;
+      animation: fadeIn .15s ease;
+    }
+    .tok-modal-overlay.closing { animation: fadeOut .15s ease forwards; }
+    @keyframes fadeIn  { from{opacity:0} to{opacity:1} }
+    @keyframes fadeOut { from{opacity:1} to{opacity:0} }
+    .tok-modal {
+      width: min(560px, 100%);
+      max-height: calc(100vh - 40px);
+      overflow-y: auto;
+      border-radius: 18px;
+      border: 1px solid rgba(255,204,0,.20);
+      background: #0e0e10;
+      box-shadow: 0 24px 80px rgba(0,0,0,.80);
+      animation: slideUp .18s ease;
+    }
+    @keyframes slideUp { from{transform:translateY(12px);opacity:0} to{transform:translateY(0);opacity:1} }
+    .tok-modal::-webkit-scrollbar { width: 4px; }
+    .tok-modal::-webkit-scrollbar-thumb { background: rgba(255,204,0,.20); border-radius: 4px; }
+
+    .m-top-bar {
+      height: 3px;
+      background: linear-gradient(90deg, transparent, rgba(255,204,0,.60), transparent);
+    }
+    .m-head {
+      display: flex; align-items: flex-start; gap: 14px;
+      padding: 20px 20px 16px;
+      border-bottom: 1px solid rgba(255,255,255,.07);
+    }
+    .m-av {
+      width: 56px; height: 56px; flex: 0 0 56px;
+      border-radius: 14px; border: 1px solid rgba(255,255,255,.12);
+      background: rgba(255,255,255,.04); overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .m-av img { width: 100%; height: 100%; object-fit: cover; }
+    .m-av-ph { font-family: "JetBrains Mono", monospace; font-size: 18px; font-weight: 700; color: rgba(255,204,0,.55); }
+    .m-title-block { flex: 1; min-width: 0; }
+    .m-ticker {
+      font-weight: 900; font-size: 22px; color: #fff; letter-spacing: .01em;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    }
+    .m-mint { font-family: "JetBrains Mono", monospace; font-size: 10px; color: rgba(240,232,192,.28); margin-top: 4px; }
+    .m-close-btn {
+      flex: 0 0 auto; width: 30px; height: 30px;
+      border-radius: 8px; border: 1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.04);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; color: rgba(240,232,192,.50); font-size: 16px;
+      transition: background .12s, color .12s;
+    }
+    .m-close-btn:hover { background: rgba(255,100,100,.12); color: #ff9898; }
+
+    .m-metrics {
+      display: flex; gap: 8px; flex-wrap: wrap;
+      padding: 16px 20px;
+      border-bottom: 1px solid rgba(255,255,255,.06);
+    }
+    .m-section {
+      padding: 14px 20px;
+      border-bottom: 1px solid rgba(255,255,255,.06);
+    }
+    .m-section:last-child { border-bottom: none; }
+    .m-sec-title {
+      font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .16em;
+      text-transform: uppercase; color: rgba(240,232,192,.35); margin-bottom: 10px;
+    }
+    .m-caller-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255,255,255,.04);
+    }
+    .m-caller-row:last-child { border-bottom: none; }
+    .m-caller-idx {
+      font-family: "JetBrains Mono", monospace; font-size: 9px;
+      color: rgba(240,232,192,.25); min-width: 16px;
+    }
+    .m-caller-name {
+      font-family: "JetBrains Mono", monospace; font-size: 12px; font-weight: 600;
+      color: rgba(255,190,190,.88); flex: 1; min-width: 0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .m-caller-name a { color: inherit; }
+    .m-caller-name a:hover { color: #ffcc00; }
+    .m-caller-mc {
+      font-family: "JetBrains Mono", monospace; font-size: 11px; color: rgba(140,195,255,.90);
+    }
+    .m-caller-ts {
+      font-family: "JetBrains Mono", monospace; font-size: 10px;
+      color: rgba(240,232,192,.30); white-space: nowrap;
+    }
+    .m-caller-sx {
+      font-family: "JetBrains Mono", monospace; font-size: 11px; font-weight: 700;
+      color: rgba(130,255,190,.90); white-space: nowrap;
+    }
+    .m-caller-sx.down { color: rgba(255,150,150,.75); }
+    .m-links { display: flex; gap: 8px; flex-wrap: wrap; }
 
     /* ── Chain indicator badge ── */
     .chain-badge {
@@ -636,19 +740,127 @@
 
     function renderBucket(colKey, items){ _data[colKey]=items||[]; paintBucket(colKey); paintLeaderboard(); }
 
+    /* ── Token detail modal ── */
+    var _lbData = [];  // top-10 snapshot for modal lookup
+    function openModal(idx){
+      var r = _lbData[idx]; if(!r) return;
+      var modal = document.getElementById("tokModal");
+      if(!modal) return;
+
+      var chain = (r.chain||"sol").toLowerCase();
+      var chainLabel = chain==="eth"?"ETH":chain==="base"?"BASE":"SOL";
+      var chainCls   = "chain-badge chain-"+chain;
+      var ds = chain==="eth"?"ethereum":chain==="base"?"base":"solana";
+      var mint = r.mint||"";
+      var ticker = r.ticker||"?";
+      var av = (r.thumb_url||"").trim();
+      var avHtml = av
+        ? '<img src="'+esc(av)+'" alt="" onerror="imgFallback(this,\''+esc(mint)+'\',\''+esc(chain)+'\',\''+esc(ticker)+'\')" />'
+        : (mint
+            ? '<img src="https://dd.dexscreener.com/ds-data/tokens/'+ds+'/'+esc(mint)+'.png" alt="" onerror="imgFallback(this,\''+esc(mint)+'\',\''+esc(chain)+'\',\''+esc(ticker)+'\')" />'
+            : '<span class="m-av-ph">'+esc(ticker.slice(0,2).toUpperCase())+'</span>');
+
+      var ax = Number(r.ath_x||0);
+      var sx = Number(r.since_x||0);
+      var axCls = athxClass(r.ath_x);
+      var siCls = sinceClass(r.since_x);
+      var callers = Array.isArray(r.callers)?r.callers:[];
+      var mintFull = mint ? ('<span style="word-break:break-all;">'+esc(mint)+'</span>') : "";
+      var mintShort = mint ? mint.slice(0,6)+"…"+mint.slice(-6) : "";
+
+      // Build callers table
+      var callersHtml = "";
+      if(callers.length){
+        callers.forEach(function(c,i){
+          var name = c.name||c.x||"caller";
+          var xUrl = c.x ? "https://x.com/"+String(c.x).replace(/^@/,"") : "";
+          var nameHtml = xUrl
+            ? '<a href="'+esc(xUrl)+'" target="_blank" rel="noreferrer">@'+esc(name)+'</a>'
+            : '@'+esc(name);
+          var cmc  = fmtMc(c.call_mc);
+          var cago = hoursAgo(c.call_ts)||"—";
+          var csx  = Number(c.since_x||0);
+          var cSxCls = (csx>=1)?"m-caller-sx":"m-caller-sx down";
+          var cSxTxt = csx>0 ? fmtX(csx)+" now" : "—";
+          callersHtml += '<div class="m-caller-row">';
+          callersHtml +=   '<span class="m-caller-idx">'+(i===0?"🥇":i===1?"🥈":i===2?"🥉":"·")+'</span>';
+          callersHtml +=   '<span class="m-caller-name">'+nameHtml+'</span>';
+          callersHtml +=   '<span class="m-caller-mc">'+esc(cmc)+'</span>';
+          callersHtml +=   '<span class="'+esc(cSxCls)+'">'+esc(cSxTxt)+'</span>';
+          callersHtml +=   '<span class="m-caller-ts">'+esc(cago)+'</span>';
+          callersHtml += '</div>';
+        });
+      } else if(r.caller){
+        var xUrl2 = r.caller_x ? "https://x.com/"+String(r.caller_x).replace(/^@/,"") : "";
+        var nameHtml2 = xUrl2
+          ? '<a href="'+esc(xUrl2)+'" target="_blank" rel="noreferrer">@'+esc(r.caller)+'</a>'
+          : '@'+esc(r.caller);
+        callersHtml = '<div class="m-caller-row"><span class="m-caller-idx">🥇</span><span class="m-caller-name">'+nameHtml2+'</span><span class="m-caller-mc">'+esc(fmtMc(r.call_mc))+'</span><span class="m-caller-ts">'+esc(hoursAgo(r.call_ts)||"—")+'</span></div>';
+      } else {
+        callersHtml = '<div style="font-family:\'JetBrains Mono\',monospace;font-size:11px;color:rgba(240,232,192,.30);">No caller data</div>';
+      }
+
+      // Links
+      var linksHtml = "";
+      if(r.chart_url)     linksHtml += '<a class="chip link" href="'+esc(r.chart_url)+'" target="_blank" rel="noreferrer">📈 Chart</a>';
+      if(r.dex_url)       linksHtml += '<a class="chip link" href="'+esc(r.dex_url)+'" target="_blank" rel="noreferrer">🔍 Dex</a>';
+      if(r.token_x_url)   linksHtml += '<a class="chip" href="'+esc(r.token_x_url)+'" target="_blank" rel="noreferrer">𝕏 Twitter</a>';
+      if(r.token_site_url)linksHtml += '<a class="chip" href="'+esc(r.token_site_url)+'" target="_blank" rel="noreferrer">🌐 Site</a>';
+      if(mint) linksHtml += '<button class="chip" onclick="navigator.clipboard&&navigator.clipboard.writeText(\''+esc(mint)+'\');this.textContent=\'✓ Copied!\';setTimeout(()=>{this.textContent=\'📋 Copy CA\'},1200);">📋 Copy CA</button>';
+
+      modal.className = "tok-modal-overlay";
+      modal.style.display = "flex";
+      modal.innerHTML =
+        '<div class="tok-modal" onclick="event.stopPropagation()">'+
+          '<div class="m-top-bar"></div>'+
+          '<div class="m-head">'+
+            '<div class="m-av">'+avHtml+'</div>'+
+            '<div class="m-title-block">'+
+              '<div class="m-ticker">'+esc(ticker)+'<span class="'+esc(chainCls)+'">'+esc(chainLabel)+'</span></div>'+
+              (mint?'<div class="m-mint" title="'+esc(mint)+'">'+esc(mintShort)+'</div>':"")+
+            '</div>'+
+            '<div class="m-close-btn" onclick="closeModal()">✕</div>'+
+          '</div>'+
+          '<div class="m-metrics">'+
+            '<div class="mc call"><span class="mc-lbl">MC@first call</span><span class="mc-val">'+esc(fmtMc(r.call_mc))+'</span></div>'+
+            '<div class="mc now"><span class="mc-lbl">Now</span><span class="mc-val">'+esc(fmtMc(r.cur_mc))+'</span></div>'+
+            '<div class="mc ath"><span class="mc-lbl">ATH</span><span class="mc-val">'+esc(fmtMc(r.ath_mc))+'</span></div>'+
+            '<div class="mc '+esc(siCls)+'"><span class="mc-lbl">Since</span><span class="mc-val">'+esc(fmtX(r.since_x))+'</span></div>'+
+            '<div class="mc '+esc(axCls)+'"><span class="mc-lbl">ATHx</span><span class="mc-val">'+esc(fmtX(r.ath_x))+'</span></div>'+
+          '</div>'+
+          (callersHtml?'<div class="m-section"><div class="m-sec-title">Callers · '+callers.length+' total</div>'+callersHtml+'</div>':"")+
+          (linksHtml?'<div class="m-section"><div class="m-sec-title">Links</div><div class="m-links">'+linksHtml+'</div></div>':"")+
+        '</div>';
+
+      document.body.style.overflow = "hidden";
+    }
+
+    function closeModal(){
+      var modal = document.getElementById("tokModal");
+      if(!modal) return;
+      modal.className = "tok-modal-overlay closing";
+      setTimeout(function(){
+        modal.style.display = "none";
+        modal.innerHTML = "";
+        document.body.style.overflow = "";
+      }, 150);
+    }
+
+    document.addEventListener("keydown", function(e){ if(e.key==="Escape") closeModal(); });
+
     /* ── Leaderboard: top 10 tokens by ATHx across all buckets ── */
     function paintLeaderboard(){
       var all = (_data.low||[]).concat(_data["100k"]||[]).concat(_data["1m"]||[]);
       all.sort(function(a,b){ return (Number(b.ath_x||0))-(Number(a.ath_x||0)); });
-      var top = all.slice(0,10);
+      _lbData = all.slice(0,10);
       var wrap = document.getElementById("lbWrap");
       var body = document.getElementById("lbBody");
       if(!wrap||!body) return;
-      if(!top.length){ wrap.style.display="none"; return; }
+      if(!_lbData.length){ wrap.style.display="none"; return; }
       wrap.style.display="";
       var rankClass = ["gold","gold","gold","silver","silver","silver","bronze","bronze","bronze","bronze"];
       var html="";
-      top.forEach(function(r, i){
+      _lbData.forEach(function(r, i){
         var ax = Number(r.ath_x||0);
         var sx = Number(r.since_x||0);
         var axCls = ax>=5?"hot":ax>=2?"warm":"cold";
@@ -658,7 +870,6 @@
         var av = (r.thumb_url||"").trim();
         var ticker = r.ticker||"?";
         var mint = r.mint||"";
-        var chart = r.chart_url||"";
         var ds = chain==="eth"?"ethereum":chain==="base"?"base":"solana";
 
         var avHtml = av
@@ -667,17 +878,17 @@
               ? '<img src="https://dd.dexscreener.com/ds-data/tokens/'+ds+'/'+esc(mint)+'.png" loading="lazy" alt="" onerror="imgFallback(this,\''+esc(mint)+'\',\''+esc(chain)+'\',\''+esc(ticker)+'\')" />'
               : '<span class="lb-av-ph">'+esc(ticker.slice(0,2).toUpperCase())+'</span>');
 
-        html += (chart?'<a class="lb-item" href="'+esc(chart)+'" target="_blank" rel="noreferrer">':'<div class="lb-item">');
+        html += '<div class="lb-item" onclick="openModal('+i+')" role="button" tabindex="0">';
         html +=   '<div class="lb-rank '+esc(rankClass[i]||'')+'">#'+(i+1)+'</div>';
         html +=   '<div class="lb-av">'+avHtml+'</div>';
         html +=   '<div class="lb-info">';
-        html +=     '<div class="lb-ticker" style="display:flex;align-items:center;gap:5px;">'+esc(ticker)+'<span class="'+esc(chainCls)+'">'+esc(chainLabel)+'</span></div>';
+        html +=     '<div class="lb-ticker">'+esc(ticker)+'<span class="'+esc(chainCls)+'">'+esc(chainLabel)+'</span></div>';
         html +=     '<div class="lb-meta">';
         html +=       '<span class="lb-athx '+esc(axCls)+'">'+esc(fmtX(ax))+'</span>';
         if(sx>0) html += '<span class="lb-since">now '+esc(fmtX(sx))+'</span>';
         html +=     '</div>';
         html +=   '</div>';
-        html += (chart?'</a>':'</div>');
+        html += '</div>';
       });
       body.innerHTML = html;
     }
@@ -723,6 +934,10 @@
     refresh();
     setInterval(refresh, 20000);
   </script>
+  <!-- Token detail modal -->
+  <div id="tokModal" style="display:none;" onclick="if(event.target===this)closeModal()">
+  </div>
+
   <script src="/static/community_pulse.js" defer></script>
 </body>
 </html>
