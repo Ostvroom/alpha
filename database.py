@@ -815,7 +815,8 @@ def was_project_alerted(twitter_id):
 def get_trending_projects_30d(limit: int = 30):
     """
     Trending projects by DISTINCT HVA count in the last 30 days.
-    Returns rows: (twitter_id, handle, name, description, created_at, hva_30d)
+    Returns rows:
+    (twitter_id, handle, name, description, created_at, hva_30d, ai_summary, ai_category)
     """
     limit = max(1, min(200, int(limit or 30)))
     conn = sqlite3.connect(DB_PATH)
@@ -830,7 +831,8 @@ def get_trending_projects_30d(limit: int = 30):
         )
         SELECT
             p.twitter_id, p.handle, p.name, p.description, p.created_at,
-            COALESCE(s30.count, 0) AS hva_30d
+            COALESCE(s30.count, 0) AS hva_30d,
+            p.ai_summary, p.ai_category
         FROM projects p
         LEFT JOIN Smarts30d s30 ON p.twitter_id = s30.project_id
         WHERE p.alerted_at IS NOT NULL

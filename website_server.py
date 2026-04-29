@@ -1786,9 +1786,9 @@ async def api_projects_trending(request: Request, limit: int = 5):
         # Normalize to: (twitter_id, handle, name, desc, created_at, smarts_30d)
         if isinstance(row, (list, tuple)):
             r = list(row) + [None] * 10
-            twitter_id, handle, name, desc, created_at, smarts = r[0], r[1], r[2], r[3], r[4], r[5]
+            twitter_id, handle, name, desc, created_at, smarts, ai_sum, ai_cat = r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]
         else:
-            twitter_id, handle, name, desc, created_at, smarts = "", "", "", "", "", 0
+            twitter_id, handle, name, desc, created_at, smarts, ai_sum, ai_cat = "", "", "", "", "", 0, "", ""
         hkey = str(handle or "").strip().lstrip("@").lower()
         p = prof.get(hkey) or {}
         age_days = _age_days_from_created_at(created_at)
@@ -1817,8 +1817,8 @@ async def api_projects_trending(request: Request, limit: int = 5):
             handle=str(handle or ""),
             name=str(name or ""),
             description=str(desc or ""),
-            summary="",
-            category="",
+            summary=str(ai_sum or ""),
+            category=str(ai_cat or ""),
         )
         if is_personal:
             continue
