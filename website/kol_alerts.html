@@ -228,6 +228,16 @@
       padding: 3px 8px; border-radius: 999px;
       background: rgba(200,160,255,.09); border: 1px solid rgba(200,160,255,.22); color: rgba(210,180,255,.85);
     }
+
+    /* ── Chain indicator badge ── */
+    .chain-badge {
+      display: inline-flex; align-items: center;
+      font-family: "JetBrains Mono", monospace; font-size: 8px; font-weight: 700; letter-spacing: .10em; text-transform: uppercase;
+      padding: 2px 7px; border-radius: 999px; white-space: nowrap; flex: 0 0 auto;
+    }
+    .chain-sol  { background: rgba(153,69,255,.13); border: 1px solid rgba(153,69,255,.30); color: rgba(195,150,255,.95); }
+    .chain-eth  { background: rgba(98,126,234,.13); border: 1px solid rgba(98,126,234,.32); color: rgba(160,180,255,.95); }
+    .chain-base { background: rgba(0,130,255,.12);  border: 1px solid rgba(0,130,255,.30);  color: rgba(100,185,255,.95); }
     .col-empty { padding: 28px 16px; text-align: center; }
     .col-empty-icon { font-size: 24px; opacity: .35; }
     .col-empty-txt { margin-top: 8px; font-family: "JetBrains Mono", monospace; font-size: 10px; color: rgba(240,232,192,.35); letter-spacing: .10em; text-transform: uppercase; }
@@ -441,6 +451,9 @@
         var chart  = r.chart_url||"";
         var av     = (r.thumb_url||"").trim();
         var ticker = r.ticker||"TOKEN";
+        var chain  = (r.chain||"sol").toLowerCase();
+        var chainLabel = chain==="eth"?"ETH":chain==="base"?"BASE":"SOL";
+        var chainCls   = "chain-badge chain-"+chain;
         var _ts    = r.call_ts||"";
         var _ago   = hoursAgo(_ts);
         var _hr    = fmtHour(_ts);
@@ -462,7 +475,7 @@
         html +=   '<div class="tok-id">';
         html +=     '<div class="tok-av">'+avHtml+'</div>';
         html +=     '<div class="tok-names">';
-        html +=       '<div class="tok-ticker">'+(chart?('<a href="'+esc(chart)+'" target="_blank" rel="noreferrer">'+esc(ticker)+'</a>'):esc(ticker))+'</div>';
+        html +=       '<div class="tok-ticker" style="display:flex;align-items:center;gap:6px;">'+(chart?('<a href="'+esc(chart)+'" target="_blank" rel="noreferrer">'+esc(ticker)+'</a>'):esc(ticker))+'<span class="'+esc(chainCls)+'">'+esc(chainLabel)+'</span></div>';
         if(mintShort) html += '<div class="tok-mint">'+esc(mintShort)+'</div>';
         html +=     '</div>';
         html +=   '</div>';

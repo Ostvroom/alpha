@@ -2448,6 +2448,33 @@ def _dashboard_bucket_by_call_mc(call_mc: Optional[float], low_max: float, mid_m
     return "1m"
 
 
+def _detect_chain(mint: str, dex_url: str) -> str:
+    """Infer blockchain from mint address format and dexscreener URL.
+
+    Returns one of: 'sol', 'eth', 'base'.
+    - EVM mints start with '0x'; dex_url path refines ETH vs BASE.
+    - Everything else is treated as Solana.
+    """
+    mint = (mint or "").strip()
+    dex = (dex_url or "").lower()
+    if mint.startswith("0x"):
+        if "/base/" in dex or dex.endswith("/base"):
+            return "base"
+        return "eth"
+    return "sol"
+
+
+def _chain_chart_url(chain: str, mint: str) -> str:
+    """Return the appropriate gmgn chart URL for the given chain + mint."""
+    if not mint:
+        return ""
+    if chain == "eth":
+        return f"https://gmgn.ai/eth/token/{mint}"
+    if chain == "base":
+        return f"https://gmgn.ai/base/token/{mint}"
+    return f"https://gmgn.ai/sol/token/{mint}"
+
+
 def _calculate_discord_style_project_score(project_id: str) -> tuple[int, int]:
     """
     Match Discord bot `calculate_score()` formula for website project details.
@@ -2582,7 +2609,8 @@ async def api_kol_dashboard(
                     })
 
                 dex = str(it.get("dexscreener_url") or it.get("dexUrl") or "")
-                chart = f"https://gmgn.ai/sol/token/{mint}" if mint else ""
+                chain = _detect_chain(mint, dex)
+                chart = _chain_chart_url(chain, mint)
                 token_x = str(it.get("twitter_url") or it.get("twitterUrl") or "")
                 token_site = str(it.get("website_url") or it.get("websiteUrl") or "")
                 thumb_url = (
@@ -2594,6 +2622,7 @@ async def api_kol_dashboard(
                 staged[bucket].append((latest_dt, {
                     "mint": mint,
                     "ticker": kolfi._item_ticker(it),  # type: ignore[attr-defined]
+                    "chain": chain,
                     "call_ts": str(latest_call.get("messageTs") or "").strip(),
                     "call_mc": latest_call_mc,
                     "cur_mc": cur_mc,
