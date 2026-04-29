@@ -2614,12 +2614,16 @@ async def api_kol_dashboard(
                 chart = _chain_chart_url(chain, mint)
                 token_x = str(it.get("twitter_url") or it.get("twitterUrl") or "")
                 token_site = str(it.get("website_url") or it.get("websiteUrl") or "")
+                # Resolve thumbnail without network lookup so the build stays fast.
+                # The chain-correct Dexscreener CDN URL is used as the fast fallback;
+                # if it 404s the browser's imgFallback() cascade handles it client-side.
+                thumb_url = await _thumb_url_cached(
+                    session, it, mint, allow_network_lookup=False, chain=chain,
+                ) if mint else ""
 
                 bucket = _dashboard_bucket_by_call_mc(latest_call_mc, low_max, mid_max)
                 staged[bucket].append((latest_dt, {
                     "mint": mint,
-                    "_it": it,        # kept temporarily for parallel thumb fetch
-                    "_chain": chain,  # kept temporarily for parallel thumb fetch
                     "ticker": kolfi._item_ticker(it),  # type: ignore[attr-defined]
                     "chain": chain,
                     "call_ts": str(latest_call.get("messageTs") or "").strip(),
@@ -2635,29 +2639,8 @@ async def api_kol_dashboard(
                     "dex_url": dex,
                     "token_x_url": token_x,
                     "token_site_url": token_site,
-                    "thumb_url": "",  # filled in after parallel fetch below
+                    "thumb_url": thumb_url,
                 }))
-
-            # ── Parallel thumbnail fetch (semaphore-capped to avoid hammering CDN) ──
-            _sem = asyncio.Semaphore(12)
-
-            async def _fetch_thumb(row: dict) -> None:
-                _mint = row.get("mint", "")
-                _it   = row.pop("_it", {})
-                _ch   = row.pop("_chain", "sol")
-                if not _mint:
-                    return
-                async with _sem:
-                    try:
-                        row["thumb_url"] = await _thumb_url_cached(
-                            session, _it, _mint, allow_network_lookup=True, chain=_ch,
-                        )
-                    except Exception:
-                        pass
-
-            all_rows = [r for bucket_list in staged.values() for _, r in bucket_list]
-            await asyncio.gather(*[_fetch_thumb(r) for r in all_rows], return_exceptions=True)
-            # ── End parallel thumbnail fetch ──
 
             buckets_out = {"low": [], "100k": [], "1m": []}
             for key in ("low", "100k", "1m"):
