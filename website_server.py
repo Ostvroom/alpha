@@ -1670,31 +1670,47 @@ def _is_personal_profile_like(
         "ether",
         "eth",
         "web3",
-        "art",
         ".art",
         ".xyz",
         ".com",
         "pfp",
         "collection",
-        "meme",
         "game",
-        "agent",
         "neural",
         "gpu",
         "prediction",
-        "market",
-        "lab",
         "velcor3",
+    ]
+    crypto_context_terms = [
+        "crypto",
+        "web3",
+        "blockchain",
+        "onchain",
+        "solana",
+        "ethereum",
+        "eth",
+        "defi",
+        "nft",
+        "token",
+        "coin",
+        "protocol",
+        "dex",
+        "liquidity",
+        "airdrop",
     ]
 
     has_strong_project_signal = any(indicator in text for indicator in strong_project_indicators)
+    has_crypto_context = any(term in text for term in crypto_context_terms)
     weak_signal_hits = sum(1 for indicator in weak_project_indicators if indicator in text)
 
     if matched_ban and not has_strong_project_signal:
         return True, matched_ban
+    # Hard gate: avoid passing generic/personal profiles with no crypto context.
+    if not has_crypto_context and not has_strong_project_signal:
+        return True, "no crypto context"
     if has_strong_project_signal:
         return False, None
-    if weak_signal_hits >= 2 and not matched_ban:
+    if weak_signal_hits >= 3 and not matched_ban and has_crypto_context:
         return False, None
     if matched_ban:
         return True, matched_ban
