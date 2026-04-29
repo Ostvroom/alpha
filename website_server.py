@@ -1705,9 +1705,6 @@ def _is_personal_profile_like(
 
     if matched_ban and not has_strong_project_signal:
         return True, matched_ban
-    # Hard gate: avoid passing generic/personal profiles with no crypto context.
-    if not has_crypto_context and not has_strong_project_signal:
-        return True, "no crypto context"
     if has_strong_project_signal:
         return False, None
     if weak_signal_hits >= 3 and not matched_ban and has_crypto_context:

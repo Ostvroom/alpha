@@ -916,9 +916,6 @@ class BlockBrainBot(commands.Bot):
 
         if matched_ban and not has_strong_project_signal:
             return True, matched_ban
-        # Hard gate: avoid passing generic/personal profiles with no crypto context.
-        if not has_crypto_context and not has_strong_project_signal:
-            return True, "no crypto context"
         if has_strong_project_signal:
             return False, None
         if weak_signal_hits >= 3 and not matched_ban and has_crypto_context:
@@ -2083,26 +2080,46 @@ class BlockBrainBot(commands.Bot):
 
         # Personal Profile Filter (bio/handle pre-check)
         is_personal, reason = self.is_personal_profile(account)
-        # For ambiguous profiles, inspect recent tweets before final decision.
+        # For potential false negatives from bio-only checks, inspect recent tweets
+        # and briefly retry in case the account just posted.
         timeline_tweets = None
         tweet_text_blob = ""
-        if is_personal and reason == "no crypto context":
-            try:
-                timeline_tweets = await self.twitter.get_user_timeline(account.id, count=8)
+        if is_personal:
+            for attempt in range(3):
+                try:
+                    timeline_tweets = await self.twitter.get_user_timeline(account.id, count=8)
+                except Exception:
+                    timeline_tweets = []
                 parts = []
                 for t in (timeline_tweets or [])[:6]:
                     tx = (getattr(t, "text", None) or getattr(t, "full_text", None) or "").strip()
                     if tx:
                         parts.append(tx)
                 tweet_text_blob = " ".join(parts)[:2500]
-            except Exception:
-                tweet_text_blob = ""
+                if tweet_text_blob:
+                    break
+                if attempt < 2:
+                    await asyncio.sleep(5)
+
             if tweet_text_blob:
                 is_personal, reason2 = self.is_personal_profile(account, extra_text=tweet_text_blob)
                 if not is_personal:
                     print("         ✅ RESCUED by tweet context: looks like project")
                 else:
                     reason = reason2 or reason
+            else:
+                # No tweets yet: be lenient for common bio-only false positives.
+                soft_bio_reasons = {
+                    "building @",
+                    "founder @",
+                    "founder of",
+                    "co-founder of",
+                    "passionate collector",
+                    "nft collector",
+                }
+                if reason in soft_bio_reasons:
+                    is_personal = False
+                    print("         ⚠️ No tweets yet; allowing for re-evaluation on next scans")
         if is_personal:
             print(f"         ❌ SKIP Personal: {reason}")
             return
