@@ -158,6 +158,32 @@
       return true;
     }
 
+    function appendSmartFollowersV2(extra){
+      try{
+        var v2 = (extra && extra.smart_followers_v2) ? extra.smart_followers_v2 : null;
+        if (!v2) return;
+        var fieldsEl = document.getElementById("fields");
+        fieldsEl.style.display = "grid";
+        var raw = Number(v2.raw_score || 0);
+        var unique = Number(v2.unique_hvas || 0);
+        var h24 = Number(v2.hvas_24h || 0);
+        var h7 = Number(v2.hvas_7d || 0);
+        var h30 = Number(v2.hvas_30d || 0);
+        var div = document.createElement("div");
+        div.className = "field full";
+        div.innerHTML =
+          '<div class="k">🧪 Smart Followers v2</div>'
+          + '<div class="v">'
+          + '<span style="display:inline-block;margin-right:12px;"><b>Raw:</b> '+esc(String(Math.round(raw * 10) / 10))+'</span>'
+          + '<span style="display:inline-block;margin-right:12px;"><b>Unique:</b> '+esc(String(unique))+'</span>'
+          + '<span style="display:inline-block;margin-right:12px;"><b>24h:</b> '+esc(String(h24))+'</span>'
+          + '<span style="display:inline-block;margin-right:12px;"><b>7d:</b> '+esc(String(h7))+'</span>'
+          + '<span style="display:inline-block;"><b>30d:</b> '+esc(String(h30))+'</span>'
+          + '</div>';
+        fieldsEl.appendChild(div);
+      }catch(e){}
+    }
+
     function applyEmbed(ev, embed){
       // Prefer embed title/description/url when present.
       if (embed && embed.title) {
@@ -238,6 +264,7 @@
         a.href = ev.url;
         a.style.display = "inline-block";
       }
+      appendSmartFollowersV2(extra);
       // Smart follower names are intentionally hidden in detail views.
       // Keep the raw key/value block hidden by default (fields render is nicer).
     }

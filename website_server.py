@@ -2994,7 +2994,15 @@ async def api_feed_event(request: Request, event_id: int):
                     if names:
                         extra["smart_followers"] = names
                         extra["smart_followers_count"] = len(names)
-                        ev["extra"] = extra
+                    sf_v2 = database.calculate_project_smart_followers_v2(pid) or {}
+                    extra["smart_followers_v2"] = {
+                        "raw_score": float(sf_v2.get("raw_score") or 0.0),
+                        "unique_hvas": int(sf_v2.get("unique_hvas") or 0),
+                        "hvas_24h": int(sf_v2.get("hvas_24h") or 0),
+                        "hvas_7d": int(sf_v2.get("hvas_7d") or 0),
+                        "hvas_30d": int(sf_v2.get("hvas_30d") or 0),
+                    }
+                    ev["extra"] = extra
     except Exception:
         pass
     return ev
