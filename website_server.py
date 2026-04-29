@@ -2220,34 +2220,43 @@ def _dex_validated_caps(
     call_peak_mc: Optional[float] = None,
 ) -> tuple[Optional[float], Optional[float]]:
     """
-    Cross-check Kolfi MC/ATH against live Dexscreener MC.
-    If Kolfi values are wildly above the live Dex MC and observed call peaks,
-    cap them to a safer ceiling derived from Dex/peak data.
-    """
-    try:
-        ratio = float(os.getenv("KOLFI_DEX_SANITY_RATIO", "5") or 5)
-    except Exception:
-        ratio = 5.0
-    ratio = max(2.0, min(20.0, ratio))
+    Cross-check Kolfi MC/ATH against live Dexscreener MC and the best observed
+    peakMarketCap from the calls array.
 
+    Current MC: if Kolfi's value is > 3x the live Dex MC, trust Dex.
+    ATH MC: Kolfi's ath_market_cap is frequently wildly wrong. Use call_peak_mc
+            (from peakMarketCap fields in the calls array) as the ATH when available,
+            falling back to Kolfi's ath_mc only if it passes a sanity check.
+    """
     if dex_mc is None or dex_mc <= 0:
         return cur_mc, ath_mc
 
-    ceiling = float(dex_mc) * ratio
-    if call_peak_mc and call_peak_mc > 0:
-        ceiling = max(ceiling, float(call_peak_mc))
-
-    safe_floor = max(float(dex_mc), float(call_peak_mc or 0.0))
-
-    if cur_mc is not None and cur_mc > ceiling:
-        cur_mc = safe_floor
-    if ath_mc is not None and ath_mc > ceiling:
-        ath_mc = safe_floor
+    # --- Current MC: hard trust Dex when Kolfi diverges significantly ---
+    cur_ceiling = dex_mc * 3.0
+    if cur_mc is not None and cur_mc > cur_ceiling:
+        cur_mc = dex_mc  # Kolfi's live price is stale/wrong; use Dex
 
     if cur_mc is None or cur_mc <= 0:
-        cur_mc = float(dex_mc)
-    if ath_mc is None or ath_mc <= 0:
-        ath_mc = max(float(dex_mc), float(call_peak_mc or 0.0))
+        cur_mc = dex_mc
+
+    # --- ATH: use call_peak_mc (peakMarketCap from calls) as the ground truth.
+    # Kolfi's top-level ath_market_cap is unreliable and often inflated.
+    if call_peak_mc and call_peak_mc > 0:
+        # call_peak_mc is the best observed ATH from the calls array.
+        # Accept Kolfi's ath_mc only if it's within 10x of call_peak_mc.
+        if ath_mc is not None and ath_mc > call_peak_mc * 10.0:
+            # Clearly garbage vs the observed call peak — use call_peak instead.
+            ath_mc = call_peak_mc
+        # ATH must be at least call_peak if that data exists.
+        if ath_mc is None or ath_mc < call_peak_mc:
+            ath_mc = call_peak_mc
+    else:
+        # No call peak data — fall back to Dex-ratio ceiling for garbage filter.
+        ath_ceiling = dex_mc * 500.0  # tokens can 500x from current to ATH
+        if ath_mc is not None and ath_mc > ath_ceiling:
+            ath_mc = ath_ceiling
+
+    # ATH must be >= current.
     if cur_mc is not None and ath_mc is not None and ath_mc < cur_mc:
         ath_mc = cur_mc
     return cur_mc, ath_mc
@@ -2305,7 +2314,7 @@ async def _apply_dex_sanitization_to_rows(
                 if not dmc or dmc <= 0:
                     reasons.append("dex_missing")
                 try:
-                    call_peak = float(row.get("call_mc") or 0.0)
+                    call_peak = float(row.get("peak_mc") or row.get("call_mc") or 0.0)
                 except Exception:
                     call_peak = 0.0
                 old_cur = row.get("cur_mc")
@@ -2334,8 +2343,18 @@ async def _apply_dex_sanitization_to_rows(
                 except Exception:
                     prev_observed = None
                 if prev_observed and prev_observed > 0 and (new_ath is None or new_ath < prev_observed):
-                    new_ath = prev_observed
-                    reasons.append("observed_ath_history_floor")
+                    # Only trust the stored ATH floor if it's reasonable.
+                    # If it's > 10x the call_peak and > 1000x dex, it was a bad snapshot.
+                    stored_is_sane = True
+                    if call_peak > 0 and prev_observed > call_peak * 10.0:
+                        stored_is_sane = False
+                    if dmc and dmc > 0 and prev_observed > dmc * 5000.0:
+                        stored_is_sane = False
+                    if stored_is_sane:
+                        new_ath = prev_observed
+                        reasons.append("observed_ath_history_floor")
+                    else:
+                        reasons.append("observed_ath_history_floor_rejected_bad_snapshot")
                 if new_ath is not None and new_ath > 0:
                     next_observed = max(float(prev_observed or 0.0), float(new_ath))
                     if float(ent.get("observed_ath_mc") or 0.0) != float(next_observed):
@@ -2527,6 +2546,13 @@ async def api_kol_dashboard(
                 call_mc = kolfi._safe_float((call or {}).get("callMarketCap"))  # type: ignore[attr-defined]
                 if call_mc is None or call_mc <= 0:
                     continue
+                # Collect the best peakMarketCap from all calls — more reliable ATH estimate
+                # than Kolfi's top-level ath_market_cap which is frequently wrong.
+                peak_mc_from_calls: Optional[float] = None
+                for _dt_c, _c in (dated if dated else []):
+                    _p = kolfi._safe_float(_c.get("peakMarketCap"))  # type: ignore[attr-defined]
+                    if _p and _p > 0:
+                        peak_mc_from_calls = max(peak_mc_from_calls or 0.0, _p) or None
                 cur_mc, ath_mc = _trusted_kolfi_caps(it)
                 since = (cur_mc / call_mc) if (call_mc and call_mc > 0 and cur_mc and cur_mc > 0) else None
                 ath_x = (ath_mc / call_mc) if (call_mc and call_mc > 0 and ath_mc and ath_mc > 0) else None
@@ -2570,6 +2596,7 @@ async def api_kol_dashboard(
                     "caller_x": caller_x,
                     "callers": callers_out,
                     "call_mc": call_mc,
+                    "peak_mc": peak_mc_from_calls,  # best peakMarketCap from calls array
                     "cur_mc": cur_mc,
                     "ath_mc": ath_mc,
                     "since_x": since,
