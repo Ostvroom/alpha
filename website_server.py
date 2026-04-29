@@ -49,7 +49,6 @@ import payment_database
 import payment_verify
 import feed_events
 import database
-from twitter_client import TwitterClient
 from trackers import kolfi_tokens_client as kolfi
 from app_paths import DATA_DIR, ensure_dirs
 
@@ -377,9 +376,6 @@ _THUMB_CACHE: dict[str, tuple[float, str]] = {}
 # Dexscreener MC cross-check cache: mint -> (timestamp, market_cap_usd or 0)
 _DEX_MC_CACHE: dict[str, tuple[float, float]] = {}
 _KOL_DASHBOARD_LAST_GOOD: Optional[dict] = None
-_REUSE_TWITTER: Optional[TwitterClient] = None
-_REUSE_TWITTER_LOCK = asyncio.Lock()
-_REUSE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _FIRST_CALLS_PATH = str(DATA_DIR / "kolfi_first_calls.json")
 _FIRST_CALLS: dict[str, dict] = {}
 _FIRST_CALLS_LOADED = False
@@ -1128,36 +1124,6 @@ class XReplyClaimRequest(BaseModel):
     reply_url: str
 
 
-class ReuseLookupRequest(BaseModel):
-    query: str
-
-
-def _normalize_x_handle(query: str) -> str:
-    s = str(query or "").strip()
-    if not s:
-        return ""
-    s = s.replace("https://", "").replace("http://", "")
-    s = s.replace("www.x.com/", "x.com/").replace("www.twitter.com/", "twitter.com/")
-    if s.startswith("x.com/") or s.startswith("twitter.com/"):
-        parts = s.split("/", 1)
-        s = parts[1] if len(parts) > 1 else ""
-    s = s.split("?", 1)[0].split("#", 1)[0].strip().lstrip("@")
-    s = s.split("/", 1)[0].strip()
-    if not re.fullmatch(r"[A-Za-z0-9_]{1,15}", s or ""):
-        return ""
-    return s
-
-
-async def _get_reuse_twitter() -> TwitterClient:
-    global _REUSE_TWITTER
-    if _REUSE_TWITTER is not None:
-        return _REUSE_TWITTER
-    async with _REUSE_TWITTER_LOCK:
-        if _REUSE_TWITTER is None:
-            _REUSE_TWITTER = TwitterClient()
-    return _REUSE_TWITTER
-
-
 @app.post("/api/x/claim")
 async def api_x_claim(request: Request, body: XReplyClaimRequest):
     """
@@ -1379,11 +1345,6 @@ async def page_telegram(request: Request):
 @app.get("/daily-finds", response_class=HTMLResponse)
 async def page_daily_finds(request: Request):
     return _serve_page(request, "daily_finds.html")
-
-
-@app.get("/reuse", response_class=HTMLResponse)
-async def page_reuse(request: Request):
-    return _serve_page(request, "reuse.html")
 
 
 @app.get("/early-access", response_class=HTMLResponse)
@@ -2054,117 +2015,6 @@ async def api_projects_finds(request: Request, limit: int = 50, exclude_escalati
     out.sort(key=lambda x: str(x.get("alerted_at") or x.get("created_at") or ""), reverse=True)
     out = out[:limit]
     return {"items": out}
-
-
-@app.post("/api/reuse/first-followers")
-async def api_reuse_first_followers(request: Request, body: ReuseLookupRequest):
-    if not _DEV_PREVIEW and not _has_access(request):
-        raise HTTPException(401, "Unauthorized")
-    handle = _normalize_x_handle(body.query)
-    if not handle:
-        raise HTTPException(400, "Invalid handle or x.com link")
-
-    cache_key = f"reuse:first:{handle.lower()}"
-    now = time.time()
-    hit = _REUSE_CACHE.get(cache_key)
-    if hit and now - hit[0] <= 300:
-        return hit[1]
-
-    tw = await _get_reuse_twitter()
-    user = await tw.get_user_by_handle(handle)
-    if not user:
-        raise HTTPException(404, "Handle not found or Twitter session unavailable")
-
-    user_id = str(getattr(user, "id", "") or "")
-    target_sn = str(getattr(user, "screen_name", "") or handle)
-    followers_count = int(getattr(user, "followers_count", 0) or 0)
-    fetched = await tw.get_first_followers(user_id, limit=1000, screen_name=target_sn)
-    rows, is_partial = fetched if isinstance(fetched, tuple) else ([], True)
-    arr = list(rows or [])
-    oldest_window = arr[-10:] if len(arr) > 10 else arr
-    oldest_window = list(reversed(oldest_window))
-
-    out_rows = []
-    for i, f in enumerate(oldest_window, start=1):
-        fh = str(getattr(f, "screen_name", "") or "")
-        out_rows.append(
-            {
-                "rank": i,
-                "name": str(getattr(f, "name", "") or ""),
-                "handle": fh,
-                "followers": int(getattr(f, "followers_count", 0) or 0),
-                "url": f"https://x.com/{fh}" if fh else "",
-            }
-        )
-
-    payload = {
-        "query": handle,
-        "target": {
-            "name": str(getattr(user, "name", "") or ""),
-            "handle": str(getattr(user, "screen_name", "") or handle),
-            "followers": followers_count,
-            "url": f"https://x.com/{str(getattr(user, 'screen_name', '') or handle)}",
-        },
-        "first_followers": out_rows,
-        "is_partial": bool(is_partial or followers_count > 1000),
-        "note": (
-            "First followers use X REST followers/list (newest-first), rotating cookie sessions. "
-            "For large accounts you only see the tail of the list, not true earliest signups. "
-            "If empty: followers may be hidden, or every session was denied by X."
-        ),
-    }
-    _REUSE_CACHE[cache_key] = (now, payload)
-    return payload
-
-
-@app.post("/api/reuse/username-history")
-async def api_reuse_username_history(request: Request, body: ReuseLookupRequest):
-    if not _DEV_PREVIEW and not _has_access(request):
-        raise HTTPException(401, "Unauthorized")
-    handle = _normalize_x_handle(body.query)
-    if not handle:
-        raise HTTPException(400, "Invalid handle or x.com link")
-
-    tw = await _get_reuse_twitter()
-    user = await tw.get_user_by_handle(handle)
-    if not user:
-        raise HTTPException(404, "Handle not found or Twitter session unavailable")
-
-    current = str(getattr(user, "screen_name", "") or handle)
-    uid = str(getattr(user, "id", "") or "")
-
-    about = await tw.fetch_about_account(handle)
-    history: list[str] = []
-    if about:
-        cnt = about.get("username_change_count")
-        if cnt is not None:
-            line = f"X reports {cnt} username change(s) on record for this account."
-            iso = about.get("username_last_changed_iso")
-            if iso:
-                line += f" Last change: {iso}."
-            history.append(line)
-        reg = about.get("account_based_in")
-        if reg:
-            la = about.get("location_accurate")
-            acc = "yes" if la is True else ("no" if la is False else "n/a")
-            history.append(f"Account based in: {reg} (accurate flag: {acc}).")
-        if about.get("is_identity_verified"):
-            history.append("ID verification: completed per X About panel.")
-
-    note = (
-        "X does not list each old @handle in this response—only the official change count and last-change time from About this account."
-        if about
-        else "Could not load About this account (query may need updating, or every cookie session failed)."
-    )
-
-    return {
-        "query": handle,
-        "current_handle": current,
-        "user_id": uid,
-        "about": about,
-        "history": history,
-        "note": note,
-    }
 
 
 @app.get("/api/daily-finds")

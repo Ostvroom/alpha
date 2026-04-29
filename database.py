@@ -124,6 +124,25 @@ def init_db():
         )
         """
     )
+
+    # Distinct @handles observed per X user id (X does not expose full rename history via API).
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS x_handle_snapshots (
+            twitter_id TEXT NOT NULL,
+            handle TEXT NOT NULL,
+            recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            source TEXT DEFAULT '',
+            UNIQUE(twitter_id, handle)
+        )
+        """
+    )
+    try:
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_x_handle_snapshots_tid ON x_handle_snapshots(twitter_id)"
+        )
+    except Exception:
+        pass
     
     # Optional migration: backfill alerted_at for legacy DBs.
     # Disabled by default because it can cause "daily finds" to include projects that were never posted.
@@ -545,6 +564,9 @@ def save_project(
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+    cursor.execute("SELECT handle FROM projects WHERE twitter_id = ?", (twitter_id,))
+    prow = cursor.fetchone()
+    prev_handle_key = str(prow[0]) if prow and prow[0] is not None else ""
     cursor.execute(
         """
         INSERT INTO projects (twitter_id, handle, name, description, created_at, ai_summary, ai_category, ai_alpha_score, followers_count)
@@ -563,6 +585,95 @@ def save_project(
     )
     conn.commit()
     conn.close()
+    _record_handle_snapshot_after_project_save(twitter_id, handle, prev_handle_key)
+
+
+def _normalize_handle_key(h: Optional[str]) -> str:
+    if not h:
+        return ""
+    return str(h).strip().lstrip("@").lower()
+
+
+def _record_handle_snapshot_after_project_save(
+    twitter_id: str, new_handle: Optional[str], prev_handle_key: str
+) -> None:
+    """Log current and previous handle keys when a project row changes handle."""
+    tid = str(twitter_id or "").strip()
+    if not tid:
+        return
+    new_k = _normalize_handle_key(new_handle)
+    if new_k:
+        record_handle_snapshot(tid, new_k, "project_upsert")
+    prev_k = _normalize_handle_key(prev_handle_key)
+    if prev_k and new_k and prev_k != new_k:
+        record_handle_snapshot(tid, prev_k, "before_rename")
+
+
+def record_handle_snapshot(twitter_id: str, handle: str, source: str = "") -> None:
+    """Upsert one (twitter_id, handle) row and refresh recorded_at (first-seen preserved via MIN elsewhere if needed)."""
+    tid = str(twitter_id or "").strip()
+    h = _normalize_handle_key(handle)
+    if not tid or not h:
+        return
+    src = (source or "")[:120]
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        c = conn.cursor()
+        c.execute(
+            """
+            INSERT INTO x_handle_snapshots (twitter_id, handle, source, recorded_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(twitter_id, handle) DO UPDATE SET
+                recorded_at = excluded.recorded_at,
+                source = excluded.source
+            """,
+            (tid, h, src),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def list_remembered_handles(
+    twitter_id: str, exclude_handle: Optional[str] = None, limit: int = 50
+) -> list[dict]:
+    """
+    Handles stored for this user id, ordered by last observation (newest first).
+    Excludes the current screen name when provided.
+    """
+    tid = str(twitter_id or "").strip()
+    if not tid:
+        return []
+    lim = max(1, min(200, int(limit or 50)))
+    ex = _normalize_handle_key(exclude_handle) if exclude_handle else ""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        c = conn.cursor()
+        c.execute(
+            """
+            SELECT handle, recorded_at
+            FROM x_handle_snapshots
+            WHERE twitter_id = ?
+            ORDER BY recorded_at DESC
+            LIMIT ?
+            """,
+            (tid, lim + 5),
+        )
+        rows = c.fetchall() or []
+    finally:
+        conn.close()
+    out: list[dict] = []
+    seen: set[str] = set()
+    for h, ts in rows:
+        key = _normalize_handle_key(str(h or ""))
+        if not key or key == ex or key in seen:
+            continue
+        seen.add(key)
+        out.append({"handle": key, "last_seen": str(ts or "")})
+        if len(out) >= lim:
+            break
+    return out
+
 
 def get_project_ai_data(twitter_id):
     conn = sqlite3.connect(DB_PATH)
