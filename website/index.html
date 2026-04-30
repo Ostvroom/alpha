@@ -1552,11 +1552,28 @@
       var gate = new URLSearchParams(window.location.search).get("gate") || "";
       if (gate === "discord_error" || gate === "not_whitelisted") {
         open();
-        if (err) {
+        var dialog = document.querySelector("#tg-modal .tg-dialog");
+        if (gate === "not_whitelisted" && dialog) {
+          dialog.innerHTML = [
+            '<div class="tg-head">',
+            '  <div class="tg-title">Access Gate · Not Whitelisted</div>',
+            '  <button class="tg-close" type="button" id="tg-close-denied" aria-label="Close">&times;</button>',
+            '</div>',
+            '<div class="tg-steps" style="color:rgba(240,232,192,.72);margin-bottom:16px">',
+            '  Your Discord account is <span style="color:rgba(255,150,100,.90);font-weight:600">not on the whitelist</span>.<br/>',
+            '  Contact the team to request access.',
+            '</div>',
+            '<div class="tg-row" style="flex-direction:column;gap:8px;margin-bottom:10px">',
+            '  <a class="tg-btn-discord" href="https://t.me/Sultandegeen" target="_blank" rel="noopener noreferrer" style="text-align:center">Contact on Telegram</a>',
+            '  <a class="tg-btn-discord" href="https://x.com/Degensultan" target="_blank" rel="noopener noreferrer" style="text-align:center">Follow on X for updates</a>',
+            '</div>',
+            '<div class="tg-help">Already approved? <a href="/api/access/discord/start?next=/projects" style="color:rgba(255,204,0,.65)">Try another account</a></div>'
+          ].join("");
+          var closeBtn2 = document.getElementById("tg-close-denied");
+          if (closeBtn2) closeBtn2.addEventListener("click", close);
+        } else if (err) {
           err.style.display = "block";
-          err.textContent = gate === "not_whitelisted"
-            ? "Access denied: your Discord ID is not whitelisted."
-            : "Discord login failed. Please try again.";
+          err.textContent = "Discord login failed. Please try again.";
         }
       }
     } catch (e) {}

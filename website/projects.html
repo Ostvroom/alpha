@@ -233,19 +233,38 @@
 
   <div class="gate" id="gate">
     <div class="gate-back" id="gateBack"></div>
-    <div class="gate-card" role="dialog" aria-modal="true" aria-label="Access gate">
+
+    <!-- Default: connect discord -->
+    <div class="gate-card" id="gateCardConnect" role="dialog" aria-modal="true" aria-label="Access gate">
       <div class="gate-head">
-        <div class="gate-title">Access gate · connect Discord</div>
+        <div class="gate-title">Access Gate · Connect Discord</div>
         <button class="gate-close" type="button" id="gateClose" aria-label="Close">&times;</button>
       </div>
-      <div class="gate-steps">
-        Connect your Discord to unlock the website.
-      </div>
+      <div class="gate-steps">Connect your Discord to unlock the website.</div>
       <div class="gate-row">
         <a class="gate-btn-discord" id="gateConnectDiscord" href="#">Connect Discord</a>
       </div>
       <div class="gate-help">We only request basic identity (scope: identify).</div>
       <div class="gate-err" id="gateErr"></div>
+    </div>
+
+    <!-- Not whitelisted state -->
+    <div class="gate-card" id="gateCardDenied" role="dialog" aria-modal="true" aria-label="Access denied" style="display:none">
+      <div class="gate-head">
+        <div class="gate-title">Access Gate · Not Whitelisted</div>
+      </div>
+      <div style="font-size:13.5px;color:rgba(240,232,192,.72);line-height:1.65;margin-bottom:18px">
+        Your Discord account is <span style="color:rgba(255,150,100,.90);font-weight:600">not on the whitelist</span>.<br/>
+        Contact the team to request access.
+      </div>
+      <div class="gate-row" style="flex-direction:column;gap:8px">
+        <a class="gate-btn-discord" href="https://t.me/Sultandegeen" target="_blank" rel="noopener noreferrer" style="text-align:center">Contact on Telegram</a>
+        <a class="gate-btn-discord" href="https://x.com/Degensultan" target="_blank" rel="noopener noreferrer" style="text-align:center">Follow on X for updates</a>
+      </div>
+      <div class="gate-help" style="margin-top:10px">
+        Already approved? Try connecting with a different Discord account.
+        <a href="/api/access/discord/start?next=/projects" style="color:rgba(255,204,0,.65);text-decoration:none;display:block;margin-top:6px">↩ Try another account</a>
+      </div>
     </div>
   </div>
 
@@ -498,16 +517,29 @@
     (function(){
       function lockUi(){
         document.body.classList.add("locked");
-        document.getElementById("trending").innerHTML = '<div class="ps">Locked — complete tweet gate to view.</div>';
-        document.getElementById("newProjects").innerHTML = '<div class="ps">Locked — complete tweet gate to view.</div>';
-        document.getElementById("list").innerHTML = '<div class="ps">Locked — complete tweet gate to view.</div>';
+        document.getElementById("trending").innerHTML = '<div class="ps">Locked — connect Discord to view.</div>';
+        document.getElementById("newProjects").innerHTML = '<div class="ps">Locked — connect Discord to view.</div>';
+        document.getElementById("list").innerHTML = '<div class="ps">Locked — connect Discord to view.</div>';
         document.getElementById("stat").textContent = "Locked";
+
+        // Check URL for gate reason
+        var gateParam = new URLSearchParams(window.location.search).get("gate") || "";
+        if (gateParam === "not_whitelisted") {
+          // Show the "not whitelisted" card instead of the connect card
+          var connectCard = document.getElementById("gateCardConnect");
+          var deniedCard  = document.getElementById("gateCardDenied");
+          if (connectCard) connectCard.style.display = "none";
+          if (deniedCard)  deniedCard.style.display  = "";
+        } else if (gateParam === "discord_error") {
+          var err = document.getElementById("gateErr");
+          if (err){ err.style.display="block"; err.textContent="Discord login failed. Please try again."; }
+        }
+
+        function close(){ return; }
         var closeBtn = document.getElementById("gateClose");
         var back = document.getElementById("gateBack");
         var connectBtn = document.getElementById("gateConnectDiscord");
         var err = document.getElementById("gateErr");
-
-        function close(){ return; }
         if (closeBtn) closeBtn.addEventListener("click", close);
         if (back) back.addEventListener("click", close);
         document.addEventListener("keydown", function(e){ if (e.key === "Escape") close(); });
@@ -515,8 +547,7 @@
           connectBtn.addEventListener("click", function(e){
             e.preventDefault();
             if (err){ err.style.display="none"; err.textContent=""; }
-            var next = window.location.pathname + window.location.search + window.location.hash;
-            window.location.href = "/api/access/discord/start?next=" + encodeURIComponent(next);
+            window.location.href = "/api/access/discord/start?next=/projects";
           });
         }
       }
