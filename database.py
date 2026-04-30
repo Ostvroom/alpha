@@ -125,6 +125,26 @@ def init_db():
         """
     )
 
+    # Presale submissions
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS presale_submissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tx_hash TEXT NOT NULL,
+            discord_id TEXT NOT NULL,
+            discord_username TEXT DEFAULT '',
+            submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            status TEXT DEFAULT 'pending',
+            notes TEXT DEFAULT '',
+            UNIQUE(tx_hash)
+        )
+        """
+    )
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_presale_discord ON presale_submissions(discord_id)")
+    except Exception:
+        pass
+
     # Distinct @handles observed per X user id (X does not expose full rename history via API).
     cursor.execute(
         """
@@ -673,6 +693,35 @@ def list_remembered_handles(
         if len(out) >= lim:
             break
     return out
+
+
+def save_presale_submission(tx_hash: str, discord_id: str, discord_username: str = "") -> dict:
+    """Insert a presale submission. Returns {'ok': True} or {'ok': False, 'error': str}."""
+    th = str(tx_hash or "").strip()
+    did = str(discord_id or "").strip()
+    dname = str(discord_username or "")[:120]
+    if not th or not did:
+        return {"ok": False, "error": "tx_hash and discord_id are required"}
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        c = conn.cursor()
+        c.execute(
+            """
+            INSERT INTO presale_submissions (tx_hash, discord_id, discord_username)
+            VALUES (?, ?, ?)
+            """,
+            (th, did, dname),
+        )
+        conn.commit()
+        return {"ok": True}
+    except Exception as exc:
+        conn.rollback()
+        msg = str(exc)
+        if "UNIQUE" in msg.upper():
+            return {"ok": False, "error": "duplicate_tx"}
+        return {"ok": False, "error": msg[:200]}
+    finally:
+        conn.close()
 
 
 def get_project_ai_data(twitter_id):

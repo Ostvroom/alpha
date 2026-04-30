@@ -674,6 +674,231 @@
     }
     .tg-help { font-family:"JetBrains Mono",monospace; font-size: 10.5px; color: rgba(240,232,192,.42); margin-top: 8px; }
     .tg-err { font-family:"JetBrains Mono",monospace; font-size: 11px; color: rgba(255,150,150,.90); margin-top: 10px; display:none; }
+
+    /* ══ ROADMAP / PRESALE MODAL SHARED ═══════════════════ */
+    .na-modal {
+      position:fixed;inset:0;z-index:10010;
+      display:flex;align-items:center;justify-content:center;
+      padding:16px;overflow-y:auto;
+      opacity:0;visibility:hidden;pointer-events:none;
+      transition:opacity .22s ease,visibility .22s;
+    }
+    .na-modal.is-open{opacity:1;visibility:visible;pointer-events:auto}
+    .na-modal-bg{
+      position:fixed;inset:0;z-index:0;
+      background:rgba(0,0,0,.82);backdrop-filter:blur(8px);cursor:pointer;
+    }
+    .na-dialog{
+      position:relative;z-index:1;
+      width:min(980px,100%);max-height:min(92vh,900px);
+      background:#0b0b0d;border:1px solid rgba(255,204,0,.32);
+      box-shadow:0 0 0 1px rgba(255,204,0,.07) inset,0 32px 120px rgba(0,0,0,.80);
+      display:flex;flex-direction:column;overflow:hidden;align-self:center;
+    }
+    .na-dialog-head{
+      flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:12px;
+      padding:11px 18px;border-bottom:1px solid rgba(255,204,0,.18);background:#090909;
+    }
+    .na-dialog-head-left{display:flex;align-items:center;gap:10px}
+    .na-dots{display:flex;gap:5px}
+    .na-dots span{width:9px;height:9px;border-radius:50%}
+    .na-dots span:nth-child(1){background:#ff5f57}
+    .na-dots span:nth-child(2){background:#febc2e}
+    .na-dots span:nth-child(3){background:#28c840}
+    .na-dialog-title{
+      font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:600;
+      letter-spacing:.14em;text-transform:uppercase;color:rgba(255,204,0,.85);
+    }
+    .na-close{
+      border:1px solid rgba(255,204,0,.30);background:rgba(255,204,0,.05);color:#ffcc00;
+      width:34px;height:34px;font-size:20px;line-height:1;cursor:pointer;border-radius:4px;
+      transition:background .12s;flex-shrink:0;
+    }
+    .na-close:hover{background:rgba(255,204,0,.12)}
+    .na-dialog-body{flex:1;min-height:0;overflow-y:auto;padding:0}
+    /* scrollbar */
+    .na-dialog-body::-webkit-scrollbar{width:4px}
+    .na-dialog-body::-webkit-scrollbar-track{background:transparent}
+    .na-dialog-body::-webkit-scrollbar-thumb{background:rgba(255,204,0,.20);border-radius:2px}
+
+    /* ── ROADMAP MODAL BODY ─────────────────────────────── */
+    .rm-inner{padding:28px 24px 24px}
+    .rm-eyebrow{
+      font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.20em;
+      text-transform:uppercase;color:rgba(255,204,0,.52);margin-bottom:8px;
+      display:flex;align-items:center;gap:8px;
+    }
+    .rm-eyebrow::before{content:"";width:16px;height:1px;background:rgba(255,204,0,.40)}
+    .rm-h{
+      font-family:"Barlow Condensed",sans-serif;font-size:clamp(28px,4vw,44px);
+      font-weight:900;letter-spacing:.04em;text-transform:uppercase;
+      color:#f8f0d0;line-height:1;margin-bottom:6px;
+    }
+    .rm-h .yl{color:#ffcc00}
+    .rm-sub{font-size:13px;color:rgba(240,232,192,.48);margin-bottom:24px;max-width:64ch}
+    /* card grid */
+    .rm-grid{
+      display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));
+      gap:1px;background:rgba(255,204,0,.10);border:1px solid rgba(255,204,0,.10);
+    }
+    .rm-card{background:#0f0f0f;padding:22px 20px;transition:background .14s;cursor:default}
+    .rm-card:hover{background:#141414}
+    .rm-num{
+      font-family:"Barlow Condensed",sans-serif;font-size:54px;font-weight:900;
+      line-height:1;color:rgba(255,204,0,.09);margin-bottom:6px;letter-spacing:-.02em;
+    }
+    .rm-card-title{
+      font-family:"Barlow Condensed",sans-serif;font-size:18px;font-weight:800;
+      letter-spacing:.04em;text-transform:uppercase;color:#f8f0d0;margin-bottom:6px;
+    }
+    .rm-card-desc{font-size:12.5px;color:rgba(240,232,192,.52);line-height:1.6}
+    .rm-badge{
+      display:inline-flex;align-items:center;gap:5px;margin-top:10px;
+      font-family:"JetBrains Mono",monospace;font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;
+      padding:3px 9px;border-radius:999px;
+    }
+    .rm-badge.live{background:rgba(120,255,180,.09);border:1px solid rgba(120,255,180,.25);color:rgba(120,255,180,.85)}
+    .rm-badge.soon{background:rgba(255,204,0,.09);border:1px solid rgba(255,204,0,.28);color:rgba(255,204,0,.85)}
+    .rm-badge.beta{background:rgba(100,140,255,.09);border:1px solid rgba(100,140,255,.25);color:rgba(140,170,255,.85)}
+    .rm-badge.later{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);color:rgba(240,232,192,.40)}
+    .rm-footer{
+      margin-top:20px;padding-top:16px;border-top:1px solid rgba(255,204,0,.10);
+      display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;
+    }
+    .rm-note{font-family:"JetBrains Mono",monospace;font-size:10px;color:rgba(240,232,192,.35)}
+
+    /* ── PRESALE MODAL BODY ─────────────────────────────── */
+    .ps-inner{padding:28px 28px 24px}
+    .ps-eyebrow{
+      font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.20em;
+      text-transform:uppercase;color:rgba(255,204,0,.52);margin-bottom:8px;
+      display:flex;align-items:center;gap:8px;
+    }
+    .ps-eyebrow::before{content:"";width:16px;height:1px;background:rgba(255,204,0,.40)}
+    .ps-h{
+      font-family:"Barlow Condensed",sans-serif;font-size:clamp(28px,4vw,46px);
+      font-weight:900;letter-spacing:.04em;text-transform:uppercase;line-height:1;
+      margin-bottom:4px;
+    }
+    .ps-h .yl{color:#ffcc00}
+    .ps-h .ol{-webkit-text-stroke:2px rgba(255,204,0,.55);color:transparent}
+    .ps-tagline{font-size:13px;color:rgba(240,232,192,.50);margin-bottom:22px}
+    /* progress */
+    .ps-prog-wrap{margin-bottom:22px}
+    .ps-prog-label{
+      display:flex;justify-content:space-between;align-items:baseline;
+      font-family:"JetBrains Mono",monospace;font-size:10px;
+      color:rgba(240,232,192,.55);letter-spacing:.08em;margin-bottom:8px;
+    }
+    .ps-prog-label span{color:#ffcc00;font-weight:600}
+    .ps-prog-track{
+      height:10px;background:rgba(255,204,0,.10);border:1px solid rgba(255,204,0,.18);border-radius:2px;overflow:hidden;
+    }
+    .ps-prog-fill{
+      height:100%;width:10%;background:linear-gradient(90deg,#c49b00,#ffcc00,#ffe566);
+      border-radius:2px;box-shadow:0 0 12px rgba(255,204,0,.50);
+      position:relative;
+    }
+    .ps-prog-fill::after{
+      content:"";position:absolute;right:0;top:0;bottom:0;width:4px;
+      background:rgba(255,255,255,.30);filter:blur(2px);
+    }
+    .ps-goal{
+      font-family:"JetBrains Mono",monospace;font-size:9px;color:rgba(240,232,192,.35);
+      letter-spacing:.06em;margin-top:6px;
+    }
+    /* limits */
+    .ps-limits{
+      display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;
+    }
+    .ps-limit{
+      flex:1;min-width:120px;
+      border:1px solid rgba(255,204,0,.14);background:rgba(0,0,0,.25);padding:12px 14px;
+    }
+    .ps-limit-label{
+      font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.14em;
+      text-transform:uppercase;color:rgba(255,204,0,.45);margin-bottom:4px;
+    }
+    .ps-limit-val{
+      font-family:"Barlow Condensed",sans-serif;font-size:26px;font-weight:800;
+      color:#f8f0d0;letter-spacing:.02em;
+    }
+    /* wallet */
+    .ps-wallet-label{
+      font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.16em;
+      text-transform:uppercase;color:rgba(255,204,0,.50);margin-bottom:6px;
+    }
+    .ps-wallet-box{
+      display:flex;align-items:center;gap:8px;
+      border:1px solid rgba(255,204,0,.20);background:rgba(0,0,0,.30);padding:11px 14px;
+      margin-bottom:18px;cursor:pointer;transition:border-color .14s;
+    }
+    .ps-wallet-box:hover{border-color:rgba(255,204,0,.40)}
+    .ps-wallet-addr{
+      flex:1;font-family:"JetBrains Mono",monospace;font-size:11px;color:#ffcc00;
+      word-break:break-all;letter-spacing:.02em;user-select:all;
+    }
+    .ps-copy-btn{
+      flex-shrink:0;font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.10em;
+      text-transform:uppercase;color:rgba(240,232,192,.40);padding:4px 8px;
+      border:1px solid rgba(255,204,0,.15);background:transparent;cursor:pointer;
+      border-radius:3px;transition:color .12s,border-color .12s;white-space:nowrap;
+    }
+    .ps-copy-btn:hover{color:#ffcc00;border-color:rgba(255,204,0,.40)}
+    /* fields */
+    .ps-field{margin-bottom:16px}
+    .ps-field label{
+      display:block;font-family:"JetBrains Mono",monospace;font-size:9px;
+      letter-spacing:.16em;text-transform:uppercase;color:rgba(255,204,0,.50);margin-bottom:6px;
+    }
+    .ps-input{
+      width:100%;background:rgba(0,0,0,.30);border:1px solid rgba(255,204,0,.18);
+      color:#f0e8c0;border-radius:0;padding:12px 14px;
+      font-family:"JetBrains Mono",monospace;font-size:12px;outline:none;
+      transition:border-color .14s;
+    }
+    .ps-input:focus{border-color:rgba(255,204,0,.45)}
+    .ps-input::placeholder{color:rgba(240,232,192,.22)}
+    /* discord btn */
+    .ps-discord{
+      display:flex;align-items:center;gap:10px;
+      border:1px solid rgba(88,101,242,.40);background:rgba(88,101,242,.08);
+      padding:11px 14px;cursor:pointer;margin-bottom:16px;transition:background .14s;
+      width:100%;text-align:left;color:#f0e8c0;
+    }
+    .ps-discord:hover{background:rgba(88,101,242,.15)}
+    .ps-discord-icon{font-size:18px;flex-shrink:0}
+    .ps-discord-text{font-family:"JetBrains Mono",monospace;font-size:11px}
+    .ps-discord-sub{font-size:9px;color:rgba(240,232,192,.40);letter-spacing:.06em;margin-top:2px}
+    .ps-discord.connected{border-color:rgba(120,255,180,.35);background:rgba(120,255,180,.06)}
+    /* submit */
+    .ps-submit{
+      width:100%;font-family:"Barlow Condensed",sans-serif;font-size:17px;font-weight:800;
+      letter-spacing:.10em;text-transform:uppercase;
+      background:#ffcc00;color:#090909;border:none;padding:14px;cursor:pointer;
+      transition:background .12s;margin-bottom:20px;
+    }
+    .ps-submit:hover{background:#ffe033}
+    .ps-submit:disabled{background:rgba(255,204,0,.35);cursor:not-allowed}
+    /* status */
+    .ps-status{
+      font-family:"JetBrains Mono",monospace;font-size:11px;
+      margin-bottom:12px;display:none;padding:10px 12px;
+    }
+    .ps-status.err{color:rgba(255,130,130,.9);border:1px solid rgba(255,130,130,.25);background:rgba(255,50,50,.05)}
+    .ps-status.ok{color:rgba(120,255,180,.9);border:1px solid rgba(120,255,180,.25);background:rgba(0,200,100,.05)}
+    /* bottom nav */
+    .ps-bottom-nav{
+      display:flex;gap:10px;flex-wrap:wrap;
+      padding-top:16px;border-top:1px solid rgba(255,204,0,.10);
+    }
+    .ps-nav-btn{
+      flex:1;min-width:120px;
+      font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.10em;text-transform:uppercase;
+      padding:11px 10px;border:1px solid rgba(255,204,0,.22);background:transparent;color:rgba(240,232,192,.60);
+      cursor:pointer;transition:color .12s,border-color .12s,background .12s;text-align:center;
+    }
+    .ps-nav-btn:hover{color:#ffcc00;border-color:rgba(255,204,0,.45);background:rgba(255,204,0,.05)}
   </style>
 </head>
 <body>
@@ -694,8 +919,8 @@
         <span class="brand-name">Nerds Alpha</span>
       </a>
       <div class="nav-links">
-        <a href="/roadmap">Roadmap</a>
-        <a href="/presale">Presale</a>
+        <a href="#" id="navRoadmap">Roadmap</a>
+        <a href="#" id="navPresale" style="color:#ffcc00">Presale</a>
         <a class="nav-cta" href="/projects" id="openFeedNav">OPEN LIVE FEED</a>
       </div>
     </div>
@@ -840,8 +1065,8 @@
         <span class="foot-brand-name">Nerds Alpha</span>
       </div>
       <div class="foot-links">
-        <a href="/roadmap">Roadmap</a>
-        <a href="/presale">Presale</a>
+        <a href="#" id="footRoadmap">Roadmap</a>
+        <a href="#" id="footPresale">Presale</a>
         <a href="/projects" id="openFeedFoot">Open Live Feed</a>
         <a href="https://x.com/Degensultan" target="_blank" rel="noreferrer">X: @Degensultan</a>
         <a href="https://t.me/Sultandegeen" target="_blank" rel="noreferrer">Support: @Sultandegeen</a>
@@ -883,6 +1108,187 @@
     </div>
     <div class="ea-modal-frame-wrap">
       <iframe id="ea-modal-frame" title="Early access — Nerds Alpha" src="about:blank"></iframe>
+    </div>
+  </div>
+</div>
+
+<!-- ══ ROADMAP MODAL ══════════════════════════════════════════════ -->
+<div id="na-roadmap" class="na-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Roadmap">
+  <div class="na-modal-bg" data-naclose="roadmap"></div>
+  <div class="na-dialog">
+    <div class="na-dialog-head">
+      <div class="na-dialog-head-left">
+        <div class="na-dots"><span></span><span></span><span></span></div>
+        <span class="na-dialog-title">nerds alpha — roadmap.sh</span>
+      </div>
+      <button class="na-close" data-naclose="roadmap" aria-label="Close">&times;</button>
+    </div>
+    <div class="na-dialog-body">
+      <div class="rm-inner">
+        <div class="rm-eyebrow">// 6-month product plan</div>
+        <div class="rm-h">WHAT WE <span class="yl">SHIP</span> NEXT</div>
+        <p class="rm-sub">From signals to execution — every feature below is either live today or actively building. No vaporware.</p>
+        <div class="rm-grid">
+          <div class="rm-card">
+            <div class="rm-num">01</div>
+            <div class="rm-card-title">Projects Scanner</div>
+            <p class="rm-card-desc">24/7 HVA-driven discovery across X. New accounts surface in under 2 min when high-value accounts follow them.</p>
+            <span class="rm-badge live">● Live</span>
+          </div>
+          <div class="rm-card">
+            <div class="rm-num">02</div>
+            <div class="rm-card-title">Token Alerts</div>
+            <p class="rm-card-desc">100+ Telegram sources monitored. MC at call, ATH, and performance delta — all in one clean dashboard.</p>
+            <span class="rm-badge live">● Live</span>
+          </div>
+          <div class="rm-card">
+            <div class="rm-num">03</div>
+            <div class="rm-card-title">Daily Finds</div>
+            <p class="rm-card-desc">Rolling 24h digest of every newly alerted project with age, followers, category, and AI summary tags.</p>
+            <span class="rm-badge live">● Live</span>
+          </div>
+          <div class="rm-card">
+            <div class="rm-num">04</div>
+            <div class="rm-card-title">Signal Escalation</div>
+            <p class="rm-card-desc">Multi-HVA follow events trigger graduated Discord alerts automatically — more smarts = higher escalation tier.</p>
+            <span class="rm-badge live">● Live</span>
+          </div>
+          <div class="rm-card">
+            <div class="rm-num">05</div>
+            <div class="rm-card-title">Auto-Trading Alerts</div>
+            <p class="rm-card-desc">Optional execution layer on token alerts. Paper mode first — set size caps, max daily loss, slippage ceiling. It buys when your signal fires.</p>
+            <span class="rm-badge beta">⟳ Beta Q2 2026</span>
+          </div>
+          <div class="rm-card">
+            <div class="rm-num">06</div>
+            <div class="rm-card-title">Daily Mints Calendar</div>
+            <p class="rm-card-desc">See what's minting today across ETH, SOL, and Base — organized by date, time, and chain with volume and hype score.</p>
+            <span class="rm-badge soon">◈ Coming Soon</span>
+          </div>
+          <div class="rm-card">
+            <div class="rm-num">07</div>
+            <div class="rm-card-title">Conviction Tiers</div>
+            <p class="rm-card-desc">Spark → Pulse → Surge scoring based on HVA activity speed and volume. Know exactly how strong a signal is before you act.</p>
+            <span class="rm-badge soon">◈ Coming Soon</span>
+          </div>
+          <div class="rm-card">
+            <div class="rm-num">08</div>
+            <div class="rm-card-title">Wallet Labels</div>
+            <p class="rm-card-desc">Import your own wallet tags via CSV. Addresses inside alerts show your custom names — like a personal GMGN overlay.</p>
+            <span class="rm-badge soon">◈ Coming Soon</span>
+          </div>
+          <div class="rm-card">
+            <div class="rm-num">09</div>
+            <div class="rm-card-title">Trenches Board</div>
+            <p class="rm-card-desc">Internal 24h leaderboard: hottest projects ranked by mention velocity, HVA engagement, and alert volume.</p>
+            <span class="rm-badge soon">◈ Coming Soon</span>
+          </div>
+          <div class="rm-card">
+            <div class="rm-num">10</div>
+            <div class="rm-card-title">KOL Wallet Radar</div>
+            <p class="rm-card-desc">When tracked KOL wallets buy or exit a token — you see it before they tweet. Requires wallet ↔ handle linking.</p>
+            <span class="rm-badge later">· Planned</span>
+          </div>
+          <div class="rm-card">
+            <div class="rm-num">11</div>
+            <div class="rm-card-title">Smart Money Flow</div>
+            <p class="rm-card-desc">In/out directional pressure per token from on-chain aggregates. Not real-time order flow — strategic pressure read.</p>
+            <span class="rm-badge later">· Planned</span>
+          </div>
+          <div class="rm-card">
+            <div class="rm-num">12</div>
+            <div class="rm-card-title">Mobile Push Alerts</div>
+            <p class="rm-card-desc">Surge-tier signals on mobile. No Discord needed — direct push notification when the signal hits the highest tier.</p>
+            <span class="rm-badge later">· Planned</span>
+          </div>
+        </div>
+        <div class="rm-footer">
+          <span class="rm-note">// More features shipping every sprint · priorities may shift with market</span>
+          <a href="#" id="rmOpenPresale" class="btn solid" style="font-size:14px;padding:10px 20px">Join Presale →</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ PRESALE MODAL ══════════════════════════════════════════════ -->
+<div id="na-presale" class="na-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Presale">
+  <div class="na-modal-bg" data-naclose="presale"></div>
+  <div class="na-dialog" style="max-width:560px">
+    <div class="na-dialog-head">
+      <div class="na-dialog-head-left">
+        <div class="na-dots"><span></span><span></span><span></span></div>
+        <span class="na-dialog-title">nerds alpha — $nerds presale</span>
+      </div>
+      <button class="na-close" data-naclose="presale" aria-label="Close">&times;</button>
+    </div>
+    <div class="na-dialog-body">
+      <div class="ps-inner">
+        <div class="ps-eyebrow">// Early allocation · limited round</div>
+        <div class="ps-h">$NERDS <span class="yl">PRE</span><span class="ol">SALE</span></div>
+        <p class="ps-tagline">Site locks when presale ends. Get in early — access never comes back at this price.</p>
+
+        <!-- Progress bar -->
+        <div class="ps-prog-wrap">
+          <div class="ps-prog-label">
+            <span>Progress</span>
+            <span>10% · $100K / $1M</span>
+          </div>
+          <div class="ps-prog-track"><div class="ps-prog-fill"></div></div>
+          <div class="ps-goal">Target: $1,000,000 · Site access locked at close</div>
+        </div>
+
+        <!-- Limits -->
+        <div class="ps-limits">
+          <div class="ps-limit">
+            <div class="ps-limit-label">Minimum</div>
+            <div class="ps-limit-val">$20 <span style="font-size:14px;color:rgba(240,232,192,.40)">in SOL</span></div>
+          </div>
+          <div class="ps-limit">
+            <div class="ps-limit-label">Maximum</div>
+            <div class="ps-limit-val">$500 <span style="font-size:14px;color:rgba(240,232,192,.40)">in SOL</span></div>
+          </div>
+          <div class="ps-limit">
+            <div class="ps-limit-label">Network</div>
+            <div class="ps-limit-val" style="font-size:20px">Solana</div>
+          </div>
+        </div>
+
+        <!-- Wallet -->
+        <div class="ps-wallet-label">Send SOL to this address</div>
+        <div class="ps-wallet-box" id="psWalletBox" title="Click to copy">
+          <span class="ps-wallet-addr" id="psWalletAddr">CoNzMiAKSqZBUGu5XgEXRpiE3ByiP32wW3fJB76sf1p2</span>
+          <button class="ps-copy-btn" id="psCopyBtn" type="button">COPY</button>
+        </div>
+
+        <!-- TX hash field -->
+        <div class="ps-field">
+          <label for="psTxHash">Paste your transaction hash</label>
+          <input class="ps-input" id="psTxHash" type="text" placeholder="e.g. 5K7xP3...zQmR (Solana tx signature)" autocomplete="off" spellcheck="false" />
+        </div>
+
+        <!-- Discord connect -->
+        <button class="ps-discord" id="psDiscordBtn" type="button">
+          <span class="ps-discord-icon">🎮</span>
+          <div>
+            <div class="ps-discord-text" id="psDiscordText">Connect Discord</div>
+            <div class="ps-discord-sub" id="psDiscordSub">Required to save your allocation and receive access</div>
+          </div>
+        </button>
+
+        <!-- Status -->
+        <div class="ps-status" id="psStatus"></div>
+
+        <!-- Submit -->
+        <button class="ps-submit" id="psSubmitBtn" type="button">CLAIM PRESALE SPOT</button>
+
+        <!-- Bottom nav -->
+        <div class="ps-bottom-nav">
+          <button class="ps-nav-btn" id="psBtnRoadmap" type="button">📋 Roadmap</button>
+          <a class="ps-nav-btn" href="/projects" style="text-decoration:none">⚡ Live Feeds</a>
+          <a class="ps-nav-btn" href="https://t.me/Sultandegeen" target="_blank" rel="noopener noreferrer" style="text-decoration:none">💬 Ask Questions</a>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -1081,6 +1487,119 @@
   })();
 
   // Live feed moved to dedicated pages.
+
+  /* ── ROADMAP / PRESALE MODALS ─────────────────────────── */
+  (function () {
+    var modals = { roadmap: document.getElementById("na-roadmap"), presale: document.getElementById("na-presale") };
+
+    function openModal(key) {
+      Object.keys(modals).forEach(function(k){ if (modals[k]) { modals[k].classList.remove("is-open"); modals[k].setAttribute("aria-hidden","true"); } });
+      var m = modals[key]; if (!m) return;
+      m.classList.add("is-open"); m.setAttribute("aria-hidden","false");
+      document.body.style.overflow = "hidden";
+    }
+    function closeModal(key) {
+      var m = modals[key]; if (!m) return;
+      m.classList.remove("is-open"); m.setAttribute("aria-hidden","true");
+      var anyOpen = Object.keys(modals).some(function(k){ return modals[k] && modals[k].classList.contains("is-open"); });
+      if (!anyOpen) document.body.style.overflow = "";
+    }
+
+    // Nav + footer triggers
+    ["navRoadmap","footRoadmap"].forEach(function(id){
+      var el = document.getElementById(id); if (!el) return;
+      el.addEventListener("click", function(e){ e.preventDefault(); openModal("roadmap"); });
+    });
+    ["navPresale","footPresale"].forEach(function(id){
+      var el = document.getElementById(id); if (!el) return;
+      el.addEventListener("click", function(e){ e.preventDefault(); openModal("presale"); });
+    });
+
+    // Cross-links inside modals
+    var rmOpenPresale = document.getElementById("rmOpenPresale");
+    if (rmOpenPresale) rmOpenPresale.addEventListener("click", function(e){ e.preventDefault(); openModal("presale"); });
+    var psBtnRoadmap = document.getElementById("psBtnRoadmap");
+    if (psBtnRoadmap) psBtnRoadmap.addEventListener("click", function(){ openModal("roadmap"); });
+
+    // Close triggers (backdrop + X button)
+    document.querySelectorAll("[data-naclose]").forEach(function(el){
+      el.addEventListener("click", function(){ closeModal(el.getAttribute("data-naclose")); });
+    });
+    document.addEventListener("keydown", function(e){
+      if (e.key === "Escape") { Object.keys(modals).forEach(function(k){ closeModal(k); }); }
+    });
+
+    // Open via URL param ?m=roadmap or ?m=presale or hash #roadmap / #presale
+    (function(){
+      var q = new URLSearchParams(window.location.search).get("m") || window.location.hash.replace("#","");
+      if (q === "roadmap" || q === "presale") { setTimeout(function(){ openModal(q); }, 400); }
+    })();
+
+    /* ── PRESALE LOGIC ─────────────────────────────── */
+    var WALLET = "CoNzMiAKSqZBUGu5XgEXRpiE3ByiP32wW3fJB76sf1p2";
+    var discordUid = ""; var discordName = "";
+
+    // Copy wallet
+    var copyBtn = document.getElementById("psCopyBtn");
+    if (copyBtn) copyBtn.addEventListener("click", function(){
+      navigator.clipboard.writeText(WALLET).then(function(){
+        copyBtn.textContent = "COPIED!"; setTimeout(function(){ copyBtn.textContent = "COPY"; }, 2000);
+      }).catch(function(){ copyBtn.textContent = "COPY"; });
+    });
+    var walletBox = document.getElementById("psWalletBox");
+    if (walletBox) walletBox.addEventListener("click", function(e){ if (e.target !== copyBtn) { navigator.clipboard.writeText(WALLET).catch(function(){}); } });
+
+    // Discord connect
+    var discordBtn = document.getElementById("psDiscordBtn");
+    var discordText = document.getElementById("psDiscordText");
+    var discordSub = document.getElementById("psDiscordSub");
+    if (discordBtn) discordBtn.addEventListener("click", function(){
+      // Check if already logged in via cookie
+      fetch("/api/me", { credentials: "include" }).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
+        if (d && d.discord_id) {
+          discordUid = String(d.discord_id); discordName = d.username || d.discord_id;
+          discordText.textContent = "✓ Connected: @" + discordName;
+          discordSub.textContent = "Discord linked — your allocation will be saved";
+          discordBtn.classList.add("connected");
+        } else {
+          window.open("/api/access/discord/start?next=" + encodeURIComponent(window.location.pathname + "?m=presale"), "_blank", "width=520,height=680");
+          setTimeout(function(){
+            fetch("/api/me",{credentials:"include"}).then(function(r){return r.ok?r.json():null;}).then(function(d2){
+              if (d2 && d2.discord_id){ discordUid=String(d2.discord_id); discordName=d2.username||d2.discord_id; discordText.textContent="✓ Connected: @"+discordName; discordSub.textContent="Discord linked — your allocation will be saved"; discordBtn.classList.add("connected"); }
+            }).catch(function(){});
+          }, 3000);
+        }
+      }).catch(function(){
+        window.open("/api/access/discord/start?next=" + encodeURIComponent(window.location.pathname + "?m=presale"), "_blank", "width=520,height=680");
+      });
+    });
+
+    // Submit
+    var submitBtn2 = document.getElementById("psSubmitBtn");
+    var statusEl = document.getElementById("psStatus");
+    function showStatus(msg, type){ statusEl.textContent=msg; statusEl.className="ps-status "+(type||"err"); statusEl.style.display="block"; }
+
+    if (submitBtn2) submitBtn2.addEventListener("click", async function(){
+      var tx = (document.getElementById("psTxHash").value||"").trim();
+      if (!tx){ showStatus("Please paste your Solana transaction hash.", "err"); return; }
+      if (tx.length < 40){ showStatus("That doesn't look like a valid Solana tx signature (too short).", "err"); return; }
+      if (!discordUid){ showStatus("Please connect your Discord first — click the Discord button above.", "err"); return; }
+      submitBtn2.disabled = true; submitBtn2.textContent = "SUBMITTING…";
+      try {
+        var r = await fetch("/api/presale/submit", {
+          method:"POST", credentials:"include",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ tx_hash: tx, discord_id: discordUid, discord_username: discordName })
+        });
+        var js = {}; try{ js = await r.json(); }catch(e){}
+        if (r.ok){ showStatus("✓ Submitted! Your allocation has been recorded. We'll confirm within 24h on Discord.", "ok"); submitBtn2.textContent = "SUBMITTED ✓"; }
+        else { showStatus("Error: " + (js.detail || js.message || ("HTTP "+r.status)), "err"); submitBtn2.disabled=false; submitBtn2.textContent="CLAIM PRESALE SPOT"; }
+      } catch(ex){
+        showStatus("Network error — please try again.", "err");
+        submitBtn2.disabled=false; submitBtn2.textContent="CLAIM PRESALE SPOT";
+      }
+    });
+  })();
 </script>
 
 </body>

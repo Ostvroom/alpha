@@ -1124,6 +1124,41 @@ class XReplyClaimRequest(BaseModel):
     reply_url: str
 
 
+class PresaleSubmitRequest(BaseModel):
+    tx_hash: str
+    discord_id: str = ""
+    discord_username: str = ""
+
+
+@app.post("/api/presale/submit")
+async def api_presale_submit(request: Request, body: PresaleSubmitRequest):
+    tx = (body.tx_hash or "").strip()
+    if not tx or len(tx) < 40:
+        raise HTTPException(400, "Invalid tx_hash — paste the full Solana transaction signature")
+
+    # Try to get discord_id from cookie session if not supplied
+    discord_id = (body.discord_id or "").strip()
+    discord_username = (body.discord_username or "").strip()
+    if not discord_id:
+        tok = request.cookies.get(ACCESS_COOKIE, "")
+        payload = _verify_access_token(tok) or {}
+        uid = int(payload.get("uid") or 0)
+        if uid > 0:
+            discord_id = str(uid)
+
+    if not discord_id:
+        raise HTTPException(400, "Discord ID required — please connect Discord before submitting")
+
+    result = database.save_presale_submission(tx, discord_id, discord_username)
+    if not result.get("ok"):
+        err = result.get("error", "unknown")
+        if err == "duplicate_tx":
+            raise HTTPException(409, "This transaction hash has already been submitted")
+        raise HTTPException(500, f"Could not save submission: {err}")
+
+    return {"success": True, "message": "Submission recorded. We will verify and confirm within 24h on Discord."}
+
+
 @app.post("/api/x/claim")
 async def api_x_claim(request: Request, body: XReplyClaimRequest):
     """
@@ -1349,12 +1384,14 @@ async def page_daily_finds(request: Request):
 
 @app.get("/roadmap", response_class=HTMLResponse)
 async def page_roadmap(request: Request):
-    return _serve_page(request, "roadmap.html")
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/?m=roadmap", status_code=302)
 
 
 @app.get("/presale", response_class=HTMLResponse)
 async def page_presale(request: Request):
-    return _serve_page(request, "presale.html")
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/?m=presale", status_code=302)
 
 
 @app.get("/early-access", response_class=HTMLResponse)
