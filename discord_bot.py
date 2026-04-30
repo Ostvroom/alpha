@@ -871,6 +871,79 @@ class BlockBrainBot(commands.Bot):
         val += "\n\u200b"
         return val
 
+    def _fill_account_from_legacy_payload(self, account) -> None:
+        """Best-effort fill of missing account fields from twikit legacy payload."""
+        try:
+            legacy = ((getattr(account, "_data", None) or {}).get("legacy") or {})
+        except Exception:
+            legacy = {}
+        if not isinstance(legacy, dict):
+            return
+
+        fallback_map = {
+            "description": "description",
+            "profile_image_url_https": "profile_image_url_https",
+            "profile_image_url": "profile_image_url_https",
+            "profile_banner_url": "profile_banner_url",
+            "followers_count": "followers_count",
+            "name": "name",
+            "screen_name": "screen_name",
+        }
+        for attr, key in fallback_map.items():
+            try:
+                cur = getattr(account, attr, None)
+                nxt = legacy.get(key)
+                if (cur is None or cur == "") and nxt not in (None, ""):
+                    setattr(account, attr, nxt)
+            except Exception:
+                continue
+
+    async def _hydrate_account_profile(self, account):
+        """
+        Ensure we have a full profile object for AI + DB persistence.
+        Twikit follow/retweet rows may omit bio/avatars in lightweight user payloads.
+        """
+        if not account:
+            return account
+
+        self._fill_account_from_legacy_payload(account)
+        bio_now = (getattr(account, "description", None) or "").strip()
+        needs_full_profile = not bio_now
+        if not needs_full_profile:
+            return account
+
+        uid = getattr(account, "id", None)
+        if not uid:
+            return account
+        full = await self.twitter.get_user_info(uid)
+        if not full:
+            return account
+
+        merge_fields = (
+            "name",
+            "screen_name",
+            "description",
+            "followers_count",
+            "created_at",
+            "profile_image_url",
+            "profile_image_url_https",
+            "profile_banner_url",
+            "is_blue_verified",
+            "verified",
+        )
+        for attr in merge_fields:
+            try:
+                cur = getattr(account, attr, None)
+                nxt = getattr(full, attr, None)
+                if (cur is None or cur == "") and nxt not in (None, ""):
+                    setattr(account, attr, nxt)
+            except Exception:
+                continue
+
+        # If the hydrated object still misses fields, try its own legacy payload too.
+        self._fill_account_from_legacy_payload(account)
+        return account
+
     def is_personal_profile(self, account, extra_text: str = ""):
         """Checks if an account is likely a personal profile/worker instead of a project."""
         text = f"{getattr(account, 'name', '')} {getattr(account, 'description', '') or ''} {extra_text or ''}".lower()
@@ -2132,6 +2205,7 @@ class BlockBrainBot(commands.Bot):
         await asyncio.sleep(random.uniform(60.0, 150.0))
 
     async def process_discovery(self, account, hva_handle, interaction_type, channels):
+        account = await self._hydrate_account_profile(account)
         # VERBOSE: Log every account we check
         age = self.get_account_age_days(account.created_at)
         bio_preview = (account.description or "")[:40].replace("\n", " ")
@@ -2629,14 +2703,30 @@ class BlockBrainBot(commands.Bot):
             title = f"🔍 {BRAND_NAME} Discovery"
         
         embed = discord.Embed(title=title, color=embed_color)
-        embed.set_thumbnail(url=account.profile_image_url.replace("_normal", "_400x400"))
+        thumb_url = (
+            getattr(account, "profile_image_url", None)
+            or getattr(account, "profile_image_url_https", None)
+            or ""
+        )
+        if thumb_url:
+            embed.set_thumbnail(url=str(thumb_url).replace("_normal", "_400x400"))
+        elif getattr(account, "screen_name", None):
+            embed.set_thumbnail(
+                url=f"https://unavatar.io/twitter/{str(getattr(account, 'screen_name', '')).lstrip('@')}"
+            )
+        bio = (getattr(account, "description", None) or "").strip()
+        bio_line = (
+            f"**Bio:** {textwrap.shorten(bio, width=180, placeholder='...')}\n\u200b"
+            if bio
+            else "**Bio:** `N/A`\n\u200b"
+        )
         
         # Section 1: Profile
         profile_value = (
             f"**Name:** [{account.name}](https://x.com/{account.screen_name}) | **Category:** {category}\n"
             f"\n"
             f"**Age:** `{self.format_age(account.created_at)}` | **Followers:** `{account.followers_count:,}`\n"
-            f"\u200b"
+            f"{bio_line}"
         )
         embed.add_field(name="👤 Profile", value=profile_value, inline=False)
 

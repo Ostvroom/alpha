@@ -217,7 +217,10 @@ HVA_LIST = [
     "ImGroot66", "0xmmu", "zacxbt", "AzFlin", "frans6cur",
     "CloutedMind", "zjbrenner", "CryptoGorilla", "AvgJoesCrypto", "momochenming",
     "ssheyii", "erichsu_eth", "ItsWolfsRain", "Totinhiiio", "Chidiebere69",
-    "aditya_web3_", "kikiviell"
+    "aditya_web3_", "kikiviell",
+    "Xeetbtcvox", "jussy_world", "Carl_m101", "kelvinoyibo2", "BR4ted",
+    "0xZoom4X", "0xquinneth", "FabianoSolana",
+    "supraEVM", "0xvaidhik", "solana_sailor", "Farmercist", "KratusFTL"
 ]
 
 # Handles removed from HVA_LIST but still present in SQLite `hva_stats` are otherwise
