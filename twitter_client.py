@@ -1,6 +1,8 @@
 import asyncio
 import os
 import json
+import random
+import re
 from twikit import Client
 import config
 from datetime import datetime, timezone, timedelta
@@ -43,6 +45,7 @@ class TwitterClient:
         # Session rotation
         self._sessions = []  # List of (client, account_info, logged_in, rate_limited)
         self._current_session_idx = 0
+        self._next_twikit_call_ts = 0.0
         self._load_accounts()
     
     def _load_accounts(self):
@@ -80,9 +83,12 @@ class TwitterClient:
                 'logged_in': False,
                 'rate_limited': False,
                 'soft_429_count': 0,
+                'soft_403_count': 0,
                 'cookie_path': main_cookie_path,
                 'proxy': current_proxy,
-                'proxy_fails': 0
+                'proxy_fails': 0,
+                'backoff_exp': 0,
+                'backoff_until_ts': 0.0,
             })
             proxy_msg = f" (Proxy: {current_proxy})" if current_proxy else ""
             print(f"Primary session: cookies.json{proxy_msg}", flush=True)
@@ -105,9 +111,12 @@ class TwitterClient:
                 'logged_in': False,
                 'rate_limited': False,
                 'soft_429_count': 0,
+                'soft_403_count': 0,
                 'cookie_path': backup_cookie_path,
                 'proxy': current_proxy,
-                'proxy_fails': 0
+                'proxy_fails': 0,
+                'backoff_exp': 0,
+                'backoff_until_ts': 0.0,
             })
             print(f"   + Backup session: {backup_name} (Proxy: {current_proxy})")
         
@@ -129,9 +138,12 @@ class TwitterClient:
                         'logged_in': False,
                         'rate_limited': False,
                         'soft_429_count': 0,
+                        'soft_403_count': 0,
                         'cookie_path': cookie_file,
                         'proxy': current_proxy,
-                        'proxy_fails': 0
+                        'proxy_fails': 0,
+                        'backoff_exp': 0,
+                        'backoff_until_ts': 0.0,
                     })
                     has_cookies = os.path.exists(cookie_file)
                     cookie_msg = "(with cookies)" if has_cookies else "(new login)"
@@ -173,7 +185,7 @@ class TwitterClient:
         attempts = 0
         while attempts < len(self._sessions):
             session = self._sessions[self._current_session_idx]
-            if not session['rate_limited']:
+            if (not session['rate_limited']) and (not self._is_session_backing_off(session)):
                 return session
             # Try next session
             self._rotate_session()
@@ -196,20 +208,72 @@ class TwitterClient:
                 for s in self._sessions:
                     s['rate_limited'] = False
                     s['soft_429_count'] = 0
+                    s['soft_403_count'] = 0
+                    s['backoff_exp'] = 0
+                    s['backoff_until_ts'] = 0.0
             else:
                 remaining = int((self.cooldown_ends - datetime.now()).total_seconds() / 60)
                 # Optional: print(f"Info: Cooling down... {remaining}m remaining")
 
     async def _twikit_pace(self):
         """Small gap between Twikit calls to reduce 429 bursts (same pool for HVA + search + art)."""
-        gap = float(getattr(config, "TWIKIT_REQUEST_GAP_SEC", 0) or 0)
-        if gap > 0:
-            await asyncio.sleep(gap)
+        base_gap = float(getattr(config, "TWIKIT_REQUEST_GAP_SEC", 0) or 0)
+        burst_factor = float(getattr(config, "TWIKIT_BURST_REDUCTION_FACTOR", 1.0) or 1.0)
+        jitter = float(getattr(config, "TWIKIT_REQUEST_GAP_JITTER_SEC", 0) or 0)
+        gap = max(0.0, base_gap * max(1.0, burst_factor))
+        jitter = max(0.0, jitter)
+
+        now = time.monotonic()
+        if now < self._next_twikit_call_ts:
+            await asyncio.sleep(self._next_twikit_call_ts - now)
+
+        self._next_twikit_call_ts = max(time.monotonic(), self._next_twikit_call_ts) + gap + random.uniform(0, jitter)
 
     @staticmethod
     def _reset_soft_429(session):
         if session is not None:
             session["soft_429_count"] = 0
+            session["soft_403_count"] = 0
+            session["backoff_exp"] = 0
+            session["backoff_until_ts"] = 0.0
+
+    def _is_session_backing_off(self, session):
+        until_ts = float(session.get("backoff_until_ts", 0.0) or 0.0)
+        return until_ts > time.time()
+
+    def _schedule_session_backoff(self, session, reason):
+        base = float(getattr(config, "TWIKIT_BACKOFF_BASE_SEC", 8.0) or 8.0)
+        max_sec = float(getattr(config, "TWIKIT_BACKOFF_MAX_SEC", 300.0) or 300.0)
+        exp = int(session.get("backoff_exp", 0) or 0) + 1
+        session["backoff_exp"] = min(exp, 10)
+        wait = min(max_sec, base * (2 ** max(0, session["backoff_exp"] - 1)))
+        jitter = random.uniform(0, max(1.0, base * 0.5))
+        wait = float(wait + jitter)
+        session["backoff_until_ts"] = time.time() + wait
+        username = session['account']['username'] if session.get('account') else 'default'
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] Backoff @{username}: wait {wait:.1f}s "
+            f"(exp={session['backoff_exp']}, reason={reason[:80]})"
+        )
+
+    def _rotate_proxy_for_session(self, session, reason_tag):
+        if not self._all_proxies:
+            return False
+        max_proxy_fails = max(1, int(getattr(config, "TWIKIT_PROXY_ROTATIONS_PER_SESSION", 8) or 8))
+        if int(session.get("proxy_fails", 0) or 0) >= max_proxy_fails:
+            return False
+
+        session["proxy_fails"] = int(session.get("proxy_fails", 0) or 0) + 1
+        new_proxy = self._all_proxies[self._proxy_idx % len(self._all_proxies)]
+        self._proxy_idx += 1
+        old_ua = getattr(session['client'], 'user_agent', random.choice(self._user_agents))
+        session['client'] = Client('en-US', proxy=new_proxy)
+        session['client'].user_agent = old_ua
+        session['proxy'] = new_proxy
+        session['logged_in'] = False  # Force cookie reload on next ensure
+        username = session['account']['username'] if session.get('account') else 'default'
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] {reason_tag} for @{username}. Rotated proxy -> {new_proxy}")
+        return True
 
     def get_current_username(self):
         """Get the username of the current session."""
@@ -238,6 +302,7 @@ class TwitterClient:
         if not self._sessions:
             self.is_rate_limited = False
             return
+        reason = str(reason or "")
         self._normalize_session_idx()
         session = self._sessions[self._current_session_idx]
         username = session['account']['username'] if session['account'] else 'default'
@@ -257,40 +322,49 @@ class TwitterClient:
                 "Connection aborted",
             )
         )
-        max_proxy_fails = 5 # Allow more retries for network glitches
-        
-        if is_proxy_err and session['proxy_fails'] < max_proxy_fails:
-            session['proxy_fails'] += 1
-            if not self._all_proxies: return # Can't rotate proxy if no list
-            
-            new_proxy = self._all_proxies[self._proxy_idx % len(self._all_proxies)]
-            self._proxy_idx += 1
-            
-            err_type = "Timed Out (522)" if "522" in reason else ("Flagged (403)" if "403" in reason else "Network Error")
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Proxy {err_type} for @{username}. Trying new IP: {new_proxy}")
-            
-            # Re-initialize client with new proxy but same UA if possible
-            import random
-            old_ua = getattr(session['client'], 'user_agent', random.choice(self._user_agents))
-            session['client'] = Client('en-US', proxy=new_proxy)
-            session['client'].user_agent = old_ua
-            session['proxy'] = new_proxy
-            session['logged_in'] = False # Force reload cookies on next ensure
+        lower_reason = (reason or "").lower()
+        is_cf_403 = "403" in reason and (
+            "cloudflare" in lower_reason or "<html" in lower_reason or "forbidden" in lower_reason
+        )
+
+        if is_proxy_err:
+            self._schedule_session_backoff(session, reason or "proxy/network")
+            self._rotate_proxy_for_session(session, "Proxy/Network error")
+            self._rotate_session()
             return
 
         # Transient X throttling: a few 429s → rotate cookie sessions instead of locking everyone out.
         if "429" in reason and not is_proxy_err:
             soft = int(session.get("soft_429_count", 0) or 0) + 1
             session["soft_429_count"] = soft
+            self._schedule_session_backoff(session, reason or "429")
             cap = int(getattr(config, "TWIKIT_429_SOFT_PER_SESSION", 8) or 8)
             if soft < cap:
                 print(
                     f"[{datetime.now().strftime('%H:%M:%S')}] WAIT 429 throttle ({soft}/{cap}) @{username} — "
-                    "rotating session (soft backoff; not hard-blocking yet)."
+                    "rotating session/proxy (soft backoff; not hard-blocking yet)."
                 )
+                self._rotate_proxy_for_session(session, "HTTP 429 throttle")
                 self._rotate_session()
                 return
             session["soft_429_count"] = 0
+
+        # Cloudflare 403 often means cookie+IP fingerprint risk on this route.
+        # Soft-handle first with proxy/session rotation + exponential backoff.
+        if is_cf_403:
+            soft403 = int(session.get("soft_403_count", 0) or 0) + 1
+            session["soft_403_count"] = soft403
+            self._schedule_session_backoff(session, reason or "Cloudflare 403")
+            self._rotate_proxy_for_session(session, "Cloudflare 403 block")
+            cap403 = int(getattr(config, "TWIKIT_403_SOFT_PER_SESSION", 2) or 2)
+            if soft403 < cap403:
+                print(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] WAIT Cloudflare 403 ({soft403}/{cap403}) @{username} — "
+                    "rotating session (soft block)."
+                )
+                self._rotate_session()
+                return
+            session["soft_403_count"] = 0
 
         session['rate_limited'] = True
         
@@ -298,7 +372,6 @@ class TwitterClient:
         clean_reason = reason
         if "403" in reason and "<html" in reason.lower():
             ray_id = "Unknown"
-            import re
             match = re.search(r"Cloudflare Ray ID: <strong>(.*?)</strong>", reason)
             if match: ray_id = match.group(1)
             clean_reason = f"Cloudflare 403 Block (Ray ID: {ray_id}). Cookies/IP flagged."
@@ -449,6 +522,14 @@ class TwitterClient:
         while not self.is_rate_limited:
             session = self._get_current_session()
             if not session:
+                # All sessions may be in temporary backoff windows; wait briefly and retry.
+                backoffs = [float(s.get("backoff_until_ts", 0.0) or 0.0) for s in (self._sessions or [])]
+                now_ts = time.time()
+                future = [t for t in backoffs if t > now_ts]
+                if future:
+                    wait = max(0.25, min(5.0, min(future) - now_ts))
+                    await asyncio.sleep(wait)
+                    continue
                 return None
             success, err = await self._login(session)
             if success:
