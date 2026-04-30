@@ -1226,61 +1226,49 @@
       <div class="ps-inner">
         <div class="ps-eyebrow">// Early allocation · limited round</div>
         <div class="ps-h">$NERDS <span class="yl">PRE</span><span class="ol">SALE</span></div>
-        <p class="ps-tagline">Site locks when presale ends. Get in early — access never comes back at this price.</p>
+        <p class="ps-tagline">$NERDS launches on Pump.fun. Access tiers are token-gated and scale with your holdings.</p>
 
         <!-- Progress bar -->
         <div class="ps-prog-wrap">
           <div class="ps-prog-label">
             <span>Progress</span>
-            <span>10% · $100K / $1M</span>
+            <span>10% · 3,000 / 30,000 USDC</span>
           </div>
           <div class="ps-prog-track"><div class="ps-prog-fill"></div></div>
-          <div class="ps-goal">Target: $1,000,000 · Site access locked at close</div>
+          <div class="ps-goal">Hard cap: 30,000 USDC · Round closes at cap</div>
         </div>
 
         <!-- Limits -->
         <div class="ps-limits">
           <div class="ps-limit">
             <div class="ps-limit-label">Minimum</div>
-            <div class="ps-limit-val">$20 <span style="font-size:14px;color:rgba(240,232,192,.40)">in SOL</span></div>
-          </div>
-          <div class="ps-limit">
-            <div class="ps-limit-label">Maximum</div>
-            <div class="ps-limit-val">$500 <span style="font-size:14px;color:rgba(240,232,192,.40)">in SOL</span></div>
+            <div class="ps-limit-val">100 <span style="font-size:14px;color:rgba(240,232,192,.40)">USDC</span></div>
           </div>
           <div class="ps-limit">
             <div class="ps-limit-label">Network</div>
             <div class="ps-limit-val" style="font-size:20px">Solana</div>
           </div>
+          <div class="ps-limit">
+            <div class="ps-limit-label">Launch</div>
+            <div class="ps-limit-val" style="font-size:20px">Pump.fun</div>
+          </div>
+        </div>
+
+        <div class="ps-field">
+          <label>Token access details</label>
+          <div class="ps-status ok" style="display:block">
+            Basic platform access requires at least <b>5,000,000 $NERDS</b>.<br/>
+            Higher balances unlock deeper tools, faster feeds, and premium access tiers.<br/>
+            Utility token launch venue: <b>Pump.fun (Solana)</b>.
+          </div>
         </div>
 
         <!-- Wallet -->
-        <div class="ps-wallet-label">Send SOL to this address</div>
+        <div class="ps-wallet-label">Send USDC (Solana) to this address</div>
         <div class="ps-wallet-box" id="psWalletBox" title="Click to copy">
           <span class="ps-wallet-addr" id="psWalletAddr">CoNzMiAKSqZBUGu5XgEXRpiE3ByiP32wW3fJB76sf1p2</span>
           <button class="ps-copy-btn" id="psCopyBtn" type="button">COPY</button>
         </div>
-
-        <!-- TX hash field -->
-        <div class="ps-field">
-          <label for="psTxHash">Paste your transaction hash</label>
-          <input class="ps-input" id="psTxHash" type="text" placeholder="e.g. 5K7xP3...zQmR (Solana tx signature)" autocomplete="off" spellcheck="false" />
-        </div>
-
-        <!-- Discord connect -->
-        <button class="ps-discord" id="psDiscordBtn" type="button">
-          <span class="ps-discord-icon">🎮</span>
-          <div>
-            <div class="ps-discord-text" id="psDiscordText">Connect Discord</div>
-            <div class="ps-discord-sub" id="psDiscordSub">Required to save your allocation and receive access</div>
-          </div>
-        </button>
-
-        <!-- Status -->
-        <div class="ps-status" id="psStatus"></div>
-
-        <!-- Submit -->
-        <button class="ps-submit" id="psSubmitBtn" type="button">CLAIM PRESALE SPOT</button>
 
         <!-- Bottom nav -->
         <div class="ps-bottom-nav">
@@ -1537,7 +1525,6 @@
 
     /* ── PRESALE LOGIC ─────────────────────────────── */
     var WALLET = "CoNzMiAKSqZBUGu5XgEXRpiE3ByiP32wW3fJB76sf1p2";
-    var discordUid = ""; var discordName = "";
 
     // Copy wallet
     var copyBtn = document.getElementById("psCopyBtn");
@@ -1548,57 +1535,6 @@
     });
     var walletBox = document.getElementById("psWalletBox");
     if (walletBox) walletBox.addEventListener("click", function(e){ if (e.target !== copyBtn) { navigator.clipboard.writeText(WALLET).catch(function(){}); } });
-
-    // Discord connect
-    var discordBtn = document.getElementById("psDiscordBtn");
-    var discordText = document.getElementById("psDiscordText");
-    var discordSub = document.getElementById("psDiscordSub");
-    if (discordBtn) discordBtn.addEventListener("click", function(){
-      // Check if already logged in via cookie
-      fetch("/api/me", { credentials: "include" }).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
-        if (d && d.discord_id) {
-          discordUid = String(d.discord_id); discordName = d.username || d.discord_id;
-          discordText.textContent = "✓ Connected: @" + discordName;
-          discordSub.textContent = "Discord linked — your allocation will be saved";
-          discordBtn.classList.add("connected");
-        } else {
-          window.open("/api/access/discord/start?next=" + encodeURIComponent(window.location.pathname + "?m=presale"), "_blank", "width=520,height=680");
-          setTimeout(function(){
-            fetch("/api/me",{credentials:"include"}).then(function(r){return r.ok?r.json():null;}).then(function(d2){
-              if (d2 && d2.discord_id){ discordUid=String(d2.discord_id); discordName=d2.username||d2.discord_id; discordText.textContent="✓ Connected: @"+discordName; discordSub.textContent="Discord linked — your allocation will be saved"; discordBtn.classList.add("connected"); }
-            }).catch(function(){});
-          }, 3000);
-        }
-      }).catch(function(){
-        window.open("/api/access/discord/start?next=" + encodeURIComponent(window.location.pathname + "?m=presale"), "_blank", "width=520,height=680");
-      });
-    });
-
-    // Submit
-    var submitBtn2 = document.getElementById("psSubmitBtn");
-    var statusEl = document.getElementById("psStatus");
-    function showStatus(msg, type){ statusEl.textContent=msg; statusEl.className="ps-status "+(type||"err"); statusEl.style.display="block"; }
-
-    if (submitBtn2) submitBtn2.addEventListener("click", async function(){
-      var tx = (document.getElementById("psTxHash").value||"").trim();
-      if (!tx){ showStatus("Please paste your Solana transaction hash.", "err"); return; }
-      if (tx.length < 40){ showStatus("That doesn't look like a valid Solana tx signature (too short).", "err"); return; }
-      if (!discordUid){ showStatus("Please connect your Discord first — click the Discord button above.", "err"); return; }
-      submitBtn2.disabled = true; submitBtn2.textContent = "SUBMITTING…";
-      try {
-        var r = await fetch("/api/presale/submit", {
-          method:"POST", credentials:"include",
-          headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({ tx_hash: tx, discord_id: discordUid, discord_username: discordName })
-        });
-        var js = {}; try{ js = await r.json(); }catch(e){}
-        if (r.ok){ showStatus("✓ Submitted! Your allocation has been recorded. We'll confirm within 24h on Discord.", "ok"); submitBtn2.textContent = "SUBMITTED ✓"; }
-        else { showStatus("Error: " + (js.detail || js.message || ("HTTP "+r.status)), "err"); submitBtn2.disabled=false; submitBtn2.textContent="CLAIM PRESALE SPOT"; }
-      } catch(ex){
-        showStatus("Network error — please try again.", "err");
-        submitBtn2.disabled=false; submitBtn2.textContent="CLAIM PRESALE SPOT";
-      }
-    });
   })();
 </script>
 
