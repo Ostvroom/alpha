@@ -48,6 +48,8 @@ class TwitterClient:
         self._next_twikit_call_ts = 0.0
         self._global_backoff_until_ts = 0.0
         self._cf403_streak = 0
+        # asyncio lock created lazily (can't use asyncio primitives before event loop starts)
+        self._session_lock: asyncio.Lock | None = None
         self._cf403_last_ts = 0.0
         self._load_accounts()
     
@@ -270,13 +272,16 @@ class TwitterClient:
         self._cf403_last_ts = now
 
         if self._cf403_streak >= max(1, trigger_n):
-            self._global_backoff_until_ts = now + max(5.0, cool_sec)
             self._cf403_streak = 0
-            resume_at = datetime.fromtimestamp(self._global_backoff_until_ts).strftime("%H:%M:%S")
-            print(
-                f"[{datetime.now().strftime('%H:%M:%S')}] Cloudflare 403 streak detected. "
-                f"Pausing Twikit pool until {resume_at} (~{int(cool_sec)}s)."
-            )
+            # Don't extend if we're already in a longer backoff window.
+            new_until = now + max(5.0, cool_sec)
+            if new_until > float(self._global_backoff_until_ts or 0.0):
+                self._global_backoff_until_ts = new_until
+                resume_at = datetime.fromtimestamp(self._global_backoff_until_ts).strftime("%H:%M:%S")
+                print(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] Cloudflare 403 streak detected. "
+                    f"Pausing Twikit pool until {resume_at} (~{int(cool_sec)}s)."
+                )
 
     def _schedule_session_backoff(self, session, reason):
         base = float(getattr(config, "TWIKIT_BACKOFF_BASE_SEC", 8.0) or 8.0)
@@ -397,20 +402,21 @@ class TwitterClient:
             self._register_cf403_and_maybe_global_cooldown()
             rotated_proxy = self._rotate_proxy_for_session(session, "Cloudflare 403 block")
             cap403 = int(getattr(config, "TWIKIT_403_SOFT_PER_SESSION", 2) or 2)
-            if rotated_proxy:
+            if rotated_proxy and soft403 < cap403:
                 print(
                     f"[{datetime.now().strftime('%H:%M:%S')}] WAIT Cloudflare 403 ({soft403}/{cap403}) @{username} — "
-                    "rotating session (soft block, proxy rotated)."
+                    "proxy rotated, soft block."
                 )
                 self._rotate_session()
                 return
-            if soft403 < cap403:
+            if not rotated_proxy and soft403 < cap403:
                 print(
                     f"[{datetime.now().strftime('%H:%M:%S')}] WAIT Cloudflare 403 ({soft403}/{cap403}) @{username} — "
-                    "rotating session (soft block, no proxy left)."
+                    "soft block, no proxy left."
                 )
                 self._rotate_session()
                 return
+            # Exhausted soft budget — hard-block this session.
             session["soft_403_count"] = 0
 
         session['rate_limited'] = True
@@ -562,32 +568,54 @@ class TwitterClient:
                     break
 
     async def _ensure_session(self):
-        """Ensure a logged-in session is available, rotating if necessary."""
+        """Ensure a logged-in session is available.
+
+        Uses an asyncio.Lock so concurrent callers don't all wake up at once
+        after a backoff window and hammer X simultaneously.
+        """
         if not self._sessions:
             return None
-        self.check_cooldown()
-        while not self.is_rate_limited:
+
+        # Lazy-init lock (must be inside a running event loop).
+        if self._session_lock is None:
+            self._session_lock = asyncio.Lock()
+
+        # Outer check: if we're in a long hard-cooldown, wait outside the lock
+        # so we don't hold it for minutes.
+        if self.cooldown_ends and datetime.now() < self.cooldown_ends:
+            wait_sec = max(1.0, (self.cooldown_ends - datetime.now()).total_seconds())
+            await asyncio.sleep(min(wait_sec, 30.0))
+
+        async with self._session_lock:
+            self.check_cooldown()
+
+            # Global CF-403 backoff: sleep the full remaining time, once, under lock.
             if self._in_global_backoff():
-                wait = max(0.25, min(10.0, float(self._global_backoff_until_ts) - time.time()))
+                wait = max(0.5, float(self._global_backoff_until_ts) - time.time())
                 await asyncio.sleep(wait)
-                continue
+                self._global_backoff_until_ts = 0.0
+
+            if self.is_rate_limited:
+                return None
+
             session = self._get_current_session()
             if not session:
-                # All sessions may be in temporary backoff windows; wait briefly and retry.
+                # All sessions in per-session backoff: sleep until the soonest one expires.
                 backoffs = [float(s.get("backoff_until_ts", 0.0) or 0.0) for s in (self._sessions or [])]
                 now_ts = time.time()
                 future = [t for t in backoffs if t > now_ts]
                 if future:
-                    wait = max(0.25, min(5.0, min(future) - now_ts))
+                    wait = max(0.5, min(future) - now_ts)
                     await asyncio.sleep(wait)
-                    continue
-                return None
+                    session = self._get_current_session()
+                if not session:
+                    return None
+
             success, err = await self._login(session)
             if success:
                 return session
-            # If login failed, mark this session as blocked and try next
             self._mark_session_blocked(err or "Login failed")
-        return None
+            return None
 
     def _load_cache(self):
         """
