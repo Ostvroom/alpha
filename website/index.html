@@ -986,6 +986,28 @@
     }
     .cl-status.err{color:rgba(255,130,130,.9);border:1px solid rgba(255,130,130,.25);background:rgba(255,50,50,.05)}
     .cl-status.ok{color:rgba(120,255,180,.9);border:1px solid rgba(120,255,180,.25);background:rgba(0,200,100,.05)}
+    /* type toggle */
+    .cl-type-row{display:flex;gap:8px;margin-bottom:20px}
+    .cl-type-btn{
+      flex:1;font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.12em;
+      text-transform:uppercase;padding:10px 12px;border:1px solid rgba(255,204,0,.22);
+      background:transparent;color:rgba(240,232,192,.50);cursor:pointer;transition:all .14s;
+    }
+    .cl-type-btn.active{border-color:#ffcc00;color:#ffcc00;background:rgba(255,204,0,.06)}
+    .cl-type-btn:hover:not(.active){border-color:rgba(255,204,0,.40);color:rgba(240,232,192,.80)}
+    /* DAO notice */
+    .cl-dao-notice{
+      display:none;flex-direction:column;gap:10px;
+      border:1px solid rgba(255,204,0,.22);background:rgba(255,204,0,.04);
+      padding:14px 16px;margin-bottom:18px;
+    }
+    .cl-dao-notice.show{display:flex}
+    .cl-dao-icon{font-size:18px;flex-shrink:0}
+    .cl-dao-title{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#ffcc00;margin-bottom:4px}
+    .cl-dao-body{font-size:12px;color:rgba(240,232,192,.60);line-height:1.6}
+    .cl-dao-body strong{color:rgba(240,232,192,.90)}
+    .cl-dao-check{display:flex;align-items:center;gap:8px;font-family:"JetBrains Mono",monospace;font-size:11px;color:rgba(240,232,192,.70);cursor:pointer;margin-top:4px}
+    .cl-dao-check input{accent-color:#ffcc00;width:14px;height:14px;cursor:pointer}
   </style>
 </head>
 <body>
@@ -1347,24 +1369,30 @@
   </div>
 </div>
 
-<!-- ══ COLLAB REQUEST MODAL ══════════════════════════════════════════════ -->
-<div id="na-collab" class="na-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Collab Request">
+<!-- ══ EARLY ACCESS MODAL ══════════════════════════════════════════════ -->
+<div id="na-collab" class="na-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Early Access">
   <div class="na-modal-bg" data-naclose="collab"></div>
   <div class="na-dialog" style="max-width:600px">
     <div class="na-dialog-head">
       <div class="na-dialog-head-left">
         <div class="na-dots"><span></span><span></span><span></span></div>
-        <span class="na-dialog-title">nerds alpha — collab request</span>
+        <span class="na-dialog-title">nerds alpha — early access</span>
       </div>
       <button class="na-close" data-naclose="collab" aria-label="Close">&times;</button>
     </div>
     <div class="na-dialog-body">
       <div class="cl-inner">
-        <div class="cl-eyebrow">// Partnership</div>
-        <div class="cl-h">REQUEST <span class="yl">COLLAB</span></div>
+        <div class="cl-eyebrow">// Access</div>
+        <div class="cl-h">REQUEST <span class="yl">EARLY ACCESS</span></div>
         <p class="cl-sub">Complete the steps below, fill the form, and we'll review your request.</p>
 
-        <!-- Steps checklist -->
+        <!-- Type selector -->
+        <div class="cl-type-row">
+          <button type="button" class="cl-type-btn active" id="typePersonal" onclick="setEaType('personal')">For Myself</button>
+          <button type="button" class="cl-type-btn" id="typeDao" onclick="setEaType('dao')">For a DAO / Project</button>
+        </div>
+
+        <!-- Steps -->
         <div class="cl-steps">
           <div class="cl-step">
             <div class="cl-step-num">01</div>
@@ -1385,10 +1413,29 @@
           <div class="cl-step">
             <div class="cl-step-num">03</div>
             <div class="cl-step-body">
-              <div class="cl-step-title">Fill the form below</div>
-              <div class="cl-step-desc">Enter your Discord, project name, and spot count.</div>
+              <div class="cl-step-title">Join the Discord</div>
+              <div class="cl-step-desc">Join the <a href="https://discord.gg/nerdsalpha" target="_blank" rel="noopener noreferrer">Nerds Alpha Discord</a> server.</div>
             </div>
           </div>
+          <div class="cl-step">
+            <div class="cl-step-num">04</div>
+            <div class="cl-step-body">
+              <div class="cl-step-title">Fill the form below</div>
+              <div class="cl-step-desc">Enter your Discord and we'll review your request.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- DAO notice (shown only for DAO type) -->
+        <div class="cl-dao-notice" id="clDaoNotice">
+          <span class="cl-dao-icon">⚡</span>
+          <div>
+            <div class="cl-dao-title">DAO / Project Collaboration</div>
+            <div class="cl-dao-body">We only do <strong>X collaborations</strong> — your community gets whitelisted spots in exchange for a post on your official channels. Are you up for it?</div>
+          </div>
+          <label class="cl-dao-check">
+            <input type="checkbox" id="clDaoAgree" /> Yes, I'm up for it
+          </label>
         </div>
 
         <!-- Form -->
@@ -1397,17 +1444,13 @@
             <label for="cl-discord">Your Discord username / ID</label>
             <input class="cl-input" id="cl-discord" name="discord" type="text" placeholder="e.g. sultan.web3 or 123456789" required maxlength="100" />
           </div>
-          <div class="cl-field">
+          <div class="cl-field" id="clProjectField" style="display:none">
             <label for="cl-project">DAO or Project name</label>
-            <input class="cl-input" id="cl-project" name="project" type="text" placeholder="e.g. MyDAO, Alpha Club…" required maxlength="120" />
-          </div>
-          <div class="cl-field">
-            <label for="cl-spots">How many spots do you want?</label>
-            <input class="cl-input" id="cl-spots" name="spots" type="number" placeholder="e.g. 10" required min="1" max="9999" />
+            <input class="cl-input" id="cl-project" name="project" type="text" placeholder="e.g. MyDAO, Alpha Club…" maxlength="120" />
           </div>
           <div class="cl-field">
             <label for="cl-note">Additional info <span style="opacity:.4">(optional)</span></label>
-            <textarea class="cl-input" id="cl-note" name="note" rows="3" placeholder="Tell us about your community or why you'd like to collaborate…" maxlength="600"></textarea>
+            <textarea class="cl-input" id="cl-note" name="note" rows="3" placeholder="Tell us why you'd like to join or anything relevant…" maxlength="600"></textarea>
           </div>
           <button class="cl-submit" type="submit" id="cl-submit-btn">Submit Request</button>
           <div class="cl-status" id="cl-status"></div>
@@ -1663,7 +1706,23 @@
       if (modals[q]) { setTimeout(function(){ openModal(q); }, 400); }
     })();
 
-    /* ── COLLAB FORM SUBMISSION ─────────────────────────────── */
+    /* ── EARLY ACCESS FORM ─────────────────────────────── */
+    var _eaType = "personal";
+
+    window.setEaType = function(type) {
+      _eaType = type;
+      var btnP = document.getElementById("typePersonal");
+      var btnD = document.getElementById("typeDao");
+      var notice = document.getElementById("clDaoNotice");
+      var projField = document.getElementById("clProjectField");
+      var projInput = document.getElementById("cl-project");
+      if (btnP) btnP.classList.toggle("active", type === "personal");
+      if (btnD) btnD.classList.toggle("active", type === "dao");
+      if (notice) notice.classList.toggle("show", type === "dao");
+      if (projField) projField.style.display = type === "dao" ? "" : "none";
+      if (projInput) projInput.required = type === "dao";
+    };
+
     var collabForm = document.getElementById("collabForm");
     var collabStatus = document.getElementById("cl-status");
     var collabSubmitBtn = document.getElementById("cl-submit-btn");
@@ -1678,22 +1737,29 @@
     if (collabForm) {
       collabForm.addEventListener("submit", async function(e) {
         e.preventDefault();
+        if (_eaType === "dao") {
+          var agreeChk = document.getElementById("clDaoAgree");
+          if (!agreeChk || !agreeChk.checked) {
+            showCollabStatus("Please confirm you're up for the X collaboration requirement.", true);
+            return;
+          }
+        }
         if (collabSubmitBtn) collabSubmitBtn.disabled = true;
         showCollabStatus("Submitting…", false);
         var discord = (document.getElementById("cl-discord") || {}).value || "";
         var project = (document.getElementById("cl-project") || {}).value || "";
-        var spots   = (document.getElementById("cl-spots")   || {}).value || "";
         var note    = (document.getElementById("cl-note")    || {}).value || "";
         try {
           var r = await fetch("/api/collab/submit", {
             method: "POST",
             headers: {"Content-Type":"application/json"},
-            body: JSON.stringify({ discord: discord.trim(), project: project.trim(), spots: parseInt(spots)||0, note: note.trim() })
+            body: JSON.stringify({ discord: discord.trim(), project: project.trim(), type: _eaType, note: note.trim() })
           });
           var d = {}; try { d = await r.json(); } catch(e2){}
           if (r.ok && d.ok) {
             showCollabStatus("✓ Request submitted! We'll review and reach out via Discord.", false);
             collabForm.reset();
+            setEaType("personal");
           } else {
             showCollabStatus("Error: " + (d.detail || d.error || ("HTTP "+r.status)), true);
             if (collabSubmitBtn) collabSubmitBtn.disabled = false;
