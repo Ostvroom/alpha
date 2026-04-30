@@ -1076,24 +1076,22 @@
   </footer>
 </div>
 
-<!-- Tweet gate modal -->
+<!-- Discord gate modal -->
 <div id="tg-modal" class="tg-modal" aria-hidden="true">
   <div class="tg-backdrop" id="tg-backdrop"></div>
   <div class="tg-dialog" role="dialog" aria-modal="true" aria-label="Access gate">
     <div class="tg-head">
-      <div class="tg-title">Access gate · like + RT + reply</div>
+      <div class="tg-title">Access gate · connect Discord</div>
       <button class="tg-close" type="button" id="tg-close" aria-label="Close">&times;</button>
     </div>
     <div class="tg-steps">
-      1) Open the tweet below and <b>Like</b> + <b>RT</b> + <b>Reply</b><br/>
-      2) Paste your <b>reply link</b> and submit to unlock the live feeds.
+      Connect your <b>Discord</b> account to access live feeds.<br/>
+      Only <b>whitelisted Discord IDs</b> can enter the dashboard.
     </div>
     <div class="tg-row">
-      <a class="btn ghost btn-sm" id="tg-openTweet" href="#" target="_blank" rel="noreferrer">Open Tweet</a>
-      <input id="tg-reply" class="tg-input" placeholder="Paste your reply link (x.com/.../status/ID)" />
-      <button class="btn solid btn-sm" id="tg-submit" type="button">Submit</button>
+      <button class="btn solid btn-sm" id="tg-discord-connect" type="button">Connect Discord</button>
     </div>
-    <div class="tg-help">Tip: your reply link looks like `https://x.com/yourname/status/123...`</div>
+    <div class="tg-help">After successful login, approved users are redirected to the live feed.</div>
     <div class="tg-err" id="tg-err"></div>
   </div>
 </div>
@@ -1224,55 +1222,18 @@
     </div>
     <div class="na-dialog-body">
       <div class="ps-inner">
-        <div class="ps-eyebrow">// Early allocation · limited round</div>
+        <div class="ps-eyebrow">// Presale status</div>
         <div class="ps-h">$NERDS <span class="yl">PRE</span><span class="ol">SALE</span></div>
-        <p class="ps-tagline">$NERDS launches on Pump.fun. Access tiers are token-gated and scale with your holdings.</p>
-
-        <!-- Progress bar -->
-        <div class="ps-prog-wrap">
-          <div class="ps-prog-label">
-            <span>Progress</span>
-            <span>10% · 3,000 / 30,000 USDC</span>
-          </div>
-          <div class="ps-prog-track"><div class="ps-prog-fill"></div></div>
-          <div class="ps-goal">Hard cap: 30,000 USDC · Round closes at cap</div>
-        </div>
-
-        <!-- Limits -->
-        <div class="ps-limits">
-          <div class="ps-limit">
-            <div class="ps-limit-label">Minimum</div>
-            <div class="ps-limit-val">100 <span style="font-size:14px;color:rgba(240,232,192,.40)">USDC</span></div>
-          </div>
-          <div class="ps-limit">
-            <div class="ps-limit-label">Network</div>
-            <div class="ps-limit-val" style="font-size:20px">Solana</div>
-          </div>
-          <div class="ps-limit">
-            <div class="ps-limit-label">Launch</div>
-            <div class="ps-limit-val" style="font-size:20px">Pump.fun</div>
-          </div>
-        </div>
-
-        <div class="ps-field">
-          <label>Token access details</label>
-          <div class="ps-status ok" style="display:block">
-            Basic platform access requires at least <b>5,000,000 $NERDS</b>.<br/>
-            Higher balances unlock deeper tools, faster feeds, and premium access tiers.<br/>
-            Utility token launch venue: <b>Pump.fun (Solana)</b>.
-          </div>
-        </div>
-
-        <!-- Wallet -->
-        <div class="ps-wallet-label">Send USDC (Solana) to this address</div>
-        <div class="ps-wallet-box" id="psWalletBox" title="Click to copy">
-          <span class="ps-wallet-addr" id="psWalletAddr">CoNzMiAKSqZBUGu5XgEXRpiE3ByiP32wW3fJB76sf1p2</span>
-          <button class="ps-copy-btn" id="psCopyBtn" type="button">COPY</button>
+        <p class="ps-tagline">Coming soon. Presale details will be announced on official channels.</p>
+        <div class="ps-status ok" style="display:block;margin-top:10px">
+          $NERDS presale is preparing for launch.<br/>
+          Follow updates and request collaboration access below.
         </div>
 
         <!-- Bottom nav -->
         <div class="ps-bottom-nav">
           <button class="ps-nav-btn" id="psBtnRoadmap" type="button">📋 Roadmap</button>
+          <a class="ps-nav-btn" href="https://t.me/Sultandegeen" target="_blank" rel="noopener noreferrer" style="text-decoration:none">🤝 Request Collab Access</a>
           <a class="ps-nav-btn" href="/projects" style="text-decoration:none">⚡ Live Feeds</a>
           <a class="ps-nav-btn" href="https://t.me/Sultandegeen" target="_blank" rel="noopener noreferrer" style="text-decoration:none">💬 Ask Questions</a>
         </div>
@@ -1391,27 +1352,21 @@
     });
   })();
 
-  /* ── TWEET GATE ───────────────────────── */
+  /* ── DISCORD GATE ─────────────────────── */
   (function(){
-    // Change this to your daily tweet URL whenever you want.
-    var TWEET_URL = (window.NERDS_TWEET_URL || "https://x.com/Degensultan/status/0");
     var modal = document.getElementById("tg-modal");
     var btns = [document.getElementById("openFeedBtn"), document.getElementById("openFeedNav"), document.getElementById("openFeedFoot")].filter(Boolean);
     var closeBtn = document.getElementById("tg-close");
     var backdrop = document.getElementById("tg-backdrop");
-    var openTweet = document.getElementById("tg-openTweet");
-    var replyInp = document.getElementById("tg-reply");
-    var submitBtn = document.getElementById("tg-submit");
+    var connectBtn = document.getElementById("tg-discord-connect");
     var err = document.getElementById("tg-err");
-    if (openTweet) openTweet.href = TWEET_URL;
 
     function open(){
       if (!modal) return;
       if (err) { err.style.display="none"; err.textContent=""; }
-      if (replyInp) replyInp.value = "";
       modal.classList.add("is-open");
       modal.setAttribute("aria-hidden","false");
-      setTimeout(function(){ try{ replyInp && replyInp.focus(); }catch(e){} }, 50);
+      setTimeout(function(){ try{ connectBtn && connectBtn.focus(); }catch(e){} }, 50);
     }
     function close(){
       if (!modal) return;
@@ -1437,41 +1392,24 @@
     if (backdrop) backdrop.addEventListener("click", close);
     document.addEventListener("keydown", function(e){ if (e.key === "Escape") close(); });
 
-    function looksLikeStatus(u){
-      u = String(u||"").trim();
-      return /https?:\/\/(www\.)?(x\.com|twitter\.com)\/[^\/]+\/status\/\d+/.test(u);
-    }
-    async function submit(){
-      var replyUrl = String(replyInp && replyInp.value || "").trim();
-      if (!looksLikeStatus(TWEET_URL) || !looksLikeStatus(replyUrl)){
-        if (err){ err.style.display="block"; err.textContent="Please paste a valid X reply link (x.com/.../status/ID)."; }
-        return;
-      }
-      if (submitBtn) submitBtn.disabled = true;
-      if (submitBtn) submitBtn.textContent = "Submitting…";
-      try{
-        var r = await fetch("/api/access/tweet", {
-          method: "POST",
-          credentials: "include",
-          headers: {"Content-Type":"application/json"},
-          body: JSON.stringify({tweet_url: TWEET_URL, reply_url: replyUrl})
-        });
-        if (!r.ok){
-          var t = ""; try{ t = await r.text(); }catch(e){}
-          if (err){ err.style.display="block"; err.textContent = ("Failed: HTTP "+r.status+" "+(t||"")).slice(0,180); }
-          return;
+    if (connectBtn) connectBtn.addEventListener("click", function(){
+      var next = "/projects";
+      window.location.href = "/api/access/discord/start?next=" + encodeURIComponent(next);
+    });
+
+    // If OAuth bounced back with an error or whitelist rejection, explain it.
+    try {
+      var gate = new URLSearchParams(window.location.search).get("gate") || "";
+      if (gate === "discord_error" || gate === "not_whitelisted") {
+        open();
+        if (err) {
+          err.style.display = "block";
+          err.textContent = gate === "not_whitelisted"
+            ? "Access denied: your Discord ID is not whitelisted."
+            : "Discord login failed. Please try again.";
         }
-        close();
-        window.location.href = "/projects";
-      } catch(ex){
-        if (err){ err.style.display="block"; err.textContent = "Network error. Try again."; }
-      } finally {
-        if (submitBtn) submitBtn.disabled = false;
-        if (submitBtn) submitBtn.textContent = "Submit";
       }
-    }
-    if (submitBtn) submitBtn.addEventListener("click", submit);
-    if (replyInp) replyInp.addEventListener("keydown", function(e){ if (e.key === "Enter") submit(); });
+    } catch (e) {}
   })();
 
   // Live feed moved to dedicated pages.
@@ -1524,17 +1462,6 @@
     })();
 
     /* ── PRESALE LOGIC ─────────────────────────────── */
-    var WALLET = "CoNzMiAKSqZBUGu5XgEXRpiE3ByiP32wW3fJB76sf1p2";
-
-    // Copy wallet
-    var copyBtn = document.getElementById("psCopyBtn");
-    if (copyBtn) copyBtn.addEventListener("click", function(){
-      navigator.clipboard.writeText(WALLET).then(function(){
-        copyBtn.textContent = "COPIED!"; setTimeout(function(){ copyBtn.textContent = "COPY"; }, 2000);
-      }).catch(function(){ copyBtn.textContent = "COPY"; });
-    });
-    var walletBox = document.getElementById("psWalletBox");
-    if (walletBox) walletBox.addEventListener("click", function(e){ if (e.target !== copyBtn) { navigator.clipboard.writeText(WALLET).catch(function(){}); } });
   })();
 </script>
 

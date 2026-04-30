@@ -664,7 +664,12 @@ def _has_access(req: Request) -> bool:
         return True
 
     tok = req.cookies.get(ACCESS_COOKIE, "")
-    return _verify_access_token(tok) is not None
+    payload = _verify_access_token(tok) or {}
+    try:
+        uid = int(payload.get("uid") or 0)
+    except Exception:
+        uid = 0
+    return _is_whitelisted_user(uid)
 
 
 def _current_user_id(req: Request) -> int:
@@ -688,6 +693,32 @@ def _admin_user_ids() -> set[int]:
         except Exception:
             continue
     return out
+
+
+def _website_whitelist_user_ids() -> set[int]:
+    """
+    Comma-separated Discord user IDs allowed to access gated website pages.
+    Env var: WEBSITE_ACCESS_DISCORD_WHITELIST_IDS
+    """
+    raw = str(os.getenv("WEBSITE_ACCESS_DISCORD_WHITELIST_IDS", "") or "").strip()
+    out: set[int] = set()
+    for part in raw.split(","):
+        p = str(part or "").strip()
+        if not p:
+            continue
+        try:
+            out.add(int(p))
+        except Exception:
+            continue
+    return out
+
+
+def _is_whitelisted_user(user_id: int) -> bool:
+    wl = _website_whitelist_user_ids()
+    if user_id <= 0:
+        return False
+    # Strict allow-list mode: explicit Discord IDs only.
+    return bool(wl) and user_id in wl
 
 
 def _require_admin(request: Request) -> int:
@@ -952,6 +983,11 @@ async def api_access_discord_callback(request: Request, code: str = "", state: s
     if not user_id:
         res = RedirectResponse(url="/projects?gate=discord_error", status_code=302)
         res.delete_cookie(_DISCORD_STATE_COOKIE, path="/")
+        return res
+    if not _is_whitelisted_user(int(user_id)):
+        res = RedirectResponse(url="/projects?gate=not_whitelisted", status_code=302)
+        res.delete_cookie(_DISCORD_STATE_COOKIE, path="/")
+        res.delete_cookie(ACCESS_COOKIE, path="/")
         return res
 
     # Save Discord profile (best-effort)
