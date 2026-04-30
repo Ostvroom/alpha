@@ -1208,7 +1208,7 @@ async def api_access_discord_callback(request: Request, code: str = "", state: s
     tok = _make_access_token(user_id=user_id)
     # Keep one-time account connection even when not whitelisted.
     # Non-whitelisted users can still view account status and points tasks.
-    target = nxt if is_whitelisted else "/account?gate=not_whitelisted"
+    target = nxt if is_whitelisted else "/?gate=not_whitelisted"
     res = RedirectResponse(url=target, status_code=302)
     res.set_cookie(
         key=ACCESS_COOKIE,

@@ -68,9 +68,30 @@
     .modal-close{border:1px solid rgba(255,204,0,.35);background:rgba(255,204,0,.06);color:#ffcc00;width:36px;height:36px;font-size:22px;cursor:pointer;border-radius:8px}
     .modal-body{padding:14px 16px 16px;max-height:70vh;overflow:auto}
     .ok{color:rgba(120,255,180,.92);font-family:"JetBrains Mono",monospace;font-size:11px;margin-top:8px}
+    .gate-wrap{display:none;position:fixed;inset:0;z-index:9999;align-items:center;justify-content:center;background:rgba(0,0,0,.88);backdrop-filter:blur(6px)}
+    .gate-wrap.on{display:flex}
+    .gate-box{width:min(440px,94vw);background:#0b0b0d;border:1px solid rgba(255,204,0,.28);border-radius:6px;padding:24px 24px 20px;box-shadow:0 24px 80px rgba(0,0,0,.70)}
+    .gate-eyebrow{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:rgba(255,204,0,.55);margin-bottom:10px}
+    .gate-title{font-family:"JetBrains Mono",monospace;font-size:13px;font-weight:700;color:#f0e8c0;margin-bottom:8px}
+    .gate-body{font-size:13px;color:rgba(240,232,192,.60);line-height:1.6;margin-bottom:18px}
+    .gate-btns{display:flex;flex-direction:column;gap:8px}
+    .gate-btn{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;padding:11px 18px;border-radius:4px;border:1px solid rgba(240,232,192,.30);background:transparent;color:#f0e8c0;cursor:pointer;text-align:center;text-decoration:none;transition:border-color .14s,color .14s}
+    .gate-btn:hover{border-color:rgba(255,204,0,.55);color:#ffcc00}
   </style>
 </head>
 <body>
+  <div class="gate-wrap" id="gateWrap">
+    <div class="gate-box">
+      <div class="gate-eyebrow">Access Gate</div>
+      <div class="gate-title">Not Whitelisted</div>
+      <div class="gate-body">Your Discord account is not on the whitelist.<br/>Contact the team to request access.</div>
+      <div class="gate-btns">
+        <a class="gate-btn" href="https://t.me/Sultandegeen" target="_blank" rel="noopener noreferrer">Contact on Telegram</a>
+        <a class="gate-btn" href="https://x.com/Degensultan" target="_blank" rel="noopener noreferrer">Follow on X for updates</a>
+        <a class="gate-btn" href="/">← Back to home</a>
+      </div>
+    </div>
+  </div>
   <div class="wrap">
     <div class="top">
       <a class="brand" href="/projects"><img src="/logo.png" alt="Nerds Alpha" /><span>Nerds Alpha · Account</span></a>
@@ -160,10 +181,16 @@
       try{
         var meR = await fetch("/api/me",{credentials:"include"});
         if(!meR.ok){
-          document.querySelector(".grid").innerHTML = '<div class="card span12"><div class="pb"><div class="err">Unauthorized. Connect Discord first.</div><div style="margin-top:10px"><a class="btn primary" href="/api/access/discord/start?next=%2Faccount">Connect Account</a></div></div></div>';
+          window.location.href = "/";
           return;
         }
         var me = await meR.json();
+        if (!me || !me.is_whitelisted){
+          var g = document.getElementById("gateWrap");
+          if (g) g.classList.add("on");
+          document.body.style.overflow = "hidden";
+          return;
+        }
         var display = (me.global_name||me.username||"Discord user").trim();
         setText("name", display);
         setText("uid", "Discord ID · " + (me.user_id||"—"));
