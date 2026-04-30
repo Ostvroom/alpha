@@ -3599,6 +3599,66 @@ async def api_access_redeem(request: Request, req: RedeemRequest):
     return res
 
 
+class CollabRequest(BaseModel):
+    discord: str
+    project: str
+    spots: int
+    note: str = ""
+
+
+_COLLAB_DB = str(DATA_DIR / "collab_requests.db")
+
+
+def _collab_init() -> None:
+    conn = sqlite3.connect(_COLLAB_DB)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS collab_requests (
+            id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts      TEXT NOT NULL DEFAULT (datetime('now')),
+            discord TEXT NOT NULL,
+            project TEXT NOT NULL,
+            spots   INTEGER NOT NULL DEFAULT 0,
+            note    TEXT,
+            ip      TEXT
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+@app.post("/api/collab/submit")
+async def api_collab_submit(request: Request, body: CollabRequest):
+    ip = _get_client_ip(request)
+    if not _check_rate_limit(f"collab:{ip}", max_calls=5, window_seconds=3600):
+        raise HTTPException(429, "Too many requests. Please wait before trying again.")
+
+    discord = (body.discord or "").strip()[:100]
+    project = (body.project or "").strip()[:120]
+    note    = (body.note or "").strip()[:600]
+    spots   = max(0, min(int(body.spots or 0), 9999))
+
+    if not discord or not project:
+        raise HTTPException(400, "Discord handle and project name are required.")
+    if spots < 1:
+        raise HTTPException(400, "Please enter at least 1 spot.")
+
+    try:
+        _collab_init()
+        conn = sqlite3.connect(_COLLAB_DB)
+        conn.execute(
+            "INSERT INTO collab_requests (discord, project, spots, note, ip) VALUES (?, ?, ?, ?, ?)",
+            (discord, project, spots, note, ip[:80]),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        raise HTTPException(500, f"Could not save request: {e}")
+
+    return {"ok": True, "message": "Request submitted."}
+
+
 class TweetGateRequest(BaseModel):
     tweet_url: str
     reply_url: str

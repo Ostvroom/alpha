@@ -771,7 +771,7 @@
     }
     .rm-note{font-family:"JetBrains Mono",monospace;font-size:10px;color:rgba(240,232,192,.35)}
 
-    /* ── PRESALE MODAL BODY ─────────────────────────────── */
+    /* ── MINT / COLLAB MODAL BODY ─────────────────────────────── */
     .ps-inner{padding:28px 28px 24px}
     .ps-eyebrow{
       font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.20em;
@@ -903,6 +903,68 @@
       cursor:pointer;transition:color .12s,border-color .12s,background .12s;text-align:center;
     }
     .ps-nav-btn:hover{color:#ffcc00;border-color:rgba(255,204,0,.45);background:rgba(255,204,0,.05)}
+
+    /* ── COLLAB REQUEST MODAL ─────────────────────────────── */
+    .cl-inner{padding:28px 28px 24px}
+    .cl-eyebrow{
+      font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.20em;
+      text-transform:uppercase;color:rgba(255,204,0,.52);margin-bottom:8px;
+      display:flex;align-items:center;gap:8px;
+    }
+    .cl-eyebrow::before{content:"";width:16px;height:1px;background:rgba(255,204,0,.40)}
+    .cl-h{
+      font-family:"Barlow Condensed",sans-serif;font-size:clamp(26px,4vw,42px);
+      font-weight:900;letter-spacing:.04em;text-transform:uppercase;line-height:1;
+      color:#f8f0d0;margin-bottom:6px;
+    }
+    .cl-h .yl{color:#ffcc00}
+    .cl-sub{font-size:13px;color:rgba(240,232,192,.50);margin-bottom:22px}
+    /* checklist steps */
+    .cl-steps{display:flex;flex-direction:column;gap:8px;margin-bottom:22px}
+    .cl-step{
+      display:flex;align-items:flex-start;gap:12px;
+      border:1px solid rgba(255,204,0,.12);background:rgba(255,204,0,.03);padding:12px 14px;
+    }
+    .cl-step-num{
+      font-family:"Barlow Condensed",sans-serif;font-size:20px;font-weight:900;
+      color:rgba(255,204,0,.35);line-height:1;flex-shrink:0;min-width:22px;
+    }
+    .cl-step-body{flex:1}
+    .cl-step-title{
+      font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.12em;
+      text-transform:uppercase;color:rgba(255,204,0,.75);margin-bottom:3px;
+    }
+    .cl-step-desc{font-size:12px;color:rgba(240,232,192,.55);line-height:1.5}
+    .cl-step-desc a{color:#ffcc00;text-decoration:none}
+    .cl-step-desc a:hover{text-decoration:underline}
+    /* form */
+    .cl-field{margin-bottom:14px}
+    .cl-field label{
+      display:block;font-family:"JetBrains Mono",monospace;font-size:9px;
+      letter-spacing:.16em;text-transform:uppercase;color:rgba(255,204,0,.50);margin-bottom:6px;
+    }
+    .cl-input{
+      width:100%;background:rgba(0,0,0,.30);border:1px solid rgba(255,204,0,.18);
+      color:#f0e8c0;padding:11px 14px;
+      font-family:"JetBrains Mono",monospace;font-size:12px;outline:none;
+      transition:border-color .14s;resize:none;
+    }
+    .cl-input:focus{border-color:rgba(255,204,0,.45)}
+    .cl-input::placeholder{color:rgba(240,232,192,.22)}
+    .cl-submit{
+      width:100%;font-family:"Barlow Condensed",sans-serif;font-size:17px;font-weight:800;
+      letter-spacing:.10em;text-transform:uppercase;
+      background:#ffcc00;color:#090909;border:none;padding:14px;cursor:pointer;
+      transition:background .12s;margin-top:4px;
+    }
+    .cl-submit:hover{background:#ffe033}
+    .cl-submit:disabled{background:rgba(255,204,0,.35);cursor:not-allowed;color:rgba(0,0,0,.50)}
+    .cl-status{
+      font-family:"JetBrains Mono",monospace;font-size:11px;
+      margin-top:12px;display:none;padding:10px 12px;
+    }
+    .cl-status.err{color:rgba(255,130,130,.9);border:1px solid rgba(255,130,130,.25);background:rgba(255,50,50,.05)}
+    .cl-status.ok{color:rgba(120,255,180,.9);border:1px solid rgba(120,255,180,.25);background:rgba(0,200,100,.05)}
   </style>
 </head>
 <body>
@@ -924,7 +986,8 @@
       </a>
       <div class="nav-links">
         <a href="#" id="navRoadmap">Roadmap</a>
-        <a href="#" id="navPresale" style="color:#ffcc00">Presale</a>
+        <a href="#" id="navCollab">Collab</a>
+        <a href="#" id="navMint" style="color:#ffcc00">Mint</a>
         <a class="nav-cta" href="/projects" id="openFeedNav">OPEN LIVE FEED</a>
       </div>
     </div>
@@ -1070,7 +1133,8 @@
       </div>
       <div class="foot-links">
         <a href="#" id="footRoadmap">Roadmap</a>
-        <a href="#" id="footPresale">Presale</a>
+        <a href="#" id="footCollab">Collab</a>
+        <a href="#" id="footMint">Mint</a>
         <a href="/projects" id="openFeedFoot">Open Live Feed</a>
         <a href="https://x.com/Degensultan" target="_blank" rel="noreferrer">X: @Degensultan</a>
         <a href="https://t.me/Sultandegeen" target="_blank" rel="noreferrer">Support: @Sultandegeen</a>
@@ -1203,41 +1267,126 @@
         </div>
         <div class="rm-footer">
           <span class="rm-note">// More features shipping every sprint · priorities may shift with market</span>
-          <a href="#" id="rmOpenPresale" class="btn solid" style="font-size:14px;padding:10px 20px">Join Presale →</a>
+          <a href="#" id="rmOpenPresale" class="btn solid" style="font-size:14px;padding:10px 20px">View Mint →</a>
         </div>
       </div>
     </div>
   </div>
 </div>
 
-<!-- ══ PRESALE MODAL ══════════════════════════════════════════════ -->
-<div id="na-presale" class="na-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Presale">
-  <div class="na-modal-bg" data-naclose="presale"></div>
+<!-- ══ MINT MODAL ══════════════════════════════════════════════ -->
+<div id="na-mint" class="na-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Mint">
+  <div class="na-modal-bg" data-naclose="mint"></div>
   <div class="na-dialog" style="max-width:560px">
     <div class="na-dialog-head">
       <div class="na-dialog-head-left">
         <div class="na-dots"><span></span><span></span><span></span></div>
-        <span class="na-dialog-title">nerds alpha — $nerds presale</span>
+        <span class="na-dialog-title">nerds alpha — $nerds mint</span>
       </div>
-      <button class="na-close" data-naclose="presale" aria-label="Close">&times;</button>
+      <button class="na-close" data-naclose="mint" aria-label="Close">&times;</button>
     </div>
     <div class="na-dialog-body">
       <div class="ps-inner">
-        <div class="ps-eyebrow">// Presale status</div>
-        <div class="ps-h">$NERDS <span class="yl">PRE</span><span class="ol">SALE</span></div>
-        <p class="ps-tagline">Coming soon. Presale details will be announced on official channels.</p>
-        <div class="ps-status ok" style="display:block;margin-top:10px">
-          $NERDS presale is preparing for launch.<br/>
-          Follow updates and request collaboration access below.
+        <div class="ps-eyebrow">// Mint info</div>
+        <div class="ps-h">$NERDS <span class="yl">MINT</span></div>
+        <p class="ps-tagline">Details are being finalized. Stay tuned on official channels.</p>
+
+        <!-- Mint stats -->
+        <div class="ps-limits">
+          <div class="ps-limit">
+            <div class="ps-limit-label">Supply</div>
+            <div class="ps-limit-val">999</div>
+          </div>
+          <div class="ps-limit">
+            <div class="ps-limit-label">Mint Price</div>
+            <div class="ps-limit-val" style="font-size:20px;letter-spacing:.04em">TBA</div>
+          </div>
+          <div class="ps-limit">
+            <div class="ps-limit-label">Launch</div>
+            <div class="ps-limit-val" style="font-size:20px;letter-spacing:.04em">Soon</div>
+          </div>
+        </div>
+
+        <div class="ps-status ok" style="display:block">
+          Mint is <b>coming soon</b>. Follow <a href="https://x.com/Degensultan" target="_blank" rel="noopener noreferrer" style="color:#ffcc00">@Degensultan</a> for the announcement.
         </div>
 
         <!-- Bottom nav -->
-        <div class="ps-bottom-nav">
+        <div class="ps-bottom-nav" style="margin-top:18px">
           <button class="ps-nav-btn" id="psBtnRoadmap" type="button">📋 Roadmap</button>
-          <a class="ps-nav-btn" href="https://t.me/Sultandegeen" target="_blank" rel="noopener noreferrer" style="text-decoration:none">🤝 Request Collab Access</a>
+          <button class="ps-nav-btn" id="psBtnCollab" type="button">🤝 Request Collab</button>
           <a class="ps-nav-btn" href="/projects" style="text-decoration:none">⚡ Live Feeds</a>
-          <a class="ps-nav-btn" href="https://t.me/Sultandegeen" target="_blank" rel="noopener noreferrer" style="text-decoration:none">💬 Ask Questions</a>
         </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ COLLAB REQUEST MODAL ══════════════════════════════════════════════ -->
+<div id="na-collab" class="na-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Collab Request">
+  <div class="na-modal-bg" data-naclose="collab"></div>
+  <div class="na-dialog" style="max-width:600px">
+    <div class="na-dialog-head">
+      <div class="na-dialog-head-left">
+        <div class="na-dots"><span></span><span></span><span></span></div>
+        <span class="na-dialog-title">nerds alpha — collab request</span>
+      </div>
+      <button class="na-close" data-naclose="collab" aria-label="Close">&times;</button>
+    </div>
+    <div class="na-dialog-body">
+      <div class="cl-inner">
+        <div class="cl-eyebrow">// Partnership</div>
+        <div class="cl-h">REQUEST <span class="yl">COLLAB</span></div>
+        <p class="cl-sub">Complete the steps below, fill the form, and we'll review your request.</p>
+
+        <!-- Steps checklist -->
+        <div class="cl-steps">
+          <div class="cl-step">
+            <div class="cl-step-num">01</div>
+            <div class="cl-step-body">
+              <div class="cl-step-title">Follow on X</div>
+              <div class="cl-step-desc">Follow <a href="https://x.com/Degensultan" target="_blank" rel="noopener noreferrer">@Degensultan</a> on X (Twitter).</div>
+            </div>
+          </div>
+          <div class="cl-step">
+            <div class="cl-step-num">02</div>
+            <div class="cl-step-body">
+              <div class="cl-step-title">Like · Retweet · Reply</div>
+              <div class="cl-step-desc">
+                <a href="https://x.com/Degensultan/status/1996738765730066530" target="_blank" rel="noopener noreferrer">Open this tweet</a> and like, retweet, and leave a reply.
+              </div>
+            </div>
+          </div>
+          <div class="cl-step">
+            <div class="cl-step-num">03</div>
+            <div class="cl-step-body">
+              <div class="cl-step-title">Fill the form below</div>
+              <div class="cl-step-desc">Enter your Discord, project name, and spot count.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Form -->
+        <form id="collabForm" autocomplete="off">
+          <div class="cl-field">
+            <label for="cl-discord">Your Discord username / ID</label>
+            <input class="cl-input" id="cl-discord" name="discord" type="text" placeholder="e.g. sultan.web3 or 123456789" required maxlength="100" />
+          </div>
+          <div class="cl-field">
+            <label for="cl-project">DAO or Project name</label>
+            <input class="cl-input" id="cl-project" name="project" type="text" placeholder="e.g. MyDAO, Alpha Club…" required maxlength="120" />
+          </div>
+          <div class="cl-field">
+            <label for="cl-spots">How many spots do you want?</label>
+            <input class="cl-input" id="cl-spots" name="spots" type="number" placeholder="e.g. 10" required min="1" max="9999" />
+          </div>
+          <div class="cl-field">
+            <label for="cl-note">Additional info <span style="opacity:.4">(optional)</span></label>
+            <textarea class="cl-input" id="cl-note" name="note" rows="3" placeholder="Tell us about your community or why you'd like to collaborate…" maxlength="600"></textarea>
+          </div>
+          <button class="cl-submit" type="submit" id="cl-submit-btn">Submit Request</button>
+          <div class="cl-status" id="cl-status"></div>
+        </form>
       </div>
     </div>
   </div>
@@ -1415,9 +1564,13 @@
 
   // Live feed moved to dedicated pages.
 
-  /* ── ROADMAP / PRESALE MODALS ─────────────────────────── */
+  /* ── MODALS: ROADMAP / MINT / COLLAB ─────────────────────────── */
   (function () {
-    var modals = { roadmap: document.getElementById("na-roadmap"), presale: document.getElementById("na-presale") };
+    var modals = {
+      roadmap: document.getElementById("na-roadmap"),
+      mint:    document.getElementById("na-mint"),
+      collab:  document.getElementById("na-collab")
+    };
 
     function openModal(key) {
       Object.keys(modals).forEach(function(k){ if (modals[k]) { modals[k].classList.remove("is-open"); modals[k].setAttribute("aria-hidden","true"); } });
@@ -1437,16 +1590,22 @@
       var el = document.getElementById(id); if (!el) return;
       el.addEventListener("click", function(e){ e.preventDefault(); openModal("roadmap"); });
     });
-    ["navPresale","footPresale"].forEach(function(id){
+    ["navMint","footMint"].forEach(function(id){
       var el = document.getElementById(id); if (!el) return;
-      el.addEventListener("click", function(e){ e.preventDefault(); openModal("presale"); });
+      el.addEventListener("click", function(e){ e.preventDefault(); openModal("mint"); });
+    });
+    ["navCollab","footCollab"].forEach(function(id){
+      var el = document.getElementById(id); if (!el) return;
+      el.addEventListener("click", function(e){ e.preventDefault(); openModal("collab"); });
     });
 
     // Cross-links inside modals
-    var rmOpenPresale = document.getElementById("rmOpenPresale");
-    if (rmOpenPresale) rmOpenPresale.addEventListener("click", function(e){ e.preventDefault(); openModal("presale"); });
+    var rmOpenMint = document.getElementById("rmOpenPresale");
+    if (rmOpenMint) rmOpenMint.addEventListener("click", function(e){ e.preventDefault(); openModal("mint"); });
     var psBtnRoadmap = document.getElementById("psBtnRoadmap");
     if (psBtnRoadmap) psBtnRoadmap.addEventListener("click", function(){ openModal("roadmap"); });
+    var psBtnCollab = document.getElementById("psBtnCollab");
+    if (psBtnCollab) psBtnCollab.addEventListener("click", function(){ openModal("collab"); });
 
     // Close triggers (backdrop + X button)
     document.querySelectorAll("[data-naclose]").forEach(function(el){
@@ -1456,13 +1615,53 @@
       if (e.key === "Escape") { Object.keys(modals).forEach(function(k){ closeModal(k); }); }
     });
 
-    // Open via URL param ?m=roadmap or ?m=presale or hash #roadmap / #presale
+    // Open via URL param ?m=roadmap|mint|collab or hash
     (function(){
       var q = new URLSearchParams(window.location.search).get("m") || window.location.hash.replace("#","");
-      if (q === "roadmap" || q === "presale") { setTimeout(function(){ openModal(q); }, 400); }
+      if (modals[q]) { setTimeout(function(){ openModal(q); }, 400); }
     })();
 
-    /* ── PRESALE LOGIC ─────────────────────────────── */
+    /* ── COLLAB FORM SUBMISSION ─────────────────────────────── */
+    var collabForm = document.getElementById("collabForm");
+    var collabStatus = document.getElementById("cl-status");
+    var collabSubmitBtn = document.getElementById("cl-submit-btn");
+
+    function showCollabStatus(msg, isErr) {
+      if (!collabStatus) return;
+      collabStatus.textContent = msg;
+      collabStatus.className = "cl-status " + (isErr ? "err" : "ok");
+      collabStatus.style.display = "block";
+    }
+
+    if (collabForm) {
+      collabForm.addEventListener("submit", async function(e) {
+        e.preventDefault();
+        if (collabSubmitBtn) collabSubmitBtn.disabled = true;
+        showCollabStatus("Submitting…", false);
+        var discord = (document.getElementById("cl-discord") || {}).value || "";
+        var project = (document.getElementById("cl-project") || {}).value || "";
+        var spots   = (document.getElementById("cl-spots")   || {}).value || "";
+        var note    = (document.getElementById("cl-note")    || {}).value || "";
+        try {
+          var r = await fetch("/api/collab/submit", {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({ discord: discord.trim(), project: project.trim(), spots: parseInt(spots)||0, note: note.trim() })
+          });
+          var d = {}; try { d = await r.json(); } catch(e2){}
+          if (r.ok && d.ok) {
+            showCollabStatus("✓ Request submitted! We'll review and reach out via Discord.", false);
+            collabForm.reset();
+          } else {
+            showCollabStatus("Error: " + (d.detail || d.error || ("HTTP "+r.status)), true);
+            if (collabSubmitBtn) collabSubmitBtn.disabled = false;
+          }
+        } catch(ex) {
+          showCollabStatus("Network error — please try again.", true);
+          if (collabSubmitBtn) collabSubmitBtn.disabled = false;
+        }
+      });
+    }
   })();
 </script>
 
