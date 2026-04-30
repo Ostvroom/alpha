@@ -1347,6 +1347,16 @@ async def page_daily_finds(request: Request):
     return _serve_page(request, "daily_finds.html")
 
 
+@app.get("/roadmap", response_class=HTMLResponse)
+async def page_roadmap(request: Request):
+    return _serve_page(request, "roadmap.html")
+
+
+@app.get("/presale", response_class=HTMLResponse)
+async def page_presale(request: Request):
+    return _serve_page(request, "presale.html")
+
+
 @app.get("/early-access", response_class=HTMLResponse)
 async def early_access():
     if EARLY_ACCESS_HTML.exists():

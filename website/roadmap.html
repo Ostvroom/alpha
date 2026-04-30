@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Nerds Alpha — six-month product roadmap." />
+  <meta name="theme-color" content="#090909" />
+  <title>Nerds Alpha — Roadmap</title>
+  <link rel="icon" href="/logo.png" type="image/png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,700;0,800;0,900;1,900&family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    /* ── RESET ──────────────────────────────────────────── */
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    html{scroll-behavior:smooth}
+    body{
+      background:#090909;color:#f0e8c0;
+      font-family:"Inter",system-ui,sans-serif;
+      line-height:1.55;overflow-x:hidden;
+      -webkit-font-smoothing:antialiased;
+    }
+    a{color:inherit;text-decoration:none}
+    img{display:block;max-width:100%}
+
+    /* ── NAV ────────────────────────────────────────────── */
+    nav{
+      position:sticky;top:0;z-index:100;
+      background:rgba(9,9,9,.90);
+      backdrop-filter:blur(14px) saturate(1.5);
+      border-bottom:1px solid rgba(255,204,0,.15);
+    }
+    .nav-inner{
+      display:flex;align-items:center;
+      justify-content:space-between;gap:14px;
+      padding:13px 22px;flex-wrap:wrap;
+      max-width:1450px;margin:0 auto;
+    }
+    .brand{display:flex;align-items:center;gap:11px}
+    .brand-logo{width:30px;height:30px;border:1px solid rgba(255,204,0,.30);border-radius:5px;object-fit:cover}
+    .brand-name{
+      font-family:"Barlow Condensed",sans-serif;
+      font-size:21px;font-weight:900;letter-spacing:.06em;
+      text-transform:uppercase;color:#ffcc00;
+    }
+    .nav-links{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+    .nav-links a:not(.nav-cta){
+      font-family:"JetBrains Mono",monospace;
+      font-size:10.5px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;
+      color:rgba(240,232,192,.52);padding:7px 11px;border-radius:4px;
+      transition:color .12s,background .12s;
+    }
+    .nav-links a:not(.nav-cta):hover{color:#ffcc00;background:rgba(255,204,0,.07)}
+    .nav-cta{
+      font-family:"Barlow Condensed",sans-serif!important;
+      font-size:15px!important;font-weight:900!important;
+      letter-spacing:.08em!important;text-transform:uppercase!important;
+      background:#ffcc00!important;color:#090909!important;
+      border-radius:4px!important;padding:8px 18px!important;
+      transition:background .12s!important;
+    }
+    .nav-cta:hover{background:#ffe033!important}
+
+    /* ── LAYOUT ─────────────────────────────────────────── */
+    .wrap{width:min(92vw,1160px);margin:0 auto;padding:0 22px}
+    .section{padding:88px 0}
+
+    /* ── SCAN-LINE BACKGROUND (site pattern) ───────────── */
+    .grid-bg{
+      position:absolute;inset:0;pointer-events:none;
+      background-image:
+        repeating-linear-gradient(0deg,transparent,transparent 39px,rgba(255,204,0,.025) 39px,rgba(255,204,0,.025) 40px),
+        repeating-linear-gradient(90deg,transparent,transparent 79px,rgba(255,204,0,.012) 79px,rgba(255,204,0,.012) 80px);
+    }
+
+    /* ── HERO ───────────────────────────────────────────── */
+    .hero{
+      position:relative;overflow:hidden;
+      padding:96px 0 72px;
+      border-bottom:1px solid rgba(255,204,0,.11);
+    }
+    .hero-glow{
+      position:absolute;top:-120px;left:50%;transform:translateX(-50%);
+      width:900px;height:600px;pointer-events:none;
+      background:radial-gradient(ellipse 65% 60% at 50% 0%,rgba(255,204,0,.09),transparent 72%);
+    }
+    .hero-glow2{
+      position:absolute;bottom:-60px;right:-100px;pointer-events:none;
+      width:500px;height:400px;
+      background:radial-gradient(ellipse 70% 60% at 60% 50%,rgba(255,204,0,.05),transparent 70%);
+    }
+    .hero-inner{
+      position:relative;z-index:1;
+      display:grid;grid-template-columns:1.15fr .85fr;gap:40px;align-items:center;
+    }
+    @media(max-width:860px){.hero-inner{grid-template-columns:1fr}}
+    .hero-eyebrow{
+      font-family:"JetBrains Mono",monospace;
+      font-size:10.5px;font-weight:700;letter-spacing:.18em;
+      text-transform:uppercase;color:rgba(255,204,0,.60);
+      margin-bottom:14px;
+    }
+    .hero h1{
+      font-family:"Barlow Condensed",sans-serif;
+      font-size:clamp(52px,8vw,96px);font-weight:900;
+      text-transform:uppercase;line-height:.95;letter-spacing:-.01em;color:#f8f0d0;
+      margin-bottom:10px;
+    }
+    .hero h1 .yl{color:#ffcc00;display:block}
+    .hero h1 .ol{-webkit-text-stroke:2px #ffcc00;color:transparent;display:block}
+    .hero-sub{
+      font-size:15.5px;line-height:1.68;color:rgba(240,232,192,.55);
+      max-width:50ch;margin:18px 0 30px;
+    }
+    .hero-btns{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:32px}
+    .btn{
+      font-family:"Barlow Condensed",sans-serif;
+      font-size:16px;font-weight:800;letter-spacing:.10em;text-transform:uppercase;
+      padding:13px 26px;border-radius:4px;cursor:pointer;
+      display:inline-flex;align-items:center;gap:8px;
+      border:2px solid rgba(255,204,0,.38);
+      background:rgba(255,204,0,.08);color:#ffcc00;
+      transition:background .12s,transform .07s;
+    }
+    .btn:hover{background:rgba(255,204,0,.16)}
+    .btn:active{transform:translateY(1px)}
+    .btn.solid{background:#ffcc00;border-color:#ffcc00;color:#090909}
+    .btn.solid:hover{background:#ffe033}
+    .btn.ghost{background:transparent;border-color:rgba(255,204,0,.22);color:rgba(240,232,192,.72)}
+    .btn.ghost:hover{border-color:rgba(255,204,0,.48);color:#ffcc00}
+
+    /* stat row */
+    .hero-stats{
+      display:flex;gap:0;
+      border:1px solid rgba(255,204,0,.14);overflow:hidden;
+      max-width:460px;
+    }
+    .hstat{flex:1;padding:13px 10px;text-align:center;border-right:1px solid rgba(255,204,0,.10)}
+    .hstat:last-child{border-right:none}
+    .hstat strong{display:block;font-size:21px;font-weight:800;color:#ffcc00;line-height:1}
+    .hstat span{
+      display:block;margin-top:4px;
+      font-family:"JetBrains Mono",monospace;
+      font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:rgba(240,232,192,.38);
+    }
+
+    /* terminal card */
+    .term-card{border:1px solid rgba(255,204,0,.22);background:#0f0f0f;overflow:hidden;align-self:start}
+    .term-bar{
+      display:flex;align-items:center;gap:10px;
+      padding:10px 14px;background:rgba(255,204,0,.04);
+      border-bottom:1px solid rgba(255,204,0,.12);
+    }
+    .c-dots{display:flex;gap:5px}
+    .c-dots span{width:9px;height:9px;border-radius:50%}
+    .c-dots span:nth-child(1){background:#ff5f57}
+    .c-dots span:nth-child(2){background:#febc2e}
+    .c-dots span:nth-child(3){background:#28c840}
+    .term-title{font-family:"JetBrains Mono",monospace;font-size:10px;color:rgba(240,232,192,.38);letter-spacing:.05em}
+    .term-body{padding:16px 16px 22px;font-family:"JetBrains Mono",monospace;font-size:12px;line-height:2}
+    .cm{color:#4a5275}.kw{color:#ff79c6}.fn{color:#8be9fd}.str{color:#f1fa8c}.yel{color:#ffcc00}
+    .cursor{display:inline-block;width:8px;height:13px;background:#ffcc00;vertical-align:middle;animation:blink .8s step-end infinite}
+    @keyframes blink{50%{opacity:0}}
+
+    /* ── SEC LABEL ──────────────────────────────────────── */
+    .sec-label{
+      font-family:"JetBrains Mono",monospace;
+      font-size:10px;font-weight:700;letter-spacing:.20em;text-transform:uppercase;
+      color:rgba(255,204,0,.52);margin-bottom:10px;
+      display:flex;align-items:center;gap:10px;
+    }
+    .sec-label::before{content:"";width:20px;height:1px;background:rgba(255,204,0,.40)}
+    .big-h{
+      font-family:"Barlow Condensed",sans-serif;
+      font-size:clamp(36px,5.5vw,68px);font-weight:900;
+      text-transform:uppercase;letter-spacing:-.01em;line-height:.97;color:#f8f0d0;
+      margin-bottom:14px;
+    }
+    .big-h .yl{color:#ffcc00}
+    .big-h .ol{-webkit-text-stroke:2px rgba(255,204,0,.55);color:transparent}
+    .sec-sub{font-size:15px;color:rgba(240,232,192,.52);line-height:1.68;max-width:56ch}
+
+    /* ── FEATURES GRID (existing site pattern) ─────────── */
+    .feats{
+      display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+      gap:1px;background:rgba(255,204,0,.10);
+      border:1px solid rgba(255,204,0,.10);margin-top:44px;
+    }
+    .feat{background:#0f0f0f;padding:28px 24px;transition:background .14s}
+    .feat:hover{background:#131313}
+    .feat-num{
+      font-family:"Barlow Condensed",sans-serif;
+      font-size:60px;font-weight:900;line-height:1;
+      color:rgba(255,204,0,.09);margin-bottom:8px;letter-spacing:-.02em;
+    }
+    .feat h3{
+      font-family:"Barlow Condensed",sans-serif;
+      font-size:21px;font-weight:800;letter-spacing:.04em;
+      text-transform:uppercase;color:#f8f0d0;margin-bottom:7px;
+    }
+    .feat p{font-size:13.5px;color:rgba(240,232,192,.54);line-height:1.62}
+    .feat-badge{
+      display:inline-block;margin-top:12px;
+      font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;
+      padding:4px 9px;border:1px solid rgba(255,204,0,.25);border-radius:999px;color:rgba(255,204,0,.72);
+    }
+    .feat-badge.live{border-color:rgba(120,255,180,.3);color:rgba(120,255,180,.8)}
+    .feat-badge.wip{border-color:rgba(255,200,0,.3);color:rgba(255,200,0,.8)}
+    .feat-badge.soon{border-color:rgba(255,100,100,.25);color:rgba(255,120,120,.7)}
+
+    /* ── TIMELINE ───────────────────────────────────────── */
+    .timeline-wrap{
+      position:relative;margin-top:56px;
+      padding-left:0;
+    }
+    /* vertical rail */
+    .timeline-wrap::before{
+      content:"";
+      position:absolute;
+      left:23px;top:0;bottom:0;width:2px;
+      background:linear-gradient(to bottom,transparent,rgba(255,204,0,.30) 6%,rgba(255,204,0,.30) 94%,transparent);
+    }
+    @media(min-width:720px){
+      .timeline-wrap::before{left:calc(50% - 1px)}
+    }
+    .phase-block{
+      position:relative;margin-bottom:60px;
+      opacity:0;transform:translateY(28px);
+      transition:opacity .55s ease,transform .55s ease;
+    }
+    .phase-block.visible{opacity:1;transform:translateY(0)}
+    /* dot on rail */
+    .phase-dot{
+      position:absolute;left:15px;top:6px;
+      width:18px;height:18px;border-radius:50%;
+      background:#090909;border:2px solid #ffcc00;
+      box-shadow:0 0 12px rgba(255,204,0,.45),0 0 32px rgba(255,204,0,.15);
+      z-index:1;
+    }
+    @media(min-width:720px){
+      .phase-dot{left:calc(50% - 9px)}
+    }
+    .phase-card{
+      margin-left:52px;
+      background:rgba(0,0,0,.35);
+      border:1px solid rgba(255,204,0,.14);
+      border-radius:0;
+      overflow:hidden;
+      transition:border-color .2s,box-shadow .2s;
+    }
+    .phase-card:hover{
+      border-color:rgba(255,204,0,.30);
+      box-shadow:0 0 28px rgba(255,204,0,.06),inset 0 0 0 1px rgba(255,204,0,.06);
+    }
+    @media(min-width:720px){
+      .phase-block:nth-child(odd) .phase-card{
+        margin-left:0;margin-right:calc(50% + 28px);
+        border-radius:0;
+      }
+      .phase-block:nth-child(even) .phase-card{
+        margin-left:calc(50% + 28px);margin-right:0;
+      }
+      .phase-block:nth-child(odd) .phase-dot{left:calc(50% - 9px)}
+      .phase-block:nth-child(even) .phase-dot{left:calc(50% - 9px)}
+    }
+    .phase-header{
+      display:flex;align-items:center;justify-content:space-between;gap:12px;
+      padding:14px 18px;border-bottom:1px solid rgba(255,204,0,.09);
+      background:rgba(255,204,0,.03);
+    }
+    .phase-label{
+      font-family:"JetBrains Mono",monospace;font-size:9.5px;
+      letter-spacing:.18em;text-transform:uppercase;color:rgba(255,204,0,.55);
+    }
+    .phase-badge{
+      font-family:"JetBrains Mono",monospace;font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;
+      padding:3px 9px;border-radius:999px;
+    }
+    .phase-badge.live{background:rgba(120,255,180,.10);border:1px solid rgba(120,255,180,.25);color:rgba(120,255,180,.85)}
+    .phase-badge.active{background:rgba(255,204,0,.10);border:1px solid rgba(255,204,0,.30);color:#ffcc00}
+    .phase-badge.coming{background:rgba(255,100,100,.07);border:1px solid rgba(255,100,100,.20);color:rgba(255,130,130,.75)}
+    .phase-title{
+      font-family:"Barlow Condensed",sans-serif;
+      font-size:22px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;
+      color:#f8f0d0;margin-bottom:8px;
+    }
+    .phase-body{padding:16px 18px 20px}
+    .phase-body p{font-size:13.5px;color:rgba(240,232,192,.60);line-height:1.68;margin-bottom:14px}
+    .phase-items{list-style:none;margin:0;padding:0}
+    .phase-items li{
+      font-size:13px;color:rgba(240,232,192,.80);
+      padding:7px 0;border-bottom:1px solid rgba(255,204,0,.06);
+      display:flex;align-items:flex-start;gap:10px;
+    }
+    .phase-items li:last-child{border-bottom:none}
+    .li-icon{
+      flex-shrink:0;margin-top:2px;
+      font-family:"JetBrains Mono",monospace;font-size:9px;
+      color:#ffcc00;letter-spacing:.05em;
+    }
+
+    /* ── BACKLOG TABLE ──────────────────────────────────── */
+    .cmd-table{border:1px solid rgba(255,204,0,.14);background:#0f0f0f;overflow:hidden;margin-top:36px}
+    .cmd-row{
+      display:flex;align-items:baseline;gap:16px;
+      padding:13px 20px;border-bottom:1px solid rgba(255,204,0,.07);
+      transition:background .12s;
+    }
+    .cmd-row:last-child{border-bottom:none}
+    .cmd-row:hover{background:rgba(255,204,0,.03)}
+    .cmd{font-family:"JetBrains Mono",monospace;font-size:13px;font-weight:600;color:#ffcc00;flex-shrink:0;min-width:180px}
+    .cmd-d{font-size:13.5px;color:rgba(240,232,192,.52)}
+
+    /* ── DIVIDER ────────────────────────────────────────── */
+    .divider{height:1px;background:linear-gradient(90deg,transparent,rgba(255,204,0,.14),transparent);margin:0}
+
+    /* ── FOOTER ─────────────────────────────────────────── */
+    footer{
+      background:#090909;border-top:1px solid rgba(255,204,0,.12);
+      padding:34px 0 58px;
+    }
+    .foot-inner{
+      display:flex;align-items:center;
+      justify-content:space-between;flex-wrap:wrap;
+      gap:18px;margin-bottom:20px;
+    }
+    .foot-brand{display:flex;align-items:center;gap:10px}
+    .foot-brand img{width:28px;height:28px;border:1px solid rgba(255,204,0,.22);border-radius:5px}
+    .foot-brand-name{
+      font-family:"Barlow Condensed",sans-serif;
+      font-size:19px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:#ffcc00;
+    }
+    .foot-links{display:flex;gap:16px;flex-wrap:wrap}
+    .foot-links a{
+      font-family:"JetBrains Mono",monospace;
+      font-size:10.5px;font-weight:500;letter-spacing:.10em;text-transform:uppercase;
+      color:rgba(240,232,192,.32);transition:color .12s;
+    }
+    .foot-links a:hover{color:#ffcc00}
+    .foot-copy{
+      text-align:center;font-family:"JetBrains Mono",monospace;
+      font-size:10.5px;letter-spacing:.08em;color:rgba(240,232,192,.20);
+    }
+
+    /* ── SCROLL REVEAL ──────────────────────────────────── */
+    .reveal{opacity:0;transform:translateY(22px);transition:opacity .5s ease,transform .5s ease}
+    .reveal.visible{opacity:1;transform:translateY(0)}
+    .reveal-d1{transition-delay:.05s}
+    .reveal-d2{transition-delay:.12s}
+    .reveal-d3{transition-delay:.20s}
+    .reveal-d4{transition-delay:.28s}
+    .reveal-d5{transition-delay:.36s}
+    .reveal-d6{transition-delay:.44s}
+
+    /* ── TICKER ─────────────────────────────────────────── */
+    .ticker{
+      position:relative;z-index:50;background:#ffcc00;overflow:hidden;
+      padding:10px 0;border-top:2px solid #090909;border-bottom:2px solid #090909;min-height:40px;
+    }
+    .ticker-track{
+      display:flex;width:max-content;flex-shrink:0;will-change:transform;
+      animation:scroll-ticker 32s linear infinite;
+    }
+    .ticker-track:hover{animation-play-state:paused}
+    @keyframes scroll-ticker{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+    .t-item{
+      font-family:"Barlow Condensed",sans-serif;font-size:14px;font-weight:800;
+      letter-spacing:.10em;text-transform:uppercase;color:#090909;
+      white-space:nowrap;padding:0 22px;line-height:1.25;
+      display:flex;align-items:center;gap:22px;
+    }
+    .t-sep{opacity:.35;font-size:16px}
+    @media(prefers-reduced-motion:reduce){.ticker-track{animation-duration:120s}}
+  </style>
+</head>
+<body>
+
+<!-- ══ NAV ══════════════════════════════════════════════ -->
+<nav>
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <img class="brand-logo" src="/logo.png" alt="Nerds Alpha" />
+      <span class="brand-name">Nerds Alpha</span>
+    </a>
+    <div class="nav-links">
+      <a href="/roadmap">Roadmap</a>
+      <a href="/presale">Presale</a>
+      <a class="nav-cta" href="/projects">OPEN LIVE FEED</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ══ TICKER ════════════════════════════════════════════ -->
+<div class="ticker" aria-hidden="true">
+  <div class="ticker-track">
+    <span class="t-item">Projects Scanner<span class="t-sep">◆</span></span>
+    <span class="t-item">Token Alerts<span class="t-sep">◆</span></span>
+    <span class="t-item">Daily Finds<span class="t-sep">◆</span></span>
+    <span class="t-item">Auto Trading Beta<span class="t-sep">◆</span></span>
+    <span class="t-item">KOL Signals<span class="t-sep">◆</span></span>
+    <span class="t-item">Conviction Tiers<span class="t-sep">◆</span></span>
+    <span class="t-item">Wallet Labels<span class="t-sep">◆</span></span>
+    <span class="t-item">Trenches Board<span class="t-sep">◆</span></span>
+    <span class="t-item">Mention Velocity<span class="t-sep">◆</span></span>
+    <span class="t-item">ETH · SOL · Base<span class="t-sep">◆</span></span>
+
+    <span class="t-item">Projects Scanner<span class="t-sep">◆</span></span>
+    <span class="t-item">Token Alerts<span class="t-sep">◆</span></span>
+    <span class="t-item">Daily Finds<span class="t-sep">◆</span></span>
+    <span class="t-item">Auto Trading Beta<span class="t-sep">◆</span></span>
+    <span class="t-item">KOL Signals<span class="t-sep">◆</span></span>
+    <span class="t-item">Conviction Tiers<span class="t-sep">◆</span></span>
+    <span class="t-item">Wallet Labels<span class="t-sep">◆</span></span>
+    <span class="t-item">Trenches Board<span class="t-sep">◆</span></span>
+    <span class="t-item">Mention Velocity<span class="t-sep">◆</span></span>
+    <span class="t-item">ETH · SOL · Base<span class="t-sep">◆</span></span>
+  </div>
+</div>
+
+<!-- ══ HERO ══════════════════════════════════════════════ -->
+<div class="hero">
+  <div class="grid-bg"></div>
+  <div class="hero-glow"></div>
+  <div class="hero-glow2"></div>
+  <div class="wrap">
+    <div class="hero-inner">
+      <div>
+        <div class="hero-eyebrow">// Nerds Alpha · Product roadmap · 6-month view</div>
+        <h1>
+          WHAT WE
+          <span class="yl">SHIP</span>
+          <span class="ol">NEXT</span>
+        </h1>
+        <p class="hero-sub">
+          From signals to execution. Six months of focused builds across conviction tiers, auto-trading, wallet tooling, and intelligence depth — all inside the stack you already use.
+        </p>
+        <div class="hero-btns">
+          <a class="btn solid" href="#timeline">View Timeline</a>
+          <a class="btn ghost" href="/presale">Presale →</a>
+        </div>
+        <div class="hero-stats">
+          <div class="hstat"><strong>6</strong><span>Months</span></div>
+          <div class="hstat"><strong>4</strong><span>Phases</span></div>
+          <div class="hstat"><strong>20+</strong><span>Features</span></div>
+          <div class="hstat"><strong>3</strong><span>Networks</span></div>
+        </div>
+      </div>
+
+      <div class="term-card">
+        <div class="term-bar">
+          <div class="c-dots"><span></span><span></span><span></span></div>
+          <span class="term-title">nerds alpha — roadmap.sh</span>
+        </div>
+        <div class="term-body">
+          <div class="cm">// loading product plan</div>
+          <div><span class="kw">const</span> roadmap = <span class="kw">await</span> <span class="fn">nerds</span>.<span class="fn">load</span>();</div>
+          <div class="cm">// Phase 1 → signals + execution</div>
+          <div><span class="fn">ship</span>(<span class="str">'auto-trading'</span>, { mode: <span class="str">'beta'</span> });</div>
+          <div><span class="fn">ship</span>(<span class="str">'conviction-tiers'</span>);</div>
+          <div class="cm">// Phase 2 → depth + wallet UX</div>
+          <div><span class="fn">ship</span>(<span class="str">'mention-velocity'</span>);</div>
+          <div><span class="fn">ship</span>(<span class="str">'wallet-labels'</span>);</div>
+          <div class="cm">// ✓ roadmap active</div>
+          <div><span class="yel">$</span>&nbsp;<span class="cursor"></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ LIVE NOW ════════════════════════════════════════ -->
+<div class="wrap">
+  <div class="section" id="live">
+    <div class="sec-label reveal">// Already live — foundation</div>
+    <div class="big-h reveal reveal-d1">THE <span class="yl">BASE</span><br/><span class="ol">STACK</span></div>
+    <p class="sec-sub reveal reveal-d2">Everything below ships today. Each feature in the roadmap builds on this foundation — not a rewrite, an upgrade.</p>
+
+    <div class="feats">
+      <div class="feat reveal reveal-d1">
+        <div class="feat-num">01</div>
+        <h3>Projects Scanner</h3>
+        <p>24/7 HVA-driven discovery across X. New accounts surface in under 2min when high-value accounts follow them.</p>
+        <span class="feat-badge live">● LIVE</span>
+      </div>
+      <div class="feat reveal reveal-d2">
+        <div class="feat-num">02</div>
+        <h3>Token Alerts</h3>
+        <p>100+ Telegram sources monitored. MC at call, ATH, performance delta — all in one dashboard with no noise.</p>
+        <span class="feat-badge live">● LIVE</span>
+      </div>
+      <div class="feat reveal reveal-d3">
+        <div class="feat-num">03</div>
+        <h3>Daily Finds</h3>
+        <p>Rolling 24h digest of every newly alerted project with age, followers, category, and AI summary tags.</p>
+        <span class="feat-badge live">● LIVE</span>
+      </div>
+      <div class="feat reveal reveal-d4">
+        <div class="feat-num">04</div>
+        <h3>Signal Escalation</h3>
+        <p>Multi-HVA follow events trigger graduated Discord alerts. More smarts = higher escalation tier automatically.</p>
+        <span class="feat-badge live">● LIVE</span>
+      </div>
+      <div class="feat reveal reveal-d5">
+        <div class="feat-num">05</div>
+        <h3>KOL Alert Feed</h3>
+        <p>Telegram KOL calls surfaced with chain context, MC at call, and top-performers leaderboard.</p>
+        <span class="feat-badge live">● LIVE</span>
+      </div>
+      <div class="feat reveal reveal-d6">
+        <div class="feat-num">06</div>
+        <h3>Mint Radar</h3>
+        <p>Live mint data on ETH, Base, and Solana. Active mints, daily overview, and Waypoint tracking.</p>
+        <span class="feat-badge wip">⟳ ENHANCING</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ══ TIMELINE ═══════════════════════════════════════ -->
+<div class="wrap">
+  <div class="section" id="timeline">
+    <div class="sec-label reveal">// Six-month build plan</div>
+    <div class="big-h reveal reveal-d1">THE <span class="yl">ROAD</span><br/><span class="ol">AHEAD</span></div>
+    <p class="sec-sub reveal reveal-d2">Each phase ships in a live environment — no hidden waitlists, no vaporware. If it's on this list, it gets built or it gets cut.</p>
+
+    <div class="timeline-wrap">
+
+      <!-- PHASE 1 -->
+      <div class="phase-block">
+        <div class="phase-dot"></div>
+        <div class="phase-card">
+          <div class="phase-header">
+            <span class="phase-label">Months 1–2 · Phase 01</span>
+            <span class="phase-badge active">⟳ IN PROGRESS</span>
+          </div>
+          <div class="phase-body">
+            <div class="phase-title">Speed &amp; Execution</div>
+            <p>Closing the loop from signal to trade. Tighter conviction scoring so you know what to act on and how fast.</p>
+            <ul class="phase-items">
+              <li><span class="li-icon">▸</span><div><strong>Alert auto-trading (beta)</strong> — optional execution layer on token alerts with paper mode, hard size caps, max daily loss, and a big red off switch. Exchange + RPC connectors added per chain.</div></li>
+              <li><span class="li-icon">▸</span><div><strong>Spark → Pulse → Surge tiers</strong> — tiered HVA activity scoring on fresh (&lt;7d) vs seasoned accounts. Same statistical pattern as fast-attention tools, calibrated to your curated HVA graph.</div></li>
+              <li><span class="li-icon">▸</span><div><strong>Alpha Profile Card</strong> — one lookup: X bio, project history, stored handle variants, verified metrics, and archive research link. Honest about what X's API exposes.</div></li>
+              <li><span class="li-icon">▸</span><div><strong>Bring-your-own wallet labels</strong> — import CSV or sync-style lists so addresses in alerts show your own names, like a personal GMGN/explorer overlay.</div></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- PHASE 2 -->
+      <div class="phase-block">
+        <div class="phase-dot"></div>
+        <div class="phase-card">
+          <div class="phase-header">
+            <span class="phase-label">Months 3–4 · Phase 02</span>
+            <span class="phase-badge coming">COMING SOON</span>
+          </div>
+          <div class="phase-body">
+            <div class="phase-title">Depth &amp; On-chain</div>
+            <p>Moving from surface signals to sustained conviction and chain-level data. Fewer false positives, more context per alert.</p>
+            <ul class="phase-items">
+              <li><span class="li-icon">▸</span><div><strong>Conviction clock</strong> — rolling HVA engagement over 24h / 3d / 7d on the same project handle. Slow-burn detection, not just spike chasing.</div></li>
+              <li><span class="li-icon">▸</span><div><strong>Mention velocity</strong> — how fast curated accounts mention or quote-tweet a ticker before liquidity catches up. Early hype radar, separate signal stream.</div></li>
+              <li><span class="li-icon">▸</span><div><strong>Solana token panel (lite)</strong> — compact SOL pair view next to alerts: liquidity snapshot, holder concentration stub, DexScreener MC cross-check. Not a full terminal — a power sidebar.</div></li>
+              <li><span class="li-icon">▸</span><div><strong>Unified alert routing</strong> — per-user rules: which signals hit Discord vs web vs push; mute categories; VIP-HVA-only mode without touching bot config.</div></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- PHASE 3 -->
+      <div class="phase-block">
+        <div class="phase-dot"></div>
+        <div class="phase-card">
+          <div class="phase-header">
+            <span class="phase-label">Month 5 · Phase 03</span>
+            <span class="phase-badge coming">COMING SOON</span>
+          </div>
+          <div class="phase-body">
+            <div class="phase-title">Intelligence Layer</div>
+            <p>Surface what the data already knows. Internal boards, narrative detection, and smart summaries — all opt-in, all labeled.</p>
+            <ul class="phase-items">
+              <li><span class="li-icon">▸</span><div><strong>Trenches board</strong> — internal 24h leaderboard mixing mentions, new followers, and alert velocity. Our "trending smart accounts" view built from data we already collect, no third-party feed dependency.</div></li>
+              <li><span class="li-icon">▸</span><div><strong>Elite desk</strong> — a second, stricter HVA tier for the highest-signal callers. Separate alert stream, separate scoring, separate conviction thresholds.</div></li>
+              <li><span class="li-icon">▸</span><div><strong>AI project digests (opt-in)</strong> — one-paragraph "why now" on project detail pages. Strictly labeled, human-editable by admins, off by default for users who prefer raw data.</div></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- PHASE 4 -->
+      <div class="phase-block">
+        <div class="phase-dot"></div>
+        <div class="phase-card">
+          <div class="phase-header">
+            <span class="phase-label">Month 6 · Phase 04</span>
+            <span class="phase-badge coming">COMING SOON</span>
+          </div>
+          <div class="phase-body">
+            <div class="phase-title">Scale &amp; Polish</div>
+            <p>Execution graduates from beta. Presets, fee routing, and cross-link intelligence for power users.</p>
+            <ul class="phase-items">
+              <li><span class="li-icon">▸</span><div><strong>Strategy presets</strong> — save alert → trade templates with size, venue, and time-in-force. Fee-aware routing when auto-trading is stable on mainnet.</div></li>
+              <li><span class="li-icon">▸</span><div><strong>Smart money flow (lite)</strong> — in/out snapshots per token where RPC budget allows. Not real-time order flow — directional pressure read from on-chain aggregates.</div></li>
+              <li><span class="li-icon">▸</span><div><strong>Cross-link hints</strong> — when users supply wallet ↔ handle pairs, surface them responsibly on profile cards. Privacy-first, no doxxing agenda.</div></li>
+              <li><span class="li-icon">▸</span><div><strong>Fragment resolver</strong> — paste a truncated address or tweet URL, expand to full pubkey when possible. Utility-focused, no magic, no data we don't have.</div></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ══ BACKLOG ════════════════════════════════════════ -->
+<div class="wrap">
+  <div class="section" style="padding-bottom:56px">
+    <div class="sec-label reveal">// Research backlog — not scheduled</div>
+    <div class="big-h reveal reveal-d1">IDEA <span class="yl">POOL</span></div>
+    <p class="sec-sub reveal reveal-d2">These are real ideas in research — they either need market proof, RPC/API budget, or a clean UX before they ship. Nothing vaporware; everything on the list has been scoped once.</p>
+
+    <div class="cmd-table reveal reveal-d3">
+      <div class="cmd-row"><span class="cmd">fresh-wallet flow</span><span class="cmd-d">Track brand-new wallet activity per token — often the earliest on-chain signal before social catches up.</span></div>
+      <div class="cmd-row"><span class="cmd">kol wallet radar</span><span class="cmd-d">When tracked KOL wallets buy or exit a token, alert before the tweet. Requires reliable wallet ↔ KOL linking.</span></div>
+      <div class="cmd-row"><span class="cmd">early-account spotlight</span><span class="cmd-d">Tighten the &lt;7d new-account signal with faster polling and tighter follow-graph attribution per project.</span></div>
+      <div class="cmd-row"><span class="cmd">narrative shift radar</span><span class="cmd-d">Detect when a cluster of elite HVAs pivots to a new sector or token category before it becomes mainstream alpha.</span></div>
+      <div class="cmd-row"><span class="cmd">mobile push alerts</span><span class="cmd-d">Push notifications for Surge-tier signals to mobile. Needs a notification service layer independent of Discord.</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ TICKER (footer) ═══════════════════════════════ -->
+<div class="ticker" aria-hidden="true">
+  <div class="ticker-track" style="animation-duration:40s;animation-direction:reverse">
+    <span class="t-item">Auto Trading<span class="t-sep">◆</span></span>
+    <span class="t-item">Conviction Tiers<span class="t-sep">◆</span></span>
+    <span class="t-item">Trenches Board<span class="t-sep">◆</span></span>
+    <span class="t-item">Elite Desk<span class="t-sep">◆</span></span>
+    <span class="t-item">Strategy Presets<span class="t-sep">◆</span></span>
+    <span class="t-item">Wallet Labels<span class="t-sep">◆</span></span>
+    <span class="t-item">Mention Velocity<span class="t-sep">◆</span></span>
+    <span class="t-item">Fragment Resolver<span class="t-sep">◆</span></span>
+    <span class="t-item">Smart Money Flow<span class="t-sep">◆</span></span>
+    <span class="t-item">AI Digests<span class="t-sep">◆</span></span>
+
+    <span class="t-item">Auto Trading<span class="t-sep">◆</span></span>
+    <span class="t-item">Conviction Tiers<span class="t-sep">◆</span></span>
+    <span class="t-item">Trenches Board<span class="t-sep">◆</span></span>
+    <span class="t-item">Elite Desk<span class="t-sep">◆</span></span>
+    <span class="t-item">Strategy Presets<span class="t-sep">◆</span></span>
+    <span class="t-item">Wallet Labels<span class="t-sep">◆</span></span>
+    <span class="t-item">Mention Velocity<span class="t-sep">◆</span></span>
+    <span class="t-item">Fragment Resolver<span class="t-sep">◆</span></span>
+    <span class="t-item">Smart Money Flow<span class="t-sep">◆</span></span>
+    <span class="t-item">AI Digests<span class="t-sep">◆</span></span>
+  </div>
+</div>
+
+<!-- ══ FOOTER ════════════════════════════════════════ -->
+<div class="wrap">
+  <footer>
+    <div class="foot-inner">
+      <div class="foot-brand">
+        <img src="/logo.png" alt="" width="28" height="28" />
+        <span class="foot-brand-name">Nerds Alpha</span>
+      </div>
+      <div class="foot-links">
+        <a href="/">Home</a>
+        <a href="/roadmap">Roadmap</a>
+        <a href="/presale">Presale</a>
+        <a href="/projects">Live Feed</a>
+        <a href="https://x.com/Degensultan" target="_blank" rel="noreferrer">X: @Degensultan</a>
+        <a href="https://t.me/Sultandegeen" target="_blank" rel="noreferrer">Support</a>
+      </div>
+    </div>
+    <div class="foot-copy">© 2026 NERDS ALPHA · NOT FINANCIAL ADVICE · INFORMATIONAL USE ONLY</div>
+  </footer>
+</div>
+
+<script>
+  // Scroll reveal
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) { e.target.classList.add('visible'); io.unobserve(e.target); }
+    });
+  }, { threshold: 0.08 });
+  document.querySelectorAll('.reveal, .phase-block').forEach(el => io.observe(el));
+</script>
+</body>
+</html>
