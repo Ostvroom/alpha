@@ -644,35 +644,39 @@
       background: #0b0b0d;
     }
 
-    /* Tweet gate modal */
+    /* Access gate modal */
     .tg-modal { position: fixed; inset: 0; z-index: 9998; display: flex; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .18s ease, visibility .18s; }
     .tg-modal.is-open { opacity: 1; visibility: visible; pointer-events: auto; }
-    .tg-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.78); backdrop-filter: blur(6px); cursor: pointer; }
+    .tg-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.82); cursor: pointer; }
     .tg-dialog {
-      position: relative; margin: auto; width: min(760px, 94vw);
-      background: #0b0b0d; border: 1px solid rgba(255,204,0,.32);
-      box-shadow: 0 28px 120px rgba(0,0,0,.75);
-      padding: 16px 16px 14px;
-    }
-    .tg-head { display:flex; align-items:center; justify-content:space-between; gap: 12px; margin-bottom: 12px; }
-    .tg-title { font-family:"JetBrains Mono",monospace; font-size: 11px; letter-spacing:.14em; text-transform:uppercase; color: rgba(255,204,0,.85); }
-    .tg-close { border: 1px solid rgba(255,204,0,.35); background: rgba(255,204,0,.06); color:#ffcc00; width:36px; height:36px; font-size:22px; cursor:pointer; border-radius:4px; }
-    .tg-close:hover{ background: rgba(255,204,0,.12); }
-    .tg-steps { font-size: 14px; color: rgba(240,232,192,.60); line-height: 1.65; margin-bottom: 12px; }
-    .tg-steps b{ color:#ffcc00; }
-    .tg-row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top: 10px; }
-    .tg-input {
-      flex: 1; min-width: 240px;
-      background: rgba(0,0,0,.25);
-      border: 1px solid rgba(255,204,0,.18);
-      color: #f0e8c0;
+      position: relative; margin: auto; width: min(480px, 94vw);
+      background: #0b0b0d; border: 1px solid rgba(255,204,0,.28);
       border-radius: 6px;
-      padding: 11px 12px;
-      font-family: "JetBrains Mono", monospace;
-      font-size: 12px;
-      outline: none;
+      box-shadow: 0 24px 80px rgba(0,0,0,.70);
+      padding: 20px 22px 18px;
     }
-    .tg-help { font-family:"JetBrains Mono",monospace; font-size: 10.5px; color: rgba(240,232,192,.42); margin-top: 8px; }
+    .tg-head { display:flex; align-items:center; justify-content:space-between; gap: 12px; margin-bottom: 14px; }
+    .tg-title { font-family:"JetBrains Mono",monospace; font-size: 10.5px; letter-spacing:.15em; text-transform:uppercase; color: rgba(255,204,0,.80); }
+    .tg-close { border: 1px solid rgba(255,204,0,.30); background: transparent; color:#ffcc00; width:32px; height:32px; font-size:18px; cursor:pointer; border-radius:4px; display:flex; align-items:center; justify-content:center; }
+    .tg-close:hover{ background: rgba(255,204,0,.08); }
+    .tg-steps { font-size: 13.5px; color: rgba(240,232,192,.72); line-height: 1.6; margin-bottom: 16px; }
+    .tg-steps b{ color:#ffcc00; font-weight:600; }
+    .tg-row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom: 12px; }
+    .tg-btn-discord {
+      font-family:"JetBrains Mono",monospace;
+      font-size: 11px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: #f0e8c0;
+      background: transparent;
+      border: 1px solid rgba(240,232,192,.35);
+      border-radius: 4px;
+      padding: 9px 18px;
+      cursor: pointer;
+      transition: border-color .15s, background .15s, color .15s;
+    }
+    .tg-btn-discord:hover { border-color: rgba(255,204,0,.60); color: #ffcc00; background: rgba(255,204,0,.05); }
+    .tg-help { font-family:"JetBrains Mono",monospace; font-size: 10px; color: rgba(240,232,192,.35); }
     .tg-err { font-family:"JetBrains Mono",monospace; font-size: 11px; color: rgba(255,150,150,.90); margin-top: 10px; display:none; }
 
     /* ══ ROADMAP / PRESALE MODAL SHARED ═══════════════════ */
@@ -1081,17 +1085,14 @@
   <div class="tg-backdrop" id="tg-backdrop"></div>
   <div class="tg-dialog" role="dialog" aria-modal="true" aria-label="Access gate">
     <div class="tg-head">
-      <div class="tg-title">Access gate · connect Discord</div>
+      <div class="tg-title">Access Gate · Connect Discord</div>
       <button class="tg-close" type="button" id="tg-close" aria-label="Close">&times;</button>
     </div>
-    <div class="tg-steps">
-      Connect your <b>Discord</b> account to access live feeds.<br/>
-      Only <b>whitelisted Discord IDs</b> can enter the dashboard.
-    </div>
+    <div class="tg-steps">Connect your Discord to unlock the website.</div>
     <div class="tg-row">
-      <button class="btn solid btn-sm" id="tg-discord-connect" type="button">Connect Discord</button>
+      <button class="tg-btn-discord" id="tg-discord-connect" type="button">Connect Discord</button>
     </div>
-    <div class="tg-help">After successful login, approved users are redirected to the live feed.</div>
+    <div class="tg-help">We only request basic identity (scope: identify).</div>
     <div class="tg-err" id="tg-err"></div>
   </div>
 </div>

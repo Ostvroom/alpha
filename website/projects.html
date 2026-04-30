@@ -78,35 +78,40 @@
     body.locked #page{filter: blur(6px); opacity:.35; pointer-events:none; user-select:none}
     .gate{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center}
     body.locked .gate{display:flex}
-    .gate-back{position:absolute;inset:0;background:rgba(0,0,0,.55)}
+    .gate-back{position:absolute;inset:0;background:rgba(0,0,0,.82)}
     .gate-card{
       position:relative;
-      width:min(720px, 92vw);
+      width:min(480px, 94vw);
       background:#0b0b0d;
-      border:1px solid rgba(255,204,0,.32);
-      border-radius:14px;
-      box-shadow:0 28px 120px rgba(0,0,0,.75);
-      padding:16px 16px 14px;
+      border:1px solid rgba(255,204,0,.28);
+      border-radius:6px;
+      box-shadow:0 24px 80px rgba(0,0,0,.70);
+      padding:20px 22px 18px;
     }
-    .gate-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
-    .gate-title{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,204,0,.90)}
-    .gate-close{border:1px solid rgba(255,204,0,.35);background:rgba(255,204,0,.06);color:#ffcc00;width:36px;height:36px;font-size:22px;cursor:pointer;border-radius:8px}
-    .gate-close:hover{background:rgba(255,204,0,.12)}
-    .gate-steps{font-size:14px;color:rgba(240,232,192,.68);line-height:1.6}
+    .gate-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
+    .gate-title{font-family:"JetBrains Mono",monospace;font-size:10.5px;letter-spacing:.15em;text-transform:uppercase;color:rgba(255,204,0,.80)}
+    .gate-close{border:1px solid rgba(255,204,0,.30);background:transparent;color:#ffcc00;width:32px;height:32px;font-size:18px;cursor:pointer;border-radius:4px;display:flex;align-items:center;justify-content:center}
+    .gate-close:hover{background:rgba(255,204,0,.08)}
+    .gate-steps{font-size:13.5px;color:rgba(240,232,192,.72);line-height:1.6;margin-bottom:16px}
     .gate-steps b{color:#ffcc00}
-    .gate-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
-    .gate-inp{
-      flex:1;min-width:260px;
-      background:rgba(0,0,0,.25);
-      border:1px solid rgba(255,204,0,.18);
-      color:#f0e8c0;
-      border-radius:10px;
-      padding:11px 12px;
+    .gate-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+    .gate-btn-discord{
       font-family:"JetBrains Mono",monospace;
-      font-size:12px;
-      outline:none;
+      font-size:11px;
+      letter-spacing:.12em;
+      text-transform:uppercase;
+      color:#f0e8c0;
+      background:transparent;
+      border:1px solid rgba(240,232,192,.35);
+      border-radius:4px;
+      padding:9px 18px;
+      cursor:pointer;
+      text-decoration:none;
+      display:inline-block;
+      transition:border-color .15s,background .15s,color .15s;
     }
-    .gate-help{font-family:"JetBrains Mono",monospace;font-size:10.5px;color:rgba(240,232,192,.42);margin-top:8px}
+    .gate-btn-discord:hover{border-color:rgba(255,204,0,.60);color:#ffcc00;background:rgba(255,204,0,.05)}
+    .gate-help{font-family:"JetBrains Mono",monospace;font-size:10px;color:rgba(240,232,192,.35)}
     .gate-err{font-family:"JetBrains Mono",monospace;font-size:11px;color:rgba(255,150,150,.92);margin-top:10px;display:none}
 
     /* Escalations modal */
@@ -237,9 +242,9 @@
         Connect your Discord to unlock the website.
       </div>
       <div class="gate-row">
-        <a class="btn" id="gateConnectDiscord" href="#">Connect Discord</a>
+        <a class="gate-btn-discord" id="gateConnectDiscord" href="#">Connect Discord</a>
       </div>
-      <div class="gate-help">We only request basic identity (scope: <b>identify</b>).</div>
+      <div class="gate-help">We only request basic identity (scope: identify).</div>
       <div class="gate-err" id="gateErr"></div>
     </div>
   </div>
