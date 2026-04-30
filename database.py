@@ -1065,29 +1065,61 @@ def get_hva_priority_list():
     
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
+
     # Get all active HVAs with scan history
-    cursor.execute("""
-        SELECT hva_handle, discovery_count, last_scan_at, status 
-        FROM hva_stats 
+    cursor.execute(
+        """
+        SELECT hva_handle, discovery_count, last_scan_at, status
+        FROM hva_stats
         WHERE status != 'Dead'
-    """)
-    
+        """
+    )
     data = cursor.fetchall()
-    conn.close()
 
     block = _hva_blocklist_lower()
     if block:
         data = [row for row in data if row[0].lower() not in block]
 
-    if not data:
-        # Fallback to config list if DB is empty
-        import config
+    # Keep DB and config list aligned:
+    # existing deployments often keep an old hva_stats set (seeded once), so newly
+    # added config.HVA_LIST handles never enter priority tiers unless manually added.
+    import config
 
-        cfg_list = list(config.HVA_LIST or [])
-        if block:
-            cfg_list = [h for h in cfg_list if str(h).strip().lower() not in block]
-        return cfg_list
+    cfg_norm = []
+    for h in (config.HVA_LIST or []):
+        k = str(h or "").strip().lstrip("@").lower()
+        if not k:
+            continue
+        if block and k in block:
+            continue
+        cfg_norm.append(k)
+
+    by_handle = {}
+    for handle, disc_count, last_scan, status in data:
+        hk = str(handle or "").strip().lstrip("@").lower()
+        if not hk:
+            continue
+        by_handle[hk] = (hk, int(disc_count or 0), last_scan, status)
+
+    missing_cfg = [h for h in cfg_norm if h not in by_handle]
+    if missing_cfg:
+        for h in missing_cfg:
+            cursor.execute(
+                """
+                INSERT INTO hva_stats (hva_handle, status, discovery_count)
+                VALUES (?, 'Active', 0)
+                ON CONFLICT(hva_handle) DO UPDATE SET status='Active'
+                """,
+                (h,),
+            )
+            by_handle[h] = (h, 0, None, "Active")
+        conn.commit()
+
+    conn.close()
+    data = list(by_handle.values())
+
+    if not data:
+        return cfg_norm
 
     # Initialize tier buckets
     tier1_never_scanned = []      # Never scanned (highest priority)
