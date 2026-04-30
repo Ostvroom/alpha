@@ -517,18 +517,14 @@
       }
 
       async function init(){
-        // If server injected the flag, we lock immediately.
         if (window.NA_NEEDS_GATE) { lockUi(); return; }
-        // Otherwise, check access state live (prevents "blank page" if injection is stale).
+        // Verify session server-side (401 = no valid session → lock UI).
         try{
-          var r = await fetch("/api/debug/access", {credentials:"include"});
-          if (r.ok){
-            var d = await r.json();
-            if (!d || !d.has_access){
-              lockUi(); return;
-            }
+          var r = await fetch("/api/me", {credentials:"include"});
+          if (!r.ok){
+            lockUi(); return;
           }
-        } catch(e){}
+        } catch(e){ lockUi(); return; }
 
         // Trending "More" → top 50 modal
         (function(){

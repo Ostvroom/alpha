@@ -67,9 +67,30 @@ EARLY_ACCESS_HTML = WEBSITE_DIR / "early_access.html"
 
 ACCESS_COOKIE = "na_access"
 ACCESS_TOKEN_TTL_SECONDS = int(os.getenv("WEBSITE_ACCESS_TOKEN_TTL_SECONDS", "2592000"))  # 30 days
-_ACCESS_SECRET = (os.getenv("WEBSITE_ACCESS_SECRET") or DISCORD_TOKEN or "dev-secret").encode("utf-8")
+
+# SECURITY: WEBSITE_ACCESS_SECRET must be a high-entropy random string set in .env.
+# It must NOT fall back to the Discord token (rotating one would invalidate the other)
+# and must NEVER silently fall back to a weak default in production.
+_raw_secret = os.getenv("WEBSITE_ACCESS_SECRET", "").strip()
+if not _raw_secret:
+    # Fail loudly so misconfigured deploys are immediately obvious in logs.
+    import warnings
+    warnings.warn(
+        "[SECURITY] WEBSITE_ACCESS_SECRET is not set. Using a temporary session key. "
+        "All sessions will be invalidated on restart. Set a strong random value in .env.",
+        RuntimeWarning,
+        stacklevel=1,
+    )
+    # Generate a cryptographically random per-process key — safer than a static fallback
+    import secrets as _secrets_mod
+    _raw_secret = _secrets_mod.token_hex(32)
+_ACCESS_SECRET = _raw_secret.encode("utf-8")
+
 # Set DEV_PREVIEW=1 in .env or environment to bypass the early-access gate (for local testing only)
 _DEV_PREVIEW = os.getenv("DEV_PREVIEW", "0").strip() == "1"
+if _DEV_PREVIEW:
+    import warnings as _w
+    _w.warn("[SECURITY] DEV_PREVIEW=1 is active — the access gate is DISABLED. Never enable this in production.", RuntimeWarning, stacklevel=1)
 
 # Discord OAuth (website gate)
 DISCORD_OAUTH_CLIENT_ID = (os.getenv("DISCORD_OAUTH_CLIENT_ID") or "").strip()
@@ -359,6 +380,51 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import Response as StarletteResponse
+
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Inject hardened security headers on every response."""
+    async def dispatch(self, request: StarletteRequest, call_next):  # type: ignore[override]
+        response: StarletteResponse = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+        response.headers.setdefault("X-XSS-Protection", "1; mode=block")
+        # HSTS: enforce HTTPS for 1 year (browser caches this — only relevant behind HTTPS termination)
+        if "https" in str(request.url.scheme):
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        return response
+
+app.add_middleware(_SecurityHeadersMiddleware)
+
+# ---------------------------------------------------------------------------
+# Simple in-memory rate limiter (per IP) for brute-force-prone endpoints
+# ---------------------------------------------------------------------------
+import threading as _threading
+_rate_limit_store: dict[str, list[float]] = {}
+_rate_limit_lock = _threading.Lock()
+
+def _check_rate_limit(ip: str, max_calls: int, window_seconds: int) -> bool:
+    """Return True (allowed) or False (blocked). Cleans old entries in the window."""
+    now = time.time()
+    with _rate_limit_lock:
+        calls = _rate_limit_store.get(ip, [])
+        calls = [t for t in calls if now - t < window_seconds]
+        if len(calls) >= max_calls:
+            _rate_limit_store[ip] = calls
+            return False
+        calls.append(now)
+        _rate_limit_store[ip] = calls
+        return True
+
+def _get_client_ip(request: Request) -> str:
+    """Prefer X-Forwarded-For (set by Render/CDN), fall back to direct connection IP."""
+    xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    return xff or (request.client.host if request.client else "unknown")
 
 # Serve static assets from website/ if the folder exists
 if WEBSITE_DIR.exists():
@@ -659,7 +725,7 @@ def _has_access(req: Request) -> bool:
         host = str(getattr(req.url, "hostname", "") or "").strip().lower()
     except Exception:
         host = ""
-    local_bypass = str(os.getenv("WEBSITE_LOCAL_BYPASS", "1") or "1").strip().lower() in ("1", "true", "yes", "on")
+    local_bypass = str(os.getenv("WEBSITE_LOCAL_BYPASS", "0") or "0").strip().lower() in ("1", "true", "yes", "on")
     if local_bypass and host in ("127.0.0.1", "localhost"):
         return True
 
@@ -1168,6 +1234,10 @@ class PresaleSubmitRequest(BaseModel):
 
 @app.post("/api/presale/submit")
 async def api_presale_submit(request: Request, body: PresaleSubmitRequest):
+    ip = _get_client_ip(request)
+    if not _check_rate_limit(f"presale:{ip}", max_calls=5, window_seconds=3600):
+        raise HTTPException(429, "Too many submissions from this IP. Please try again later.")
+
     tx = (body.tx_hash or "").strip()
     if not tx or len(tx) < 40:
         raise HTTPException(400, "Invalid tx_hash — paste the full Solana transaction signature")
@@ -1489,13 +1559,9 @@ async def api_info():
 
 
 @app.get("/api/debug/access")
-async def api_debug_access(request: Request):
-    """Debug helper: show access gate state."""
-    return {
-        "dev_preview": _DEV_PREVIEW,
-        "has_access": _has_access(request),
-        "has_cookie": bool(request.cookies.get(ACCESS_COOKIE, "")),
-    }
+async def api_debug_access():
+    """Disabled — was a debug helper that leaked gate state. Kept as stub to avoid 404 surprises."""
+    raise HTTPException(404, "Not found")
 
 
 @app.get("/api/feed/events")
@@ -3400,7 +3466,12 @@ class ClaimRequest(BaseModel):
 
 
 @app.post("/api/claim")
-async def api_claim(req: ClaimRequest):
+async def api_claim(req: ClaimRequest, request: Request):
+    ip = _get_client_ip(request)
+    # Rate-limit: max 10 claim attempts per IP per hour (legitimate users claim rarely)
+    if not _check_rate_limit(f"claim:{ip}", max_calls=10, window_seconds=3600):
+        raise HTTPException(429, "Too many claim attempts from this IP. Please try again later.")
+
     tier = req.tier.strip().lower()
     chain = req.chain.strip().lower()
     tx_raw = req.tx_hash.strip()
@@ -3504,11 +3575,10 @@ class RedeemRequest(BaseModel):
 
 @app.post("/api/access/redeem")
 async def api_access_redeem(request: Request, req: RedeemRequest):
-    ip = ""
-    try:
-        ip = request.client.host if request.client else ""
-    except Exception:
-        ip = ""
+    ip = _get_client_ip(request)
+    # Rate-limit: max 10 attempts per IP per 15 minutes to block code brute-force
+    if not _check_rate_limit(f"redeem:{ip}", max_calls=10, window_seconds=900):
+        raise HTTPException(429, "Too many attempts. Please wait before trying again.")
 
     ok, msg, user_id = payment_database.redeem_access_code(req.code, ip=ip)
     if not ok or not user_id:
@@ -3516,12 +3586,12 @@ async def api_access_redeem(request: Request, req: RedeemRequest):
 
     tok = _make_access_token(user_id=user_id)
     res = JSONResponse({"success": True, "message": msg})
-    # httpOnly so scripts can't steal; SameSite=Lax for simple redirects
+    # httpOnly so scripts can't steal; secure=True on HTTPS; SameSite=Lax for simple redirects
     res.set_cookie(
         key=ACCESS_COOKIE,
         value=tok,
         httponly=True,
-        secure=False,
+        secure=_is_https(request),
         samesite="lax",
         max_age=int(ACCESS_TOKEN_TTL_SECONDS),
         path="/",
@@ -3569,6 +3639,10 @@ async def api_access_tweet(request: Request, body: TweetGateRequest):
     Lightweight access gate: like/RT/reply to a tweet, then submit the reply URL.
     Note: format validation only (no X API verification).
     """
+    ip = _get_client_ip(request)
+    if not _check_rate_limit(f"tweet_gate:{ip}", max_calls=5, window_seconds=600):
+        raise HTTPException(429, "Too many attempts. Please wait before trying again.")
+
     tweet_url = (body.tweet_url or "").strip()
     reply_url = (body.reply_url or "").strip()
     if not _looks_like_x_status(tweet_url):
