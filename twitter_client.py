@@ -594,6 +594,11 @@ class TwitterClient:
                 wait = max(0.5, float(self._global_backoff_until_ts) - time.time())
                 await asyncio.sleep(wait)
                 self._global_backoff_until_ts = 0.0
+                # Extra mandatory rest after a CF streak cooldown so we don't burst immediately.
+                post_jitter = float(getattr(config, "TWIKIT_CF_POST_COOLDOWN_JITTER_SEC", 90.0) or 0.0)
+                if post_jitter > 0:
+                    extra = random.uniform(post_jitter * 0.5, post_jitter)
+                    await asyncio.sleep(extra)
 
             if self.is_rate_limited:
                 return None
