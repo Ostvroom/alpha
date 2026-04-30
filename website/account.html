@@ -41,6 +41,23 @@
     .feat li:last-child{border-bottom:none}
     .feat li::before{content:"✓";color:#7dffb0;font-weight:800;flex:0 0 auto}
     .lead{font-size:13px;line-height:1.55;color:rgba(240,232,192,.68);margin-top:8px}
+    .task-list{margin-top:10px;list-style:none}
+    .task-list li{
+      display:flex;justify-content:space-between;gap:10px;align-items:center;
+      padding:10px 0;border-bottom:1px solid rgba(255,204,0,.08)
+    }
+    .task-list li:last-child{border-bottom:none}
+    .task-title{font-size:13px;color:rgba(240,232,192,.86)}
+    .task-points{
+      font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.10em;
+      text-transform:uppercase;color:#ffcc00
+    }
+    .copy-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+    .copy-code{
+      font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.08em;
+      color:#ffcc00;background:rgba(255,204,0,.06);border:1px solid rgba(255,204,0,.18);
+      padding:8px 10px;border-radius:10px
+    }
     .inp{width:100%;margin-top:8px;padding:11px 12px;border-radius:10px;border:1px solid rgba(255,204,0,.18);background:rgba(0,0,0,.28);color:#f0e8c0;font-family:"JetBrains Mono",monospace;font-size:12px}
     .modal{position:fixed;inset:0;z-index:9998;display:none;align-items:center;justify-content:center}
     .modal.on{display:flex}
@@ -81,9 +98,46 @@
               <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
                 <span class="badge"><b>Points</b> <span id="pointsNum">0</span></span>
                 <span class="badge" id="premBadge" style="display:none"><b>Premium</b> active</span>
+                <span class="badge" id="wlBadge"><b>Live Feed</b> checking...</span>
               </div>
             </div>
           </div>
+        </div>
+      </div>
+      <div class="card span12">
+        <div class="ph">
+          <div class="pt">Login Data</div>
+          <div class="ps">Synced from account storage</div>
+        </div>
+        <div class="pb">
+          <ul class="task-list">
+            <li><span class="task-title">Discord username</span><span class="task-points" id="loginUsername">—</span></li>
+            <li><span class="task-title">Display name</span><span class="task-points" id="loginDisplay">—</span></li>
+            <li><span class="task-title">Last login</span><span class="task-points" id="lastLoginAt">—</span></li>
+            <li><span class="task-title">Login count</span><span class="task-points" id="loginCount">0</span></li>
+            <li><span class="task-title">Account created</span><span class="task-points" id="createdAt">—</span></li>
+            <li><span class="task-title">Last profile update</span><span class="task-points" id="updatedAt">—</span></li>
+          </ul>
+        </div>
+      </div>
+      <div class="card span12">
+        <div class="ph">
+          <div class="pt">Event Missions · Free Mint / WL</div>
+          <div class="ps">Complete tasks and climb the leaderboard</div>
+        </div>
+        <div class="pb">
+          <p class="lead">Participate in weekly events to earn points. Top accounts are selected for free mint and whitelist rewards.</p>
+          <ul class="task-list">
+            <li><span class="task-title">Refer users with your code</span><span class="task-points">+30 points / referral</span></li>
+            <li><span class="task-title">Tweet about Nerds Alpha and tag @Degensultan</span><span class="task-points">+20 points</span></li>
+            <li><span class="task-title">Like + reply to official posts</span><span class="task-points">+10 points / post</span></li>
+          </ul>
+          <div class="copy-row">
+            <span class="copy-code" id="refCode">Referral code · NA-USER</span>
+            <button class="btn" type="button" id="copyRefBtn">Copy Code</button>
+            <a class="btn primary" href="https://x.com/intent/tweet?text=I%27m%20participating%20in%20Nerds%20Alpha%20missions%20for%20free%20mint%20and%20WL.%20Join%20me%20and%20follow%20%40Degensultan" target="_blank" rel="noopener noreferrer">Tweet Mission</a>
+          </div>
+          <div class="ok" id="copyRefStatus" style="display:none">Referral code copied.</div>
         </div>
       </div>
 
@@ -94,12 +148,19 @@
   <script>
     function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;").replace(/'/g,"&#39;");}
     function setText(id, v){ var el=document.getElementById(id); if(el) el.textContent = String(v||"—"); }
+    function fmtIso(iso){
+      try{
+        var d = new Date(iso);
+        if (!isNaN(d.getTime())) return d.toLocaleString();
+      }catch(e){}
+      return iso || "—";
+    }
 
     async function load(){
       try{
         var meR = await fetch("/api/me",{credentials:"include"});
         if(!meR.ok){
-          document.querySelector(".grid").innerHTML = '<div class="card span12"><div class="pb"><div class="err">Unauthorized. Connect Discord first.</div></div></div>';
+          document.querySelector(".grid").innerHTML = '<div class="card span12"><div class="pb"><div class="err">Unauthorized. Connect Discord first.</div><div style="margin-top:10px"><a class="btn primary" href="/api/access/discord/start?next=%2Faccount">Connect Account</a></div></div></div>';
           return;
         }
         var me = await meR.json();
@@ -107,14 +168,31 @@
         setText("name", display);
         setText("uid", "Discord ID · " + (me.user_id||"—"));
         setText("pointsNum", me.points||0);
+        setText("loginUsername", me.username || "—");
+        setText("loginDisplay", me.global_name || me.username || "—");
+        setText("lastLoginAt", fmtIso(me.last_login_at));
+        setText("loginCount", me.login_count || 0);
+        setText("createdAt", fmtIso(me.created_at));
+        setText("updatedAt", fmtIso(me.updated_at));
         var prem = !!me.is_premium;
         setText("tierPill", prem ? "Premium" : "Free");
         var pb = document.getElementById("premBadge");
         if (pb) pb.style.display = prem ? "inline-flex" : "none";
+        var wlb = document.getElementById("wlBadge");
+        if (wlb) {
+          var wl = !!me.is_whitelisted;
+          wlb.innerHTML = "<b>Live Feed</b> " + (wl ? "Whitelisted" : "Not whitelisted");
+          wlb.className = "badge " + (wl ? "g" : "");
+        }
         var av = document.getElementById("avatar");
         if(av){
           av.src = (me.avatar_url||"");
           av.onerror = function(){ try{ av.style.display="none"; }catch(e){} };
+        }
+        var ref = document.getElementById("refCode");
+        if (ref) {
+          var base = String(me.user_id || "USER").slice(-6).toUpperCase();
+          ref.textContent = "Referral code · NA-" + base;
         }
         try{
           var ar = await fetch("/api/admin/status",{credentials:"include"});
@@ -128,6 +206,36 @@
         document.querySelector(".grid").innerHTML = '<div class="card span12"><div class="pb"><div class="err">Failed to load.</div></div></div>';
       }
     }
+
+    (function bindCopyRef(){
+      var btn = document.getElementById("copyRefBtn");
+      var codeEl = document.getElementById("refCode");
+      var status = document.getElementById("copyRefStatus");
+      if (!btn || !codeEl) return;
+      btn.addEventListener("click", async function(){
+        var code = (codeEl.textContent || "").replace(/^Referral code ·\s*/i, "").trim();
+        if (!code) return;
+        try{
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(code);
+          } else {
+            var ta = document.createElement("textarea");
+            ta.value = code;
+            ta.style.position = "fixed";
+            ta.style.opacity = "0";
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            document.execCommand("copy");
+            document.body.removeChild(ta);
+          }
+          if (status) {
+            status.style.display = "block";
+            setTimeout(function(){ status.style.display = "none"; }, 1600);
+          }
+        } catch(e) {}
+      });
+    })();
 
     load();
   </script>

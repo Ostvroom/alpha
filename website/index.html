@@ -113,6 +113,10 @@
       transition: background .12s !important;
     }
     .nav-cta:hover { background: #ffe033 !important; }
+    .nav-account {
+      border: 1px solid rgba(255,204,0,.32);
+      color: #ffcc00 !important;
+    }
 
     /* ── TICKER (marquee tool strip) ─────────────────────── */
     .ticker {
@@ -787,6 +791,28 @@
     .ps-h .yl{color:#ffcc00}
     .ps-h .ol{-webkit-text-stroke:2px rgba(255,204,0,.55);color:transparent}
     .ps-tagline{font-size:13px;color:rgba(240,232,192,.50);margin-bottom:22px}
+    .ps-collection{
+      border:1px solid rgba(255,204,0,.18);
+      background:rgba(255,204,0,.04);
+      margin-bottom:16px;
+      overflow:hidden;
+    }
+    .ps-collection img{
+      display:block;
+      width:100%;
+      max-height:280px;
+      object-fit:cover;
+      object-position:center;
+    }
+    .ps-collection-note{
+      padding:10px 12px;
+      font-family:"JetBrains Mono",monospace;
+      font-size:10px;
+      letter-spacing:.10em;
+      text-transform:uppercase;
+      color:rgba(240,232,192,.60);
+      border-top:1px solid rgba(255,204,0,.12);
+    }
     /* progress */
     .ps-prog-wrap{margin-bottom:22px}
     .ps-prog-label{
@@ -988,6 +1014,7 @@
         <a href="#" id="navRoadmap">Roadmap</a>
         <a href="#" id="navCollab">Collab</a>
         <a href="#" id="navMint" style="color:#ffcc00">Mint</a>
+        <a class="nav-account" href="/account">Connect Account</a>
         <a class="nav-cta" href="/projects" id="openFeedNav">OPEN LIVE FEED</a>
       </div>
     </div>
@@ -1135,6 +1162,7 @@
         <a href="#" id="footRoadmap">Roadmap</a>
         <a href="#" id="footCollab">Collab</a>
         <a href="#" id="footMint">Mint</a>
+        <a href="/account">Connect Account</a>
         <a href="/projects" id="openFeedFoot">Open Live Feed</a>
         <a href="https://x.com/Degensultan" target="_blank" rel="noreferrer">X: @Degensultan</a>
         <a href="https://t.me/Sultandegeen" target="_blank" rel="noreferrer">Support: @Sultandegeen</a>
@@ -1290,6 +1318,10 @@
         <div class="ps-eyebrow">// Mint info</div>
         <div class="ps-h">$NERDS <span class="yl">MINT</span></div>
         <p class="ps-tagline">Details are being finalized. Stay tuned on official channels.</p>
+        <div class="ps-collection">
+          <img src="/nerds_alpha_collection.png" alt="Nerds Alpha collection preview" loading="lazy" />
+          <div class="ps-collection-note">Collection preview · Nerds Alpha</div>
+        </div>
 
         <!-- Mint stats -->
         <div class="ps-limits">
@@ -1310,11 +1342,15 @@
         <div class="ps-status ok" style="display:block">
           Mint is <b>coming soon</b>. Follow <a href="https://x.com/Degensultan" target="_blank" rel="noopener noreferrer" style="color:#ffcc00">@Degensultan</a> for the announcement.
         </div>
+        <div class="ps-status ok" style="display:block">
+          Want free mint / WL? Connect your account and complete event tasks: referrals, tweet about Nerds Alpha, and engage with official posts.
+        </div>
 
         <!-- Bottom nav -->
         <div class="ps-bottom-nav" style="margin-top:18px">
           <button class="ps-nav-btn" id="psBtnRoadmap" type="button">📋 Roadmap</button>
           <button class="ps-nav-btn" id="psBtnCollab" type="button">🤝 Request Collab</button>
+          <a class="ps-nav-btn" href="/account" style="text-decoration:none">🧠 Connect Account</a>
           <a class="ps-nav-btn" href="/projects" style="text-decoration:none">⚡ Live Feeds</a>
         </div>
       </div>

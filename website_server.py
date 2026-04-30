@@ -230,10 +230,102 @@ def _acct_upsert_user(*, user_id: int, username: str, global_name: str, avatar_u
     conn.close()
 
 
+def _acct_record_login(user_id: int, *, is_whitelisted: bool) -> dict:
+    """
+    Best-effort login audit + counters.
+    Returns minimal login metadata when available.
+    """
+    out = {
+        "last_login_at": "",
+        "login_count": 0,
+    }
+    if int(user_id) <= 0:
+        return out
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    if _sb_enabled():
+        # 1) Try dedicated login_events table if present.
+        try:
+            requests.post(
+                _sb_url("/login_events"),
+                headers=_sb_headers(),
+                data=json.dumps(
+                    {
+                        "user_id": int(user_id),
+                        "ts": now_iso,
+                        "is_whitelisted": bool(is_whitelisted),
+                    }
+                ),
+                timeout=12,
+            )
+        except Exception:
+            pass
+        # 2) Update counters on users table (if these columns exist).
+        try:
+            u = _acct_get_user(int(user_id)) or {}
+            cur_count = int(u.get("login_count") or 0)
+            nxt_count = cur_count + 1
+            payload = {
+                "last_login_at": now_iso,
+                "login_count": int(nxt_count),
+                "is_whitelisted": bool(is_whitelisted),
+            }
+            r = requests.patch(
+                _sb_url(f"/users?user_id=eq.{int(user_id)}"),
+                headers=_sb_headers(),
+                data=json.dumps(payload),
+                timeout=12,
+            )
+            if r.status_code in (200, 204):
+                out["last_login_at"] = now_iso
+                out["login_count"] = int(nxt_count)
+        except Exception:
+            pass
+        return out
+
+    # SQLite fallback
+    _acct_init()
+    conn = sqlite3.connect(_ACCOUNT_DB)
+    c = conn.cursor()
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN last_login_at TEXT")
+    except Exception:
+        pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN login_count INTEGER DEFAULT 0")
+    except Exception:
+        pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN is_whitelisted INTEGER DEFAULT 0")
+    except Exception:
+        pass
+    c.execute(
+        """
+        UPDATE users
+        SET last_login_at = ?,
+            login_count = COALESCE(login_count, 0) + 1,
+            is_whitelisted = ?,
+            updated_at = datetime('now')
+        WHERE user_id = ?
+        """,
+        (now_iso, 1 if is_whitelisted else 0, int(user_id)),
+    )
+    conn.commit()
+    c.execute("SELECT last_login_at, COALESCE(login_count, 0) FROM users WHERE user_id = ?", (int(user_id),))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        out["last_login_at"] = str(row[0] or "")
+        out["login_count"] = int(row[1] or 0)
+    return out
+
+
 def _acct_get_user(user_id: int) -> Optional[dict]:
     if _sb_enabled():
         r = requests.get(
-            _sb_url(f"/users?user_id=eq.{int(user_id)}&select=user_id,username,global_name,avatar_url,points"),
+            _sb_url(
+                f"/users?user_id=eq.{int(user_id)}"
+                "&select=user_id,username,global_name,avatar_url,points,created_at,updated_at,last_login_at,login_count,is_whitelisted"
+            ),
             headers=_sb_headers(),
             timeout=12,
         )
@@ -250,18 +342,58 @@ def _acct_get_user(user_id: int) -> Optional[dict]:
                 "global_name": str(row.get("global_name") or ""),
                 "avatar_url": str(row.get("avatar_url") or ""),
                 "points": int(row.get("points") or 0),
+                "created_at": str(row.get("created_at") or ""),
+                "updated_at": str(row.get("updated_at") or ""),
+                "last_login_at": str(row.get("last_login_at") or ""),
+                "login_count": int(row.get("login_count") or 0),
+                "is_whitelisted": bool(row.get("is_whitelisted")) if row.get("is_whitelisted") is not None else None,
             }
         except Exception:
             return None
     _acct_init()
     conn = sqlite3.connect(_ACCOUNT_DB)
     c = conn.cursor()
-    c.execute("SELECT user_id, username, global_name, avatar_url, points FROM users WHERE user_id = ?", (int(user_id),))
+    c.execute("PRAGMA table_info(users)")
+    cols = {str(r[1]) for r in (c.fetchall() or []) if r and len(r) > 1}
+    has_last_login = "last_login_at" in cols
+    has_login_count = "login_count" in cols
+    has_wl = "is_whitelisted" in cols
+    select_cols = "user_id, username, global_name, avatar_url, points, created_at, updated_at"
+    if has_last_login:
+        select_cols += ", last_login_at"
+    if has_login_count:
+        select_cols += ", login_count"
+    if has_wl:
+        select_cols += ", is_whitelisted"
+    c.execute(f"SELECT {select_cols} FROM users WHERE user_id = ?", (int(user_id),))
     row = c.fetchone()
     conn.close()
     if not row:
         return None
-    return {"user_id": int(row[0]), "username": row[1] or "", "global_name": row[2] or "", "avatar_url": row[3] or "", "points": int(row[4] or 0)}
+    idx = 7
+    last_login_at = ""
+    login_count = 0
+    is_whitelisted = None
+    if has_last_login:
+        last_login_at = str(row[idx] or "")
+        idx += 1
+    if has_login_count:
+        login_count = int(row[idx] or 0)
+        idx += 1
+    if has_wl:
+        is_whitelisted = bool(row[idx]) if row[idx] is not None else None
+    return {
+        "user_id": int(row[0]),
+        "username": row[1] or "",
+        "global_name": row[2] or "",
+        "avatar_url": row[3] or "",
+        "points": int(row[4] or 0),
+        "created_at": str(row[5] or ""),
+        "updated_at": str(row[6] or ""),
+        "last_login_at": last_login_at,
+        "login_count": login_count,
+        "is_whitelisted": is_whitelisted,
+    }
 
 
 def _acct_add_points(user_id: int, points: int) -> None:
@@ -1050,11 +1182,7 @@ async def api_access_discord_callback(request: Request, code: str = "", state: s
         res = RedirectResponse(url="/projects?gate=discord_error", status_code=302)
         res.delete_cookie(_DISCORD_STATE_COOKIE, path="/")
         return res
-    if not _is_whitelisted_user(int(user_id)):
-        res = RedirectResponse(url="/projects?gate=not_whitelisted", status_code=302)
-        res.delete_cookie(_DISCORD_STATE_COOKIE, path="/")
-        res.delete_cookie(ACCESS_COOKIE, path="/")
-        return res
+    is_whitelisted = _is_whitelisted_user(int(user_id))
 
     # Save Discord profile (best-effort)
     try:
@@ -1064,13 +1192,17 @@ async def api_access_discord_callback(request: Request, code: str = "", state: s
         avh = prof.get("avatar")
         av_url = _discord_avatar_url(user_id, str(avh) if avh else None)
         _acct_upsert_user(user_id=user_id, username=uname, global_name=gname, avatar_url=av_url)
+        _acct_record_login(user_id, is_whitelisted=bool(is_whitelisted))
         # Auto-claim connect task once
         _acct_claim_task(user_id, "connect_discord")
     except Exception:
         pass
 
     tok = _make_access_token(user_id=user_id)
-    res = RedirectResponse(url=nxt, status_code=302)
+    # Keep one-time account connection even when not whitelisted.
+    # Non-whitelisted users can still view account status and points tasks.
+    target = nxt if is_whitelisted else "/account?gate=not_whitelisted"
+    res = RedirectResponse(url=target, status_code=302)
     res.set_cookie(
         key=ACCESS_COOKIE,
         value=tok,
@@ -1091,19 +1223,20 @@ async def page_account(request: Request):
 
 @app.get("/api/me")
 async def api_me(request: Request):
-    if not _DEV_PREVIEW and not _has_access(request):
-        raise HTTPException(401, "Unauthorized")
     tok = request.cookies.get(ACCESS_COOKIE, "")
     payload = _verify_access_token(tok) or {}
     uid = int(payload.get("uid") or 0)
     if uid <= 0:
         raise HTTPException(401, "Unauthorized")
     u = _acct_get_user(uid) or {"user_id": uid, "username": "", "global_name": "", "avatar_url": "", "points": 0}
+    is_whitelisted = _is_whitelisted_user(uid)
     roles = await _discord_fetch_member_roles(uid)
     is_premium = _member_roles_include_premium(roles)
     engage_tweet_url = (os.getenv("NA_COMMUNITY_ENGAGE_TWEET_URL") or "").strip()
     return {
         **u,
+        "is_whitelisted": bool(is_whitelisted),
+        "can_access_live_feed": bool(_DEV_PREVIEW or is_whitelisted),
         "is_premium": bool(is_premium),
         "engage_tweet_url": engage_tweet_url,
     }

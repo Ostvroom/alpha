@@ -560,6 +560,15 @@
           if (!r.ok){
             lockUi(); return;
           }
+          var me = await r.json();
+          if (!me || !me.is_whitelisted){
+            lockUi();
+            var connectCard = document.getElementById("gateCardConnect");
+            var deniedCard  = document.getElementById("gateCardDenied");
+            if (connectCard) connectCard.style.display = "none";
+            if (deniedCard) deniedCard.style.display = "";
+            return;
+          }
         } catch(e){ lockUi(); return; }
 
         // Trending "More" → top 50 modal
