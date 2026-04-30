@@ -1716,6 +1716,24 @@
       collabStatus.style.display = "block";
     }
 
+    function showCollabSuccess(type) {
+      if (!collabStatus) return;
+      var isDao = type === "dao";
+      collabStatus.innerHTML = [
+        '<div style="display:flex;flex-direction:column;gap:10px">',
+        '  <div style="color:rgba(120,255,180,.9);font-size:12px;font-weight:700">✓ Request received!</div>',
+        isDao
+          ? '<div style="font-size:12px;color:rgba(240,232,192,.75);line-height:1.6">To finalize the collaboration, <strong style="color:#f0e8c0">DM me on Telegram</strong> with your project details.</div>'
+          : '<div style="font-size:12px;color:rgba(240,232,192,.75);line-height:1.6">We\'ll review your request. You\'ll be notified once you\'re accepted.</div>',
+        isDao
+          ? '<a href="https://t.me/Sultandegeen" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:7px;font-family:\'JetBrains Mono\',monospace;font-size:10px;letter-spacing:.10em;text-transform:uppercase;padding:10px 14px;border:1px solid rgba(255,204,0,.35);color:#ffcc00;text-decoration:none;transition:border-color .14s" onmouseover="this.style.borderColor=\'#ffcc00\'" onmouseout="this.style.borderColor=\'rgba(255,204,0,.35)\'">DM @Sultandegeen on Telegram →</a>'
+          : '',
+        '</div>'
+      ].join("");
+      collabStatus.className = "cl-status ok";
+      collabStatus.style.display = "block";
+    }
+
     if (collabForm) {
       collabForm.addEventListener("submit", async function(e) {
         e.preventDefault();
@@ -1739,9 +1757,10 @@
           });
           var d = {}; try { d = await r.json(); } catch(e2){}
           if (r.ok && d.ok) {
-            showCollabStatus("✓ Request submitted! We'll review and reach out via Discord.", false);
+            var submittedType = _eaType;
             collabForm.reset();
             setEaType("personal");
+            showCollabSuccess(submittedType);
           } else {
             showCollabStatus("Error: " + (d.detail || d.error || ("HTTP "+r.status)), true);
             if (collabSubmitBtn) collabSubmitBtn.disabled = false;
