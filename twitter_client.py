@@ -49,7 +49,7 @@ class TwitterClient:
         self._global_backoff_until_ts = 0.0
         self._cf403_streak = 0
         # asyncio lock created lazily (can't use asyncio primitives before event loop starts)
-        self._session_lock: asyncio.Lock | None = None
+        self._session_lock = None  # will be asyncio.Lock once event loop is running
         self._cf403_last_ts = 0.0
         self._load_accounts()
     
