@@ -46,6 +46,9 @@ class TwitterClient:
         self._sessions = []  # List of (client, account_info, logged_in, rate_limited)
         self._current_session_idx = 0
         self._next_twikit_call_ts = 0.0
+        self._global_backoff_until_ts = 0.0
+        self._cf403_streak = 0
+        self._cf403_last_ts = 0.0
         self._load_accounts()
     
     def _load_accounts(self):
@@ -182,16 +185,24 @@ class TwitterClient:
             self.is_rate_limited = False
             return None
         self._normalize_session_idx()
+        has_non_limited = False
         attempts = 0
         while attempts < len(self._sessions):
             session = self._sessions[self._current_session_idx]
-            if (not session['rate_limited']) and (not self._is_session_backing_off(session)):
-                return session
+            if not session['rate_limited']:
+                has_non_limited = True
+                if not self._is_session_backing_off(session):
+                    return session
             # Try next session
             self._rotate_session()
             attempts += 1
 
-        # All sessions rate limited
+        # Backoff-only state (not all hard rate-limited): wait and retry upstream.
+        if has_non_limited:
+            self.is_rate_limited = False
+            return None
+
+        # All sessions hard rate-limited
         self.is_rate_limited = True
         if not self._sessions:
             return None
@@ -205,6 +216,7 @@ class TwitterClient:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] Cooldown expired. Resuming operations.")
                 self.cooldown_ends = None
                 self.is_rate_limited = False
+                self._global_backoff_until_ts = 0.0
                 for s in self._sessions:
                     s['rate_limited'] = False
                     s['soft_429_count'] = 0
@@ -236,10 +248,35 @@ class TwitterClient:
             session["soft_403_count"] = 0
             session["backoff_exp"] = 0
             session["backoff_until_ts"] = 0.0
+            session["proxy_fails"] = 0
 
     def _is_session_backing_off(self, session):
         until_ts = float(session.get("backoff_until_ts", 0.0) or 0.0)
         return until_ts > time.time()
+
+    def _in_global_backoff(self):
+        return float(self._global_backoff_until_ts or 0.0) > time.time()
+
+    def _register_cf403_and_maybe_global_cooldown(self):
+        now = time.time()
+        window_sec = float(getattr(config, "TWIKIT_CF_STREAK_WINDOW_SEC", 120.0) or 120.0)
+        trigger_n = int(getattr(config, "TWIKIT_CF_STREAK_FOR_GLOBAL_COOLDOWN", 3) or 3)
+        cool_sec = float(getattr(config, "TWIKIT_CF_GLOBAL_COOLDOWN_SEC", 180.0) or 180.0)
+
+        if (now - float(self._cf403_last_ts or 0.0)) <= max(1.0, window_sec):
+            self._cf403_streak += 1
+        else:
+            self._cf403_streak = 1
+        self._cf403_last_ts = now
+
+        if self._cf403_streak >= max(1, trigger_n):
+            self._global_backoff_until_ts = now + max(5.0, cool_sec)
+            self._cf403_streak = 0
+            resume_at = datetime.fromtimestamp(self._global_backoff_until_ts).strftime("%H:%M:%S")
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] Cloudflare 403 streak detected. "
+                f"Pausing Twikit pool until {resume_at} (~{int(cool_sec)}s)."
+            )
 
     def _schedule_session_backoff(self, session, reason):
         base = float(getattr(config, "TWIKIT_BACKOFF_BASE_SEC", 8.0) or 8.0)
@@ -286,6 +323,8 @@ class TwitterClient:
     def _rotate_session(self):
         """Rotate to the next non-rate-limited session, or full circle."""
         if not self._sessions:
+            return False
+        if len(self._sessions) <= 1:
             return False
         self._normalize_session_idx()
         original_idx = self._current_session_idx
@@ -355,12 +394,20 @@ class TwitterClient:
             soft403 = int(session.get("soft_403_count", 0) or 0) + 1
             session["soft_403_count"] = soft403
             self._schedule_session_backoff(session, reason or "Cloudflare 403")
-            self._rotate_proxy_for_session(session, "Cloudflare 403 block")
+            self._register_cf403_and_maybe_global_cooldown()
+            rotated_proxy = self._rotate_proxy_for_session(session, "Cloudflare 403 block")
             cap403 = int(getattr(config, "TWIKIT_403_SOFT_PER_SESSION", 2) or 2)
+            if rotated_proxy:
+                print(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] WAIT Cloudflare 403 ({soft403}/{cap403}) @{username} — "
+                    "rotating session (soft block, proxy rotated)."
+                )
+                self._rotate_session()
+                return
             if soft403 < cap403:
                 print(
                     f"[{datetime.now().strftime('%H:%M:%S')}] WAIT Cloudflare 403 ({soft403}/{cap403}) @{username} — "
-                    "rotating session (soft block)."
+                    "rotating session (soft block, no proxy left)."
                 )
                 self._rotate_session()
                 return
@@ -520,6 +567,10 @@ class TwitterClient:
             return None
         self.check_cooldown()
         while not self.is_rate_limited:
+            if self._in_global_backoff():
+                wait = max(0.25, min(10.0, float(self._global_backoff_until_ts) - time.time()))
+                await asyncio.sleep(wait)
+                continue
             session = self._get_current_session()
             if not session:
                 # All sessions may be in temporary backoff windows; wait briefly and retry.
