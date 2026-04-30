@@ -1451,7 +1451,7 @@
 
     function looksLikeStatus(u){
       u = String(u||"").trim();
-      return /https?:\\/\\/(www\\.)?(x\\.com|twitter\\.com)\\/[^\\/]+\\/status\\/\\d+/.test(u);
+      return /https?:\/\/(www\.)?(x\.com|twitter\.com)\/[^\/]+\/status\/\d+/.test(u);
     }
     async function submit(){
       var replyUrl = String(replyInp && replyInp.value || "").trim();
