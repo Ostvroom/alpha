@@ -2714,19 +2714,12 @@ class BlockBrainBot(commands.Bot):
             embed.set_thumbnail(
                 url=f"https://unavatar.io/twitter/{str(getattr(account, 'screen_name', '')).lstrip('@')}"
             )
-        bio = (getattr(account, "description", None) or "").strip()
-        bio_line = (
-            f"**Bio:** {textwrap.shorten(bio, width=180, placeholder='...')}\n\u200b"
-            if bio
-            else "**Bio:** `N/A`\n\u200b"
-        )
-        
         # Section 1: Profile
         profile_value = (
             f"**Name:** [{account.name}](https://x.com/{account.screen_name}) | **Category:** {category}\n"
             f"\n"
             f"**Age:** `{self.format_age(account.created_at)}` | **Followers:** `{account.followers_count:,}`\n"
-            f"{bio_line}"
+            f"\u200b"
         )
         embed.add_field(name="👤 Profile", value=profile_value, inline=False)
 
@@ -2739,27 +2732,20 @@ class BlockBrainBot(commands.Bot):
         )
         embed.add_field(name="📊 Social Score", value=score_value, inline=False)
 
-        # Section 2.5: AI Summary (Professional Wide-Report Style)
-        if ai_data:
-            summary = ai_data.get('summary', 'No summary available.')
-            score = ai_data.get('alpha_score', 'N/A')
-            
-            # Create a structured report inside the box (Category & Strength removed for simplicity)
-            report_lines = [
-                f"ANALYSIS: {summary}"
-            ]
-            
-            formatted_lines = []
-            for line in report_lines:
-                # Wrap to 85 chars to fill the wide embed
-                wrapped = textwrap.wrap(line, width=85)
-                for i, w_line in enumerate(wrapped):
-                    prefix = "+ " if i == 0 else "  "
-                    formatted_lines.append(f"{prefix}{w_line}")
-            
-            report_text = "\n".join(formatted_lines)
-            # Using ANSI styling for a more modern 'different' style
-            embed.add_field(name=f"🧠 {BRAND_NAME} Research", value=f"```ansi\n\u001b[1;36m[ANALYSIS]\u001b[0m \u001b[0;37m{summary}\u001b[0m\n```", inline=False)
+        # Section 2.5: Velcor3 Research (always shown in the same style)
+        summary = ""
+        if isinstance(ai_data, dict):
+            summary = str(ai_data.get("summary") or "").strip()
+        if not summary:
+            summary = str(getattr(account, "description", None) or "").strip()
+        if not summary:
+            summary = "Early signal detected. AI research will appear after the next analysis pass."
+        summary = textwrap.shorten(summary, width=320, placeholder="...")
+        embed.add_field(
+            name=f"🧠 {BRAND_NAME} Research",
+            value=f"```ansi\n\u001b[1;36m[ANALYSIS]\u001b[0m \u001b[0;37m{summary}\u001b[0m\n```",
+            inline=False,
+        )
 
         # Section 3: hunter count
         seen_lower = set()
