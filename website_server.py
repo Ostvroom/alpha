@@ -112,6 +112,13 @@ def _sb_enabled() -> bool:
     return bool(_SUPABASE_URL and _SUPABASE_SERVICE_ROLE_KEY)
 
 
+# Log account storage backend at startup so it's visible in Render logs
+if _sb_enabled():
+    print(f"[Account] Storage backend: Supabase ({_SUPABASE_URL})", flush=True)
+else:
+    print("[Account] Storage backend: SQLite (local) — set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY to enable Supabase", flush=True)
+
+
 def _sb_headers(*, prefer: str = "") -> dict[str, str]:
     h = {
         "apikey": _SUPABASE_SERVICE_ROLE_KEY,
@@ -3778,14 +3785,31 @@ async def api_collab_submit(request: Request, body: CollabRequest):
         raise HTTPException(400, "Please enter at least 1 spot.")
 
     try:
-        _collab_init()
-        conn = sqlite3.connect(_COLLAB_DB)
-        conn.execute(
-            "INSERT INTO collab_requests (discord, project, spots, note, ip) VALUES (?, ?, ?, ?, ?)",
-            (discord, project, spots, note, ip[:80]),
-        )
-        conn.commit()
-        conn.close()
+        if _sb_enabled():
+            payload = {
+                "discord": discord,
+                "project": project,
+                "spots": int(spots),
+                "note": note,
+                "ip": ip[:80],
+            }
+            r = requests.post(
+                _sb_url("/collab_requests"),
+                headers=_sb_headers(),
+                data=json.dumps(payload),
+                timeout=12,
+            )
+            if r.status_code not in (200, 201, 204):
+                raise RuntimeError(f"Supabase collab save failed: HTTP {r.status_code}: {r.text[:200]}")
+        else:
+            _collab_init()
+            conn = sqlite3.connect(_COLLAB_DB)
+            conn.execute(
+                "INSERT INTO collab_requests (discord, project, spots, note, ip) VALUES (?, ?, ?, ?, ?)",
+                (discord, project, spots, note, ip[:80]),
+            )
+            conn.commit()
+            conn.close()
     except Exception as e:
         raise HTTPException(500, f"Could not save request: {e}")
 
