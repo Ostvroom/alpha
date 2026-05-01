@@ -900,11 +900,8 @@ def _admin_user_ids() -> set[int]:
     return out
 
 
-def _website_whitelist_user_ids() -> set[int]:
-    """
-    Comma-separated Discord user IDs allowed to access gated website pages.
-    Env var: WEBSITE_ACCESS_DISCORD_WHITELIST_IDS
-    """
+def _env_whitelist_user_ids() -> set[int]:
+    """IDs from WEBSITE_ACCESS_DISCORD_WHITELIST_IDS (comma-separated)."""
     raw = str(os.getenv("WEBSITE_ACCESS_DISCORD_WHITELIST_IDS", "") or "").strip()
     out: set[int] = set()
     for part in raw.split(","):
@@ -916,6 +913,35 @@ def _website_whitelist_user_ids() -> set[int]:
         except Exception:
             continue
     return out
+
+
+def _db_whitelist_user_ids() -> set[int]:
+    """IDs added via admin panel (SQLite)."""
+    _admin_init_tables()
+    out: set[int] = set()
+    try:
+        conn = sqlite3.connect(database.DB_PATH)
+        cur = conn.cursor()
+        cur.execute("SELECT discord_user_id FROM website_discord_whitelist")
+        for row in cur.fetchall() or []:
+            try:
+                uid = int(row[0])
+                if uid > 0:
+                    out.add(uid)
+            except Exception:
+                pass
+        conn.close()
+    except Exception:
+        pass
+    return out
+
+
+def _website_whitelist_user_ids() -> set[int]:
+    """
+    Discord user IDs allowed to access gated website pages: env
+    WEBSITE_ACCESS_DISCORD_WHITELIST_IDS plus admin-managed IDs in SQLite.
+    """
+    return _env_whitelist_user_ids() | _db_whitelist_user_ids()
 
 
 def _is_whitelisted_user(user_id: int) -> bool:
@@ -975,6 +1001,15 @@ def _admin_init_tables() -> None:
             score INTEGER DEFAULT 0,
             created_by INTEGER,
             created_on TEXT DEFAULT (datetime('now'))
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS website_discord_whitelist (
+            discord_user_id INTEGER PRIMARY KEY NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            added_by INTEGER
         )
         """
     )
@@ -3460,6 +3495,10 @@ class AdminProjectAddRequest(BaseModel):
     score: int = 0
 
 
+class AdminWhitelistUserRequest(BaseModel):
+    discord_user_id: int
+
+
 @app.get("/api/admin/projects/search")
 async def api_admin_projects_search(request: Request, q: str = "", limit: int = 50):
     _require_admin(request)
@@ -3594,6 +3633,64 @@ async def api_admin_projects_remove_manual(request: Request, body: AdminProjectH
     conn.commit()
     conn.close()
     return {"ok": True, "handle": h}
+
+
+@app.get("/api/admin/whitelist")
+async def api_admin_whitelist_list(request: Request):
+    _require_admin(request)
+    _admin_init_tables()
+    conn = sqlite3.connect(database.DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT discord_user_id, created_at, added_by
+        FROM website_discord_whitelist
+        ORDER BY datetime(created_at) DESC
+        """
+    )
+    database = [dict(r) for r in (cur.fetchall() or [])]
+    conn.close()
+    env_ids = sorted(_env_whitelist_user_ids())
+    return {"database": database, "env_discord_user_ids": env_ids}
+
+
+@app.post("/api/admin/whitelist/add")
+async def api_admin_whitelist_add(request: Request, body: AdminWhitelistUserRequest):
+    uid = _require_admin(request)
+    did = int(body.discord_user_id)
+    if did <= 0 or did >= 2**63:
+        raise HTTPException(400, "invalid discord_user_id")
+    _admin_init_tables()
+    conn = sqlite3.connect(database.DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO website_discord_whitelist (discord_user_id, added_by)
+        VALUES (?, ?)
+        ON CONFLICT(discord_user_id) DO NOTHING
+        """,
+        (did, int(uid or 0)),
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True, "discord_user_id": did}
+
+
+@app.post("/api/admin/whitelist/remove")
+async def api_admin_whitelist_remove(request: Request, body: AdminWhitelistUserRequest):
+    _require_admin(request)
+    did = int(body.discord_user_id)
+    if did <= 0:
+        raise HTTPException(400, "invalid discord_user_id")
+    _admin_init_tables()
+    conn = sqlite3.connect(database.DB_PATH)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM website_discord_whitelist WHERE discord_user_id=?", (did,))
+    conn.commit()
+    removed = cur.rowcount > 0
+    conn.close()
+    return {"ok": True, "discord_user_id": did, "removed": removed}
 
 
 @app.get("/alert/{event_id}", response_class=HTMLResponse)

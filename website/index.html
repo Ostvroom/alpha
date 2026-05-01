@@ -723,6 +723,14 @@
     .na-dialog-body::-webkit-scrollbar{width:4px}
     .na-dialog-body::-webkit-scrollbar-track{background:transparent}
     .na-dialog-body::-webkit-scrollbar-thumb{background:rgba(255,204,0,.20);border-radius:2px}
+    .na-dialog-subscribe{
+      border-radius:14px;
+      border:1px solid rgba(255,204,0,.38);
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,.04) inset,
+        0 40px 100px rgba(0,0,0,.75),
+        0 0 80px rgba(255,204,0,.06);
+    }
 
     /* ── ROADMAP MODAL BODY ─────────────────────────────── */
     .rm-inner{padding:28px 24px 24px}
@@ -771,21 +779,37 @@
     .rm-note{font-family:"JetBrains Mono",monospace;font-size:10px;color:rgba(240,232,192,.35)}
 
     /* ── MINT / COLLAB MODAL BODY ─────────────────────────────── */
-    .ps-inner{padding:28px 28px 24px}
+    .ps-inner{
+      padding:32px 32px 28px;
+      background:
+        radial-gradient(ellipse 120% 90% at 50% -30%, rgba(255,204,0,.10), transparent 52%),
+        radial-gradient(ellipse 80% 50% at 100% 50%, rgba(255,204,0,.04), transparent 45%),
+        linear-gradient(180deg, rgba(14,13,10,.97) 0%, rgba(7,7,6,.99) 100%);
+    }
     .ps-eyebrow{
-      font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.20em;
-      text-transform:uppercase;color:rgba(255,204,0,.52);margin-bottom:8px;
-      display:flex;align-items:center;gap:8px;
+      font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.22em;
+      text-transform:uppercase;color:rgba(255,204,0,.58);margin-bottom:10px;
+      display:flex;align-items:center;gap:10px;
     }
-    .ps-eyebrow::before{content:"";width:16px;height:1px;background:rgba(255,204,0,.40)}
+    .ps-eyebrow::before{
+      content:"";width:22px;height:2px;border-radius:2px;
+      background:linear-gradient(90deg,rgba(255,204,0,.85),rgba(255,204,0,.15));
+    }
     .ps-h{
-      font-family:"Barlow Condensed",sans-serif;font-size:clamp(28px,4vw,46px);
-      font-weight:900;letter-spacing:.04em;text-transform:uppercase;line-height:1;
-      margin-bottom:4px;
+      font-family:"Barlow Condensed",sans-serif;font-size:clamp(30px,4.5vw,48px);
+      font-weight:900;letter-spacing:.03em;text-transform:uppercase;line-height:1.02;
+      margin-bottom:8px;color:#f4ecd8;
+      text-shadow:0 2px 28px rgba(0,0,0,.45);
     }
-    .ps-h .yl{color:#ffcc00}
+    .ps-h .yl{
+      color:#ffcc00;
+      text-shadow:0 0 48px rgba(255,204,0,.22),0 2px 28px rgba(0,0,0,.45);
+    }
     .ps-h .ol{-webkit-text-stroke:2px rgba(255,204,0,.55);color:transparent}
-    .ps-tagline{font-size:13px;color:rgba(240,232,192,.50);margin-bottom:22px}
+    .ps-tagline{
+      font-size:14px;line-height:1.55;max-width:38ch;
+      color:rgba(240,232,192,.62);margin-bottom:26px;
+    }
     .ps-collection{
       border:1px solid rgba(255,204,0,.18);
       background:rgba(255,204,0,.04);
@@ -834,33 +858,67 @@
     }
     /* limits */
     .ps-limits{
-      display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;
+      display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap;
     }
     .ps-limits.single-tier{justify-content:center}
     .ps-limit{
       flex:1;min-width:120px;
       border:1px solid rgba(255,204,0,.14);background:rgba(0,0,0,.25);padding:12px 14px;
     }
-    .ps-limits.single-tier .ps-limit{max-width:280px}
+    .ps-limits.single-tier .ps-limit{
+      max-width:320px;
+      padding:22px 22px 20px;
+      border-radius:16px;
+      border:1px solid rgba(255,204,0,.26);
+      background:
+        linear-gradient(155deg, rgba(255,204,0,.09) 0%, rgba(0,0,0,.35) 42%, rgba(0,0,0,.55) 100%);
+      box-shadow:
+        0 28px 56px rgba(0,0,0,.50),
+        0 0 0 1px rgba(255,255,255,.04) inset,
+        0 1px 0 rgba(255,204,0,.14) inset;
+      position:relative;overflow:hidden;
+    }
+    .ps-limits.single-tier .ps-limit::before{
+      content:"";position:absolute;top:0;left:0;right:0;height:3px;
+      background:linear-gradient(90deg,transparent,rgba(255,204,0,.85),transparent);
+      opacity:.75;pointer-events:none;
+    }
     .ps-limit-label{
-      font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.14em;
-      text-transform:uppercase;color:rgba(255,204,0,.45);margin-bottom:4px;
+      font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.18em;
+      text-transform:uppercase;color:#ffcc00;margin-bottom:10px;
+      opacity:.92;
     }
     .ps-limit-val{
-      font-family:"Barlow Condensed",sans-serif;font-size:26px;font-weight:800;
-      color:#f8f0d0;letter-spacing:.02em;
+      font-family:"Barlow Condensed",sans-serif;font-size:clamp(34px,8vw,44px);font-weight:800;
+      color:#fff8ea;letter-spacing:-.02em;line-height:1;
+    }
+    .ps-limit-per{
+      margin-top:6px;font-family:"JetBrains Mono",monospace;font-size:9px;
+      letter-spacing:.06em;text-transform:uppercase;color:rgba(240,232,192,.42);
     }
     .ps-pay-btn{
       display:inline-flex;align-items:center;justify-content:center;
-      margin-top:10px;
-      font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.10em;text-transform:uppercase;
-      text-decoration:none;color:#090909;background:#ffcc00;border:1px solid #ffcc00;
-      padding:9px 10px;width:100%;transition:all .14s;cursor:pointer;
+      margin-top:18px;
+      font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:700;
+      letter-spacing:.16em;text-transform:uppercase;
+      text-decoration:none;color:#0a0a0a;background:linear-gradient(180deg,#ffe14a,#ffcc00);
+      border:1px solid rgba(255,214,80,.95);
+      padding:14px 16px;width:100%;border-radius:11px;cursor:pointer;
+      box-shadow:0 4px 22px rgba(255,204,0,.28),0 1px 0 rgba(255,255,255,.35) inset;
+      transition:transform .16s ease,box-shadow .16s ease,filter .16s ease,background .16s ease;
     }
-    .ps-pay-btn:hover{background:#ffe033;border-color:#ffe033}
+    .ps-pay-btn:hover{
+      background:linear-gradient(180deg,#ffe566,#ffd12e);
+      transform:translateY(-2px);
+      box-shadow:0 10px 32px rgba(255,204,0,.38),0 1px 0 rgba(255,255,255,.4) inset;
+    }
+    .ps-pay-btn:active{transform:translateY(0)}
+    .ps-pay-btn:focus-visible{
+      outline:2px solid rgba(255,204,0,.9);outline-offset:3px;
+    }
     .ps-pay-btn.is-disabled{
       background:rgba(255,204,0,.16);border-color:rgba(255,204,0,.28);color:rgba(240,232,192,.55);
-      cursor:not-allowed;pointer-events:none;
+      cursor:not-allowed;pointer-events:none;box-shadow:none;transform:none;
     }
     /* wallet */
     .ps-wallet-label{
@@ -921,38 +979,50 @@
     .ps-submit:disabled{background:rgba(255,204,0,.35);cursor:not-allowed}
     /* status */
     .ps-status{
-      font-family:"JetBrains Mono",monospace;font-size:11px;
-      margin-bottom:12px;display:none;padding:10px 12px;
+      font-family:"JetBrains Mono",monospace;font-size:11px;line-height:1.5;
+      margin-bottom:12px;display:none;padding:12px 14px;border-radius:12px;
     }
     .ps-status.err{color:rgba(255,130,130,.9);border:1px solid rgba(255,130,130,.25);background:rgba(255,50,50,.05)}
     .ps-status.ok{color:rgba(120,255,180,.9);border:1px solid rgba(120,255,180,.25);background:rgba(0,200,100,.05)}
     /* access list */
     .ps-access{
-      margin:2px 0 18px;
-      border:1px solid rgba(255,204,0,.14);
-      background:rgba(0,0,0,.22);
-      padding:12px 14px;
+      margin:4px 0 20px;
+      border:1px solid rgba(255,204,0,.18);
+      border-radius:16px;
+      background:rgba(0,0,0,.32);
+      padding:18px 18px 16px;
+      box-shadow:0 18px 44px rgba(0,0,0,.28),0 0 0 1px rgba(255,255,255,.03) inset;
     }
     .ps-access-title{
-      font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
-      color:rgba(255,204,0,.60);margin-bottom:8px;
+      font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+      color:rgba(255,204,0,.72);margin-bottom:12px;padding-bottom:11px;
+      border-bottom:1px solid rgba(255,204,0,.12);
     }
     .ps-access-list{
-      margin:0;padding-left:16px;
-      display:flex;flex-direction:column;gap:8px;
-      color:rgba(240,232,192,.70);font-size:12px;line-height:1.55;
+      margin:0;padding:0;list-style:none;
+      display:flex;flex-direction:column;gap:12px;
+      color:rgba(240,232,192,.74);font-size:13px;line-height:1.55;
     }
-    .ps-access-list b{color:#f8f0d0}
+    .ps-access-list li{
+      position:relative;padding-left:22px;
+    }
+    .ps-access-list li::before{
+      content:"";position:absolute;left:0;top:.55em;width:7px;height:7px;border-radius:50%;
+      background:radial-gradient(circle at 30% 30%,#fff2a8,#ffcc00);
+      box-shadow:0 0 10px rgba(255,204,0,.45);
+    }
+    .ps-access-list b{color:#f8f0d0;font-weight:700}
     /* bottom nav */
     .ps-bottom-nav{
       display:flex;gap:10px;flex-wrap:wrap;
-      padding-top:16px;border-top:1px solid rgba(255,204,0,.10);
+      padding-top:18px;border-top:1px solid rgba(255,204,0,.12);
     }
     .ps-nav-btn{
       flex:1;min-width:120px;
       font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.10em;text-transform:uppercase;
       padding:11px 10px;border:1px solid rgba(255,204,0,.22);background:transparent;color:rgba(240,232,192,.60);
       cursor:pointer;transition:color .12s,border-color .12s,background .12s;text-align:center;
+      border-radius:10px;
     }
     .ps-nav-btn:hover{color:#ffcc00;border-color:rgba(255,204,0,.45);background:rgba(255,204,0,.05)}
 
@@ -1349,7 +1419,7 @@
 <!-- ══ MINT MODAL ══════════════════════════════════════════════ -->
 <div id="na-mint" class="na-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Subscribe">
   <div class="na-modal-bg" data-naclose="mint"></div>
-  <div class="na-dialog" style="max-width:560px">
+  <div class="na-dialog na-dialog-subscribe" style="max-width:600px">
     <div class="na-dialog-head">
       <div class="na-dialog-head-left">
         <div class="na-dots"><span></span><span></span><span></span></div>
@@ -1359,7 +1429,7 @@
     </div>
     <div class="na-dialog-body">
       <div class="ps-inner">
-        <div class="ps-eyebrow">// Monthly subscription</div>
+        <div class="ps-eyebrow">Monthly subscription</div>
         <div class="ps-h">NERDS <span class="yl">ACCESS</span></div>
         <p class="ps-tagline">Start with monthly access and unlock the full Nerds Alpha stack.</p>
 
@@ -1368,6 +1438,7 @@
           <div class="ps-limit">
             <div class="ps-limit-label">1 Month</div>
             <div class="ps-limit-val">$20</div>
+            <div class="ps-limit-per">per month · billed monthly</div>
             <a class="ps-pay-btn" id="payBtn1m" href="#" target="_blank" rel="noopener noreferrer">Pay Now</a>
           </div>
         </div>
@@ -1810,7 +1881,7 @@
         '<div style="display:flex;flex-direction:column;gap:10px">',
         '  <div style="color:rgba(120,255,180,.9);font-size:12px;font-weight:700">✓ Request received!</div>',
         isDao
-          ? '<div style="font-size:12px;color:rgba(240,232,192,.75);line-height:1.6">To finalize the collaboration, <strong style="color:#f0e8c0">DM me on Telegram</strong> with your project details.</div>'
+          ? '<div style="font-size:12px;color:rgba(240,232,192,.75);line-height:1.6"><strong style="color:#f0e8c0">DM on Telegram to confirm collab.</strong></div>'
           : '<div style="font-size:12px;color:rgba(240,232,192,.75);line-height:1.6">We\'ll review your request. You\'ll be notified once you\'re accepted.</div>',
         isDao
           ? '<a href="https://t.me/Sultandegeen" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:7px;font-family:\'JetBrains Mono\',monospace;font-size:10px;letter-spacing:.10em;text-transform:uppercase;padding:10px 14px;border:1px solid rgba(255,204,0,.35);color:#ffcc00;text-decoration:none;transition:border-color .14s" onmouseover="this.style.borderColor=\'#ffcc00\'" onmouseout="this.style.borderColor=\'rgba(255,204,0,.35)\'">DM @Sultandegeen on Telegram →</a>'

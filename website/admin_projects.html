@@ -87,6 +87,24 @@
       </div>
     </div>
 
+    <div class="card" style="margin-top:12px;">
+      <div class="ph">Website access · Discord whitelist</div>
+      <div class="pb">
+        <p class="small" style="margin-bottom:10px;line-height:1.45;">
+          Add numeric Discord user IDs to grant gated website access (same effect as <span class="mono">WEBSITE_ACCESS_DISCORD_WHITELIST_IDS</span> in env).
+          Env-configured IDs appear below as read-only; change those in your host (e.g. Render) environment.
+        </p>
+        <div class="row">
+          <input class="inp" id="wl_id" type="text" inputmode="numeric" placeholder="Discord user ID (numbers only)" />
+          <button class="btn" id="wlAddBtn" type="button">Add to whitelist</button>
+        </div>
+        <div class="ph" style="border:none;padding:10px 0 6px;font-size:10px;">Stored in database</div>
+        <div class="list" id="wl_db"></div>
+        <div class="ph" style="border:none;padding:12px 0 6px;font-size:10px;">From environment (read-only)</div>
+        <div class="list" id="wl_env"></div>
+      </div>
+    </div>
+
     <div id="msg" class="mono" style="margin-top:10px;"></div>
   </div>
 
@@ -171,10 +189,61 @@
       }catch(e){ msg("Remove failed: "+String(e), false); }
     }
 
+    async function loadWhitelist(){
+      try{
+        const w = await jget("/api/admin/whitelist");
+        var dbEl = document.getElementById("wl_db");
+        var envEl = document.getElementById("wl_env");
+        var dbRows = w.database || [];
+        dbEl.innerHTML = dbRows.map(function(r){
+          var id = String(r.discord_user_id||"");
+          return '<div class="item row" style="justify-content:space-between;flex-wrap:wrap;">'
+            +'<span class="mono">'+esc(id)+'</span>'
+            +'<span class="small">added '+esc(String(r.created_at||""))+(r.added_by?(' · by '+esc(String(r.added_by))):"")+'</span>'
+            +'<button class="btn" type="button" onclick="removeWhitelist(\''+esc(id)+'\')">Remove</button>'
+            +'</div>';
+        }).join("") || '<div class="small">No database entries yet</div>';
+
+        var envIds = w.env_discord_user_ids || [];
+        envEl.innerHTML = envIds.map(function(id){
+          return '<div class="item mono">'+esc(String(id))+'</div>';
+        }).join("") || '<div class="small">None set in environment</div>';
+      }catch(e){
+        document.getElementById("wl_db").innerHTML = '<div class="err small">Failed to load whitelist</div>';
+        document.getElementById("wl_env").innerHTML = "";
+      }
+    }
+
+    async function addWhitelist(){
+      var raw = (document.getElementById("wl_id").value || "").trim();
+      var id = parseInt(raw, 10);
+      if(!raw || !Number.isFinite(id) || id <= 0){
+        msg("Enter a valid numeric Discord user ID", false);
+        return;
+      }
+      try{
+        await jpost("/api/admin/whitelist/add",{discord_user_id:id});
+        msg("Whitelisted Discord ID "+id, true);
+        document.getElementById("wl_id").value = "";
+        await loadWhitelist();
+      }catch(e){ msg("Whitelist add failed: "+String(e), false); }
+    }
+
+    async function removeWhitelist(idStr){
+      try{
+        var id = parseInt(idStr, 10);
+        await jpost("/api/admin/whitelist/remove",{discord_user_id:id});
+        msg("Removed "+idStr+" from database whitelist", true);
+        await loadWhitelist();
+      }catch(e){ msg("Remove failed: "+String(e), false); }
+    }
+
     document.getElementById("searchBtn").addEventListener("click", load);
     document.getElementById("saveBtn").addEventListener("click", saveManual);
     document.getElementById("delBtn").addEventListener("click", deleteManual);
+    document.getElementById("wlAddBtn").addEventListener("click", addWhitelist);
     load();
+    loadWhitelist();
   </script>
 </body>
 </html>
