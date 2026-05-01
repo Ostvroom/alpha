@@ -3750,10 +3750,12 @@ async def api_access_redeem(request: Request, req: RedeemRequest):
 
 
 class CollabRequest(BaseModel):
-    discord: str
-    project: str
-    spots: int
+    discord: str = ""
+    telegram: str = ""
+    project: str = ""
+    spots: int = 0
     note: str = ""
+    type: str = "personal"
 
 
 _COLLAB_DB = str(DATA_DIR / "collab_requests.db")
@@ -3784,23 +3786,34 @@ async def api_collab_submit(request: Request, body: CollabRequest):
     if not _check_rate_limit(f"collab:{ip}", max_calls=5, window_seconds=3600):
         raise HTTPException(429, "Too many requests. Please wait before trying again.")
 
-    discord = (body.discord or "").strip()[:100]
+    contact = (body.telegram or body.discord or "").strip()[:100]
+    req_type = (body.type or "personal").strip().lower()
     project = (body.project or "").strip()[:120]
     note    = (body.note or "").strip()[:600]
     spots   = max(0, min(int(body.spots or 0), 9999))
 
-    if not discord or not project:
-        raise HTTPException(400, "Discord handle and project name are required.")
-    if spots < 1:
-        raise HTTPException(400, "Please enter at least 1 spot.")
+    if not contact:
+        raise HTTPException(400, "Telegram username is required.")
+    # DAO/project requests require project + spots, personal requests do not.
+    if req_type in ("dao", "project"):
+        if not project:
+            raise HTTPException(400, "Project name is required for DAO/Project requests.")
+        if spots < 1:
+            raise HTTPException(400, "Please enter at least 1 spot.")
+    else:
+        req_type = "personal"
+        project = project or "personal"
+        spots = 0
 
     try:
         if _sb_enabled():
             payload = {
-                "discord": discord,
+                # Keep key name "discord" for backwards-compatible storage schema.
+                "discord": contact,
                 "project": project,
                 "spots": int(spots),
                 "note": note,
+                "type": req_type,
                 "ip": ip[:80],
             }
             r = requests.post(
@@ -3816,7 +3829,7 @@ async def api_collab_submit(request: Request, body: CollabRequest):
             conn = sqlite3.connect(_COLLAB_DB)
             conn.execute(
                 "INSERT INTO collab_requests (discord, project, spots, note, ip) VALUES (?, ?, ?, ?, ?)",
-                (discord, project, spots, note, ip[:80]),
+                (contact, project, spots, note, ip[:80]),
             )
             conn.commit()
             conn.close()

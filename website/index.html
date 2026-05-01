@@ -1415,10 +1415,9 @@
         <div class="cl-h">REQUEST <span class="yl">EARLY ACCESS</span></div>
         <p class="cl-sub">Complete the steps below, fill the form, and we'll review your request.</p>
 
-        <!-- Type selector -->
+        <!-- DAO / Project only -->
         <div class="cl-type-row">
-          <button type="button" class="cl-type-btn active" id="typePersonal" onclick="setEaType('personal')">For Myself</button>
-          <button type="button" class="cl-type-btn" id="typeDao" onclick="setEaType('dao')">For a DAO / Project</button>
+          <button type="button" class="cl-type-btn active" id="typeDao" disabled style="opacity:1;cursor:default">For a DAO / Project</button>
         </div>
 
         <!-- Steps -->
@@ -1456,8 +1455,11 @@
         <!-- Form -->
         <form id="collabForm" autocomplete="off">
           <div class="cl-field">
-            <label for="cl-discord">Your Discord username / ID</label>
-            <input class="cl-input" id="cl-discord" name="discord" type="text" placeholder="e.g. sultan.web3 or 123456789" required maxlength="100" />
+            <label for="cl-discord">Your Telegram username</label>
+            <input class="cl-input" id="cl-discord" name="telegram" type="text" placeholder="e.g. @yourusername" required maxlength="100" />
+            <div style="margin-top:6px;font-size:11px;color:rgba(240,232,192,.55);line-height:1.45">
+              DM <a href="https://t.me/Sultandegeen" target="_blank" rel="noopener noreferrer" style="color:#ffcc00">@Sultandegeen</a> on Telegram after submitting. We will respond if eligible.
+            </div>
           </div>
           <div class="cl-field" id="clProjectField" style="display:none">
             <label for="cl-project">DAO or Project name</label>
@@ -1773,7 +1775,7 @@
     })();
 
     /* ── EARLY ACCESS FORM ─────────────────────────────── */
-    var _eaType = "personal";
+    var _eaType = "dao";
 
     window.setEaType = function(type) {
       _eaType = type;
@@ -1788,6 +1790,7 @@
       if (projField) projField.style.display = type === "dao" ? "" : "none";
       if (projInput) projInput.required = type === "dao";
     };
+    setEaType("dao");
 
     var collabForm = document.getElementById("collabForm");
     var collabStatus = document.getElementById("cl-status");
@@ -1830,23 +1833,38 @@
         }
         if (collabSubmitBtn) collabSubmitBtn.disabled = true;
         showCollabStatus("Submitting…", false);
-        var discord = (document.getElementById("cl-discord") || {}).value || "";
+        var telegram = (document.getElementById("cl-discord") || {}).value || "";
         var project = (document.getElementById("cl-project") || {}).value || "";
         var note    = (document.getElementById("cl-note")    || {}).value || "";
         try {
           var r = await fetch("/api/collab/submit", {
             method: "POST",
             headers: {"Content-Type":"application/json"},
-            body: JSON.stringify({ discord: discord.trim(), project: project.trim(), type: _eaType, note: note.trim() })
+            body: JSON.stringify({
+              telegram: telegram.trim(),
+              discord: telegram.trim(), // backwards-compatible fallback for old backend rows
+              project: project.trim(),
+              spots: _eaType === "dao" ? 1 : 0,
+              type: _eaType,
+              note: note.trim()
+            })
           });
           var d = {}; try { d = await r.json(); } catch(e2){}
           if (r.ok && d.ok) {
             var submittedType = _eaType;
             collabForm.reset();
-            setEaType("personal");
+            setEaType("dao");
             showCollabSuccess(submittedType);
           } else {
-            showCollabStatus("Error: " + (d.detail || d.error || ("HTTP "+r.status)), true);
+            var detailMsg = "";
+            if (Array.isArray(d.detail)) {
+              detailMsg = d.detail.map(function(it){ return it && it.msg ? it.msg : ""; }).filter(Boolean).join("; ");
+            } else if (typeof d.detail === "string") {
+              detailMsg = d.detail;
+            } else if (d.detail && typeof d.detail === "object") {
+              detailMsg = JSON.stringify(d.detail);
+            }
+            showCollabStatus("Error: " + (detailMsg || d.error || ("HTTP "+r.status)), true);
             if (collabSubmitBtn) collabSubmitBtn.disabled = false;
           }
         } catch(ex) {
