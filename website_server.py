@@ -874,7 +874,7 @@ def _has_access(req: Request) -> bool:
         uid = int(payload.get("uid") or 0)
     except Exception:
         uid = 0
-    return _is_whitelisted_user(uid)
+    return _is_whitelisted_user(uid) or _has_paid_website_access(uid)
 
 
 def _current_user_id(req: Request) -> int:
@@ -924,6 +924,14 @@ def _is_whitelisted_user(user_id: int) -> bool:
         return False
     # Strict allow-list mode: explicit Discord IDs only.
     return bool(wl) and user_id in wl
+
+
+def _has_paid_website_access(user_id: int) -> bool:
+    """Grant website access when user has a paid or redeemed entitlement."""
+    try:
+        return bool(payment_database.has_website_access(int(user_id or 0)))
+    except Exception:
+        return False
 
 
 def _require_admin(request: Request) -> int:
@@ -1190,6 +1198,7 @@ async def api_access_discord_callback(request: Request, code: str = "", state: s
         res.delete_cookie(_DISCORD_STATE_COOKIE, path="/")
         return res
     is_whitelisted = _is_whitelisted_user(int(user_id))
+    has_paid_access = _has_paid_website_access(int(user_id))
 
     # Save Discord profile (best-effort)
     try:
@@ -1208,7 +1217,7 @@ async def api_access_discord_callback(request: Request, code: str = "", state: s
     tok = _make_access_token(user_id=user_id)
     # Keep one-time account connection even when not whitelisted.
     # Non-whitelisted users can still view account status and points tasks.
-    target = nxt if is_whitelisted else "/?gate=not_whitelisted"
+    target = nxt if (is_whitelisted or has_paid_access) else "/?gate=not_whitelisted"
     res = RedirectResponse(url=target, status_code=302)
     res.set_cookie(
         key=ACCESS_COOKIE,
@@ -1237,13 +1246,14 @@ async def api_me(request: Request):
         raise HTTPException(401, "Unauthorized")
     u = _acct_get_user(uid) or {"user_id": uid, "username": "", "global_name": "", "avatar_url": "", "points": 0}
     is_whitelisted = _is_whitelisted_user(uid)
+    has_paid_access = _has_paid_website_access(uid)
     roles = await _discord_fetch_member_roles(uid)
     is_premium = _member_roles_include_premium(roles)
     engage_tweet_url = (os.getenv("NA_COMMUNITY_ENGAGE_TWEET_URL") or "").strip()
     return {
         **u,
         "is_whitelisted": bool(is_whitelisted),
-        "can_access_live_feed": bool(_DEV_PREVIEW or is_whitelisted),
+        "can_access_live_feed": bool(_DEV_PREVIEW or is_whitelisted or has_paid_access),
         "is_premium": bool(is_premium),
         "engage_tweet_url": engage_tweet_url,
     }

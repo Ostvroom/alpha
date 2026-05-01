@@ -552,3 +552,62 @@ def list_expired_subscriptions(now: Optional[datetime] = None) -> List[Tuple[int
     rows = c.fetchall()
     conn.close()
     return [(int(r[0]), int(r[1])) for r in rows]
+
+
+def has_website_access(user_id: int) -> bool:
+    """
+    Website access gate helper:
+    - Any redeemed access code grants access
+    - Any active monthly subscription grants access
+    - Any lifetime claim grants access
+    """
+    uid = int(user_id or 0)
+    if uid <= 0:
+        return False
+
+    init_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    conn = _conn()
+    c = conn.cursor()
+
+    # Redeemed early-access code (one-time claim flow)
+    c.execute(
+        """
+        SELECT 1
+        FROM access_codes
+        WHERE user_id = ? AND redeemed_at IS NOT NULL
+        LIMIT 1
+        """,
+        (uid,),
+    )
+    if c.fetchone():
+        conn.close()
+        return True
+
+    # Active subscription (monthly, renewable)
+    c.execute(
+        """
+        SELECT 1
+        FROM premium_subscriptions
+        WHERE user_id = ? AND expires_at > ?
+        LIMIT 1
+        """,
+        (uid, now_iso),
+    )
+    if c.fetchone():
+        conn.close()
+        return True
+
+    # Lifetime tier claim
+    c.execute(
+        """
+        SELECT 1
+        FROM payment_claims
+        WHERE user_id = ? AND tier = 'lifetime'
+        LIMIT 1
+        """,
+        (uid,),
+    )
+    ok = bool(c.fetchone())
+    conn.close()
+    return ok

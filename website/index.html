@@ -836,10 +836,12 @@
     .ps-limits{
       display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;
     }
+    .ps-limits.single-tier{justify-content:center}
     .ps-limit{
       flex:1;min-width:120px;
       border:1px solid rgba(255,204,0,.14);background:rgba(0,0,0,.25);padding:12px 14px;
     }
+    .ps-limits.single-tier .ps-limit{max-width:280px}
     .ps-limit-label{
       font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.14em;
       text-transform:uppercase;color:rgba(255,204,0,.45);margin-bottom:4px;
@@ -1059,7 +1061,6 @@
       <div class="nav-links">
         <a href="#" id="navRoadmap" style="color:#7dffb0">Roadmap</a>
         <a href="#" id="navCollab" style="color:#7dffb0">Early Access</a>
-        <a href="#" id="navMint" style="color:#7dffb0">Subscribe</a>
         <a class="nav-cta" href="/projects" id="openFeedNav">OPEN LIVE FEED</a>
       </div>
     </div>
@@ -1206,7 +1207,6 @@
       <div class="foot-links">
         <a href="#" id="footRoadmap">Roadmap</a>
         <a href="#" id="footCollab">Collab</a>
-        <a href="#" id="footMint">Subscribe</a>
         <a href="/projects" id="openFeedFoot">Open Live Feed</a>
         <a href="https://x.com/Degensultan" target="_blank" rel="noreferrer">X: @Degensultan</a>
         <a href="https://t.me/Sultandegeen" target="_blank" rel="noreferrer">Support: @Sultandegeen</a>
@@ -1359,26 +1359,16 @@
     </div>
     <div class="na-dialog-body">
       <div class="ps-inner">
-        <div class="ps-eyebrow">// Subscription tiers</div>
+        <div class="ps-eyebrow">// Monthly subscription</div>
         <div class="ps-h">NERDS <span class="yl">ACCESS</span></div>
-        <p class="ps-tagline">Choose your plan and get full access to Nerds Alpha tools.</p>
+        <p class="ps-tagline">Start with monthly access and unlock the full Nerds Alpha stack.</p>
 
-        <!-- Subscription tiers -->
-        <div class="ps-limits">
+        <!-- Monthly tier -->
+        <div class="ps-limits single-tier">
           <div class="ps-limit">
             <div class="ps-limit-label">1 Month</div>
             <div class="ps-limit-val">$20</div>
             <a class="ps-pay-btn" id="payBtn1m" href="#" target="_blank" rel="noopener noreferrer">Pay Now</a>
-          </div>
-          <div class="ps-limit">
-            <div class="ps-limit-label">3 Months</div>
-            <div class="ps-limit-val" style="font-size:24px;letter-spacing:.04em">$45</div>
-            <a class="ps-pay-btn" id="payBtn3m" href="#" target="_blank" rel="noopener noreferrer">Pay Now</a>
-          </div>
-          <div class="ps-limit">
-            <div class="ps-limit-label">1 Year</div>
-            <div class="ps-limit-val" style="font-size:24px;letter-spacing:.04em">$200</div>
-            <a class="ps-pay-btn" id="payBtn1y" href="#" target="_blank" rel="noopener noreferrer">Pay Now</a>
           </div>
         </div>
 
@@ -1603,6 +1593,12 @@
     var backdrop = document.getElementById("tg-backdrop");
     var connectBtn = document.getElementById("tg-discord-connect");
     var err = document.getElementById("tg-err");
+    // Edit this list with your real partner Discord invite links.
+    var PARTNER_DISCORD_SERVERS = [
+      { name: "Partner Server 1", inviteUrl: "https://discord.gg/REPLACE_PARTNER_1" },
+      { name: "Partner Server 2", inviteUrl: "https://discord.gg/REPLACE_PARTNER_2" },
+      { name: "Partner Server 3", inviteUrl: "https://discord.gg/REPLACE_PARTNER_3" }
+    ];
 
     function open(){
       if (!modal) return;
@@ -1647,23 +1643,46 @@
         open();
         var dialog = document.querySelector("#tg-modal .tg-dialog");
         if (gate === "not_whitelisted" && dialog) {
+          var partnerRows = PARTNER_DISCORD_SERVERS.map(function(p){
+            var hasLink = /^https?:\/\//i.test(String(p.inviteUrl || "")) && String(p.inviteUrl).indexOf("REPLACE_") === -1;
+            if (hasLink) {
+              return '<li><a href="' + p.inviteUrl + '" target="_blank" rel="noopener noreferrer" style="color:rgba(125,255,176,.95);text-decoration:none">' + p.name + "</a></li>";
+            }
+            return '<li style="color:rgba(240,232,192,.55)">' + p.name + " (invite coming soon)</li>";
+          }).join("");
           dialog.innerHTML = [
             '<div class="tg-head">',
-            '  <div class="tg-title">Access Gate · Not Whitelisted</div>',
+            '  <div class="tg-title">Access Gate · Not Eligible Yet</div>',
             '  <button class="tg-close" type="button" id="tg-close-denied" aria-label="Close">&times;</button>',
             '</div>',
             '<div class="tg-steps" style="color:rgba(240,232,192,.72);margin-bottom:16px">',
-            '  Your Discord account is <span style="color:rgba(255,150,100,.90);font-weight:600">not on the whitelist</span>.<br/>',
-            '  Contact the team to request access.',
+            '  Your Discord account is <span style="color:rgba(255,150,100,.90);font-weight:600">not in the current whitelist</span>.<br/>',
+            '  Subscribe, request early access, or join eligible partner communities below.',
             '</div>',
-            '<div class="tg-row" style="flex-direction:column;gap:8px;margin-bottom:10px">',
-            '  <button class="tg-btn-discord" onclick="openModal(\'collab\')" style="text-align:center;cursor:pointer;width:100%">Request Early Access</button>',
-            '  <a class="tg-btn-discord" href="https://x.com/Degensultan" target="_blank" rel="noopener noreferrer" style="text-align:center">Follow on X for updates</a>',
+            '<div class="tg-row" style="flex-direction:column;gap:8px;margin-bottom:12px">',
+            '  <button class="tg-btn-discord" id="tg-open-subscribe" style="text-align:center;cursor:pointer;width:100%">Subscribe</button>',
+            '  <button class="tg-btn-discord" id="tg-open-collab" style="text-align:center;cursor:pointer;width:100%">Request Early Access</button>',
+            '</div>',
+            '<div style="border:1px solid rgba(255,204,0,.18);padding:10px 12px;margin-bottom:10px">',
+            '  <div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,204,0,.72);margin-bottom:8px">Eligible partner Discord servers</div>',
+            '  <ul style="margin:0;padding-left:16px;display:flex;flex-direction:column;gap:6px;font-size:12px;line-height:1.5">' + partnerRows + '</ul>',
             '</div>',
             '<div class="tg-help">Already approved? <a href="/api/access/discord/start?next=/projects" style="color:rgba(255,204,0,.65)">Try another account</a></div>'
           ].join("");
           var closeBtn2 = document.getElementById("tg-close-denied");
           if (closeBtn2) closeBtn2.addEventListener("click", close);
+          var openSubBtn = document.getElementById("tg-open-subscribe");
+          if (openSubBtn) {
+            openSubBtn.addEventListener("click", function(){
+              if (window.__naOpenModal) window.__naOpenModal("mint");
+            });
+          }
+          var openCollabBtn = document.getElementById("tg-open-collab");
+          if (openCollabBtn) {
+            openCollabBtn.addEventListener("click", function(){
+              if (window.__naOpenModal) window.__naOpenModal("collab");
+            });
+          }
         } else if (err) {
           err.style.display = "block";
           err.textContent = "Discord login failed. Please try again.";
@@ -1688,6 +1707,8 @@
       m.classList.add("is-open"); m.setAttribute("aria-hidden","false");
       document.body.style.overflow = "hidden";
     }
+    // Expose modal opener for other UI blocks (e.g. gate rejection popup).
+    window.__naOpenModal = openModal;
     function closeModal(key) {
       var m = modals[key]; if (!m) return;
       m.classList.remove("is-open"); m.setAttribute("aria-hidden","true");
@@ -1719,9 +1740,7 @@
 
     // Subscribe checkout links (replace with your real Helio URLs)
     var SUBSCRIBE_CHECKOUT_LINKS = {
-      month1: "https://moonpay.hel.io/pay/69f4aa8268e648fbe19d5978",
-      months3: "https://app.hel.io/pay/REPLACE_3_MONTHS_45_USD",
-      year1: "https://app.hel.io/pay/REPLACE_1_YEAR_200_USD"
+      month1: "https://moonpay.hel.io/pay/69f4aa8268e648fbe19d5978"
     };
 
     function wirePayButton(btnId, checkoutUrl) {
@@ -1738,8 +1757,6 @@
       btn.href = checkoutUrl;
     }
     wirePayButton("payBtn1m", SUBSCRIBE_CHECKOUT_LINKS.month1);
-    wirePayButton("payBtn3m", SUBSCRIBE_CHECKOUT_LINKS.months3);
-    wirePayButton("payBtn1y", SUBSCRIBE_CHECKOUT_LINKS.year1);
 
     // Close triggers (backdrop + X button)
     document.querySelectorAll("[data-naclose]").forEach(function(el){
