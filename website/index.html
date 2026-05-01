@@ -848,6 +848,18 @@
       font-family:"Barlow Condensed",sans-serif;font-size:26px;font-weight:800;
       color:#f8f0d0;letter-spacing:.02em;
     }
+    .ps-pay-btn{
+      display:inline-flex;align-items:center;justify-content:center;
+      margin-top:10px;
+      font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.10em;text-transform:uppercase;
+      text-decoration:none;color:#090909;background:#ffcc00;border:1px solid #ffcc00;
+      padding:9px 10px;width:100%;transition:all .14s;cursor:pointer;
+    }
+    .ps-pay-btn:hover{background:#ffe033;border-color:#ffe033}
+    .ps-pay-btn.is-disabled{
+      background:rgba(255,204,0,.16);border-color:rgba(255,204,0,.28);color:rgba(240,232,192,.55);
+      cursor:not-allowed;pointer-events:none;
+    }
     /* wallet */
     .ps-wallet-label{
       font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.16em;
@@ -912,6 +924,23 @@
     }
     .ps-status.err{color:rgba(255,130,130,.9);border:1px solid rgba(255,130,130,.25);background:rgba(255,50,50,.05)}
     .ps-status.ok{color:rgba(120,255,180,.9);border:1px solid rgba(120,255,180,.25);background:rgba(0,200,100,.05)}
+    /* access list */
+    .ps-access{
+      margin:2px 0 18px;
+      border:1px solid rgba(255,204,0,.14);
+      background:rgba(0,0,0,.22);
+      padding:12px 14px;
+    }
+    .ps-access-title{
+      font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+      color:rgba(255,204,0,.60);margin-bottom:8px;
+    }
+    .ps-access-list{
+      margin:0;padding-left:16px;
+      display:flex;flex-direction:column;gap:8px;
+      color:rgba(240,232,192,.70);font-size:12px;line-height:1.55;
+    }
+    .ps-access-list b{color:#f8f0d0}
     /* bottom nav */
     .ps-bottom-nav{
       display:flex;gap:10px;flex-wrap:wrap;
@@ -1030,7 +1059,7 @@
       <div class="nav-links">
         <a href="#" id="navRoadmap" style="color:#7dffb0">Roadmap</a>
         <a href="#" id="navCollab" style="color:#7dffb0">Early Access</a>
-        <a href="#" id="navMint" style="color:#7dffb0">Mint</a>
+        <a href="#" id="navMint" style="color:#7dffb0">Subscribe</a>
         <a class="nav-cta" href="/projects" id="openFeedNav">OPEN LIVE FEED</a>
       </div>
     </div>
@@ -1177,7 +1206,7 @@
       <div class="foot-links">
         <a href="#" id="footRoadmap">Roadmap</a>
         <a href="#" id="footCollab">Collab</a>
-        <a href="#" id="footMint">Mint</a>
+        <a href="#" id="footMint">Subscribe</a>
         <a href="/projects" id="openFeedFoot">Open Live Feed</a>
         <a href="https://x.com/Degensultan" target="_blank" rel="noreferrer">X: @Degensultan</a>
         <a href="https://t.me/Sultandegeen" target="_blank" rel="noreferrer">Support: @Sultandegeen</a>
@@ -1310,7 +1339,7 @@
         </div>
         <div class="rm-footer">
           <span class="rm-note">// More features shipping every sprint · priorities may shift with market</span>
-          <a href="#" id="rmOpenPresale" class="btn solid" style="font-size:14px;padding:10px 20px">View Mint →</a>
+          <a href="#" id="rmOpenPresale" class="btn solid" style="font-size:14px;padding:10px 20px">View Subscribe →</a>
         </div>
       </div>
     </div>
@@ -1318,40 +1347,54 @@
 </div>
 
 <!-- ══ MINT MODAL ══════════════════════════════════════════════ -->
-<div id="na-mint" class="na-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Mint">
+<div id="na-mint" class="na-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Subscribe">
   <div class="na-modal-bg" data-naclose="mint"></div>
   <div class="na-dialog" style="max-width:560px">
     <div class="na-dialog-head">
       <div class="na-dialog-head-left">
         <div class="na-dots"><span></span><span></span><span></span></div>
-        <span class="na-dialog-title">nerds alpha — $nerds mint</span>
+        <span class="na-dialog-title">nerds alpha — subscribe</span>
       </div>
       <button class="na-close" data-naclose="mint" aria-label="Close">&times;</button>
     </div>
     <div class="na-dialog-body">
       <div class="ps-inner">
-        <div class="ps-eyebrow">// Mint info</div>
-        <div class="ps-h">NFT <span class="yl">PASS</span></div>
-        <p class="ps-tagline">Each NFT is your gateway to our tools. More NFTs, more tools.</p>
+        <div class="ps-eyebrow">// Subscription tiers</div>
+        <div class="ps-h">NERDS <span class="yl">ACCESS</span></div>
+        <p class="ps-tagline">Choose your plan and get full access to Nerds Alpha tools.</p>
 
-        <!-- Mint stats -->
+        <!-- Subscription tiers -->
         <div class="ps-limits">
           <div class="ps-limit">
-            <div class="ps-limit-label">Supply</div>
-            <div class="ps-limit-val">999</div>
+            <div class="ps-limit-label">1 Month</div>
+            <div class="ps-limit-val">$20</div>
+            <a class="ps-pay-btn" id="payBtn1m" href="#" target="_blank" rel="noopener noreferrer">Pay Now</a>
           </div>
           <div class="ps-limit">
-            <div class="ps-limit-label">Mint Price</div>
-            <div class="ps-limit-val" style="font-size:20px;letter-spacing:.04em">TBA</div>
+            <div class="ps-limit-label">3 Months</div>
+            <div class="ps-limit-val" style="font-size:24px;letter-spacing:.04em">$45</div>
+            <a class="ps-pay-btn" id="payBtn3m" href="#" target="_blank" rel="noopener noreferrer">Pay Now</a>
           </div>
           <div class="ps-limit">
-            <div class="ps-limit-label">Launch</div>
-            <div class="ps-limit-val" style="font-size:20px;letter-spacing:.04em">Soon</div>
+            <div class="ps-limit-label">1 Year</div>
+            <div class="ps-limit-val" style="font-size:24px;letter-spacing:.04em">$200</div>
+            <a class="ps-pay-btn" id="payBtn1y" href="#" target="_blank" rel="noopener noreferrer">Pay Now</a>
           </div>
         </div>
 
+        <div class="ps-access">
+          <div class="ps-access-title">Access included</div>
+          <ul class="ps-access-list">
+            <li><b>Projects</b> — Spot early projects before they go mainstream, filtered by our HVA network and posted only when it meets our alert rules.</li>
+            <li><b>Token alerts</b> — Monitor 100+ Telegram sources without joining them all. We surface the important calls and show MC at call, ATH, and performance.</li>
+            <li><b>Wallet tracker (coming soon)</b> — Track NFT mints, transfers, and token activity across ETH, SOL, and Base with smart filters to cut noise.</li>
+            <li><b>Daily finds</b> — Your rolling 24h digest: every newly alerted project in one clean list (with age, followers, and category).</li>
+            <li><b>Mint overview (coming soon)</b> — Live mint radar across ETH, Base, and Solana to monitor what is minting now and what is trending.</li>
+          </ul>
+        </div>
+
         <div class="ps-status ok" style="display:block">
-          Mint is <b>coming soon</b>. Follow <a href="https://x.com/Degensultan" target="_blank" rel="noopener noreferrer" style="color:#ffcc00">@Degensultan</a> for the announcement.
+          Payments can be accepted in <b>ETH (Ethereum)</b>, <b>ETH (Base)</b>, and <b>SOL</b>. Follow <a href="https://x.com/Degensultan" target="_blank" rel="noopener noreferrer" style="color:#ffcc00">@Degensultan</a> for subscription opening updates.
         </div>
 
         <!-- Bottom nav -->
@@ -1673,6 +1716,30 @@
     if (psBtnRoadmap) psBtnRoadmap.addEventListener("click", function(){ openModal("roadmap"); });
     var psBtnCollab = document.getElementById("psBtnCollab");
     if (psBtnCollab) psBtnCollab.addEventListener("click", function(){ openModal("collab"); });
+
+    // Subscribe checkout links (replace with your real Helio URLs)
+    var SUBSCRIBE_CHECKOUT_LINKS = {
+      month1: "https://moonpay.hel.io/pay/69f4aa8268e648fbe19d5978",
+      months3: "https://app.hel.io/pay/REPLACE_3_MONTHS_45_USD",
+      year1: "https://app.hel.io/pay/REPLACE_1_YEAR_200_USD"
+    };
+
+    function wirePayButton(btnId, checkoutUrl) {
+      var btn = document.getElementById(btnId);
+      if (!btn) return;
+      var ok = /^https?:\/\//i.test(checkoutUrl || "") && String(checkoutUrl).indexOf("REPLACE_") === -1;
+      if (!ok) {
+        btn.classList.add("is-disabled");
+        btn.setAttribute("aria-disabled", "true");
+        btn.removeAttribute("href");
+        btn.title = "Set your Helio checkout link in SUBSCRIBE_CHECKOUT_LINKS.";
+        return;
+      }
+      btn.href = checkoutUrl;
+    }
+    wirePayButton("payBtn1m", SUBSCRIBE_CHECKOUT_LINKS.month1);
+    wirePayButton("payBtn3m", SUBSCRIBE_CHECKOUT_LINKS.months3);
+    wirePayButton("payBtn1y", SUBSCRIBE_CHECKOUT_LINKS.year1);
 
     // Close triggers (backdrop + X button)
     document.querySelectorAll("[data-naclose]").forEach(function(el){
