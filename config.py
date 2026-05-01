@@ -573,11 +573,17 @@ def _proxy_url_from_parts(host, port, user, pw):
 def get_proxies():
     """Load proxies from proxies.txt and format them for twikit."""
     proxies = []
-    from app_paths import DATA_DIR, ensure_dirs
+    from app_paths import DATA_DIR, BASE_DIR, ensure_dirs
 
     ensure_dirs()
-    proxy_file = os.path.join(DATA_DIR, "proxies.txt")
-    if os.path.exists(proxy_file):
+    # Check locations in priority order: Render Secret File > DATA_DIR > BASE_DIR
+    _candidates = [
+        "/etc/secrets/proxies.txt",
+        os.path.join(DATA_DIR, "proxies.txt"),
+        os.path.join(BASE_DIR, "proxies.txt"),
+    ]
+    proxy_file = next((p for p in _candidates if os.path.exists(p)), None)
+    if proxy_file and os.path.exists(proxy_file):
         with open(proxy_file, "r", encoding="utf-8-sig") as f:
             for line_num, line in enumerate(f, 1):
                 line = line.strip()
