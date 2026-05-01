@@ -51,6 +51,7 @@ class TwitterClient:
         # asyncio lock created lazily (can't use asyncio primitives before event loop starts)
         self._session_lock = None  # will be asyncio.Lock once event loop is running
         self._cf403_last_ts = 0.0
+        self._cf_hard_blocks_total = 0   # total CF403 hard-blocks across all sessions this run
         self._load_accounts()
     
     def _load_accounts(self):
@@ -94,6 +95,8 @@ class TwitterClient:
                 'proxy_fails': 0,
                 'backoff_exp': 0,
                 'backoff_until_ts': 0.0,
+                'cf_hard_blocks': 0,
+                'cookie_file_mtime': 0.0,
             })
             proxy_msg = f" (Proxy: {current_proxy})" if current_proxy else ""
             print(f"Primary session: cookies.json{proxy_msg}", flush=True)
@@ -122,6 +125,8 @@ class TwitterClient:
                 'proxy_fails': 0,
                 'backoff_exp': 0,
                 'backoff_until_ts': 0.0,
+                'cf_hard_blocks': 0,
+                'cookie_file_mtime': 0.0,
             })
             print(f"   + Backup session: {backup_name} (Proxy: {current_proxy})")
         
@@ -149,6 +154,8 @@ class TwitterClient:
                         'proxy_fails': 0,
                         'backoff_exp': 0,
                         'backoff_until_ts': 0.0,
+                        'cf_hard_blocks': 0,
+                        'cookie_file_mtime': 0.0,
                     })
                     has_cookies = os.path.exists(cookie_file)
                     cookie_msg = "(with cookies)" if has_cookies else "(new login)"
@@ -219,12 +226,40 @@ class TwitterClient:
                 self.cooldown_ends = None
                 self.is_rate_limited = False
                 self._global_backoff_until_ts = 0.0
+                stale_sessions = []
                 for s in self._sessions:
                     s['rate_limited'] = False
                     s['soft_429_count'] = 0
                     s['soft_403_count'] = 0
                     s['backoff_exp'] = 0
                     s['backoff_until_ts'] = 0.0
+                    s['cf_hard_blocks'] = 0
+                    # Force cookie reload from disk — picks up any freshly dropped cookie file.
+                    s['logged_in'] = False
+                    # Check whether the cookie file on disk is still the same burned one.
+                    cookie_path = s.get('cookie_path', '')
+                    stored_mtime = float(s.get('cookie_file_mtime') or 0.0)
+                    if stored_mtime > 0 and cookie_path and os.path.exists(cookie_path):
+                        try:
+                            current_mtime = os.path.getmtime(cookie_path)
+                            if abs(current_mtime - stored_mtime) < 2.0:
+                                uname = s['account']['username'] if s.get('account') else 'default'
+                                stale_sessions.append((uname, cookie_path))
+                        except Exception:
+                            pass
+                if stale_sessions:
+                    print(
+                        f"[{datetime.now().strftime('%H:%M:%S')}] "
+                        "⚠️  STALE COOKIES DETECTED — the following cookie file(s) have NOT been "
+                        "refreshed since they were blocked by Cloudflare:"
+                    )
+                    for uname, path in stale_sessions:
+                        print(f"   @{uname} → {path}")
+                    print(
+                        "   The bot will retry, but will likely hit CF403 again immediately.\n"
+                        "   ACTION REQUIRED: export fresh browser cookies and overwrite the file(s) above."
+                    )
+                self._cf_hard_blocks_total = 0
             else:
                 remaining = int((self.cooldown_ends - datetime.now()).total_seconds() / 60)
                 # Optional: print(f"Info: Cooling down... {remaining}m remaining")
@@ -416,8 +451,10 @@ class TwitterClient:
                 )
                 self._rotate_session()
                 return
-            # Exhausted soft budget — hard-block this session.
+            # Exhausted soft budget — hard-block this session and count the burn.
             session["soft_403_count"] = 0
+            session["cf_hard_blocks"] = int(session.get("cf_hard_blocks", 0) or 0) + 1
+            self._cf_hard_blocks_total += 1
 
         session['rate_limited'] = True
         
@@ -440,6 +477,21 @@ class TwitterClient:
             self.cooldown_ends = datetime.now() + timedelta(minutes=cool_m)
             print(f"[{datetime.now().strftime('%H:%M:%S')}] ALL SESSIONS BLOCKED. Cooldown until {self.cooldown_ends.strftime('%H:%M:%S')} (~{cool_m}m).")
             print("Bot will automatically retry after cooldown.")
+            if self._cf_hard_blocks_total >= 2:
+                print(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] 🚨 COOKIES BURNED "
+                    f"({self._cf_hard_blocks_total} CF403 hard-block(s) this run). "
+                    "Proxy rotation cannot fix this — the cookies themselves are flagged by Cloudflare."
+                )
+                for s in self._sessions:
+                    cp = s.get('cookie_path', '')
+                    uname = s['account']['username'] if s.get('account') else 'default'
+                    if cp:
+                        print(f"   ACTION: export fresh browser cookies → {cp}  (@{uname})")
+                print(
+                    "   The bot will retry after the cooldown but will fail again unless you "
+                    "replace the cookie file(s) above with freshly exported ones."
+                )
 
 
     async def verify_all_sessions(self):
@@ -692,6 +744,10 @@ class TwitterClient:
                 username = account['username'] if account else 'default'
                 print(f"OK Loaded cookies for @{username}")
                 session['logged_in'] = True
+                try:
+                    session['cookie_file_mtime'] = os.path.getmtime(cookie_path)
+                except Exception:
+                    pass
                 return True, None
             
             # No cookies, try login with credentials/auth_token
