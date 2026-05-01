@@ -3816,6 +3816,8 @@ async def api_collab_submit(request: Request, body: CollabRequest):
                 "type": req_type,
                 "ip": ip[:80],
             }
+            # Backward-compatible write for older Supabase schemas that don't have
+            # the new "type" column yet.
             r = requests.post(
                 _sb_url("/collab_requests"),
                 headers=_sb_headers(),
@@ -3823,7 +3825,17 @@ async def api_collab_submit(request: Request, body: CollabRequest):
                 timeout=12,
             )
             if r.status_code not in (200, 201, 204):
-                raise RuntimeError(f"Supabase collab save failed: HTTP {r.status_code}: {r.text[:200]}")
+                txt = (r.text or "")[:400]
+                if '"code":"PGRST204"' in txt and "type" in txt and "collab_requests" in txt:
+                    payload.pop("type", None)
+                    r = requests.post(
+                        _sb_url("/collab_requests"),
+                        headers=_sb_headers(),
+                        data=json.dumps(payload),
+                        timeout=12,
+                    )
+                if r.status_code not in (200, 201, 204):
+                    raise RuntimeError(f"Supabase collab save failed: HTTP {r.status_code}: {txt[:200]}")
         else:
             _collab_init()
             conn = sqlite3.connect(_COLLAB_DB)
