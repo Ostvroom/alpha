@@ -290,19 +290,19 @@ TWIKIT_BURST_REDUCTION_FACTOR = max(1.0, min(5.0, _env_float("TWIKIT_BURST_REDUC
 # On HTTP 429, rotate to another cookie session this many times before hard-blocking the current session.
 TWIKIT_429_SOFT_PER_SESSION = max(1, min(30, _env_int("TWIKIT_429_SOFT_PER_SESSION", 8)))
 # On Cloudflare 403, treat as soft block for this many strikes before hard-blocking the session.
-TWIKIT_403_SOFT_PER_SESSION = max(1, min(10, _env_int("TWIKIT_403_SOFT_PER_SESSION", 2)))
+TWIKIT_403_SOFT_PER_SESSION = max(1, min(10, _env_int("TWIKIT_403_SOFT_PER_SESSION", 6)))
 # How many proxy rotations are allowed for one session before hard-blocking it.
 TWIKIT_PROXY_ROTATIONS_PER_SESSION = max(1, min(50, _env_int("TWIKIT_PROXY_ROTATIONS_PER_SESSION", 8)))
 # Exponential backoff settings for Twikit session retries (seconds).
-TWIKIT_BACKOFF_BASE_SEC = max(1.0, min(120.0, _env_float("TWIKIT_BACKOFF_BASE_SEC", 8.0)))
+TWIKIT_BACKOFF_BASE_SEC = max(1.0, min(120.0, _env_float("TWIKIT_BACKOFF_BASE_SEC", 12.0)))
 TWIKIT_BACKOFF_MAX_SEC = max(10.0, min(1800.0, _env_float("TWIKIT_BACKOFF_MAX_SEC", 300.0)))
 # If Cloudflare 403 repeats quickly, pause all Twikit calls for a short cooldown window.
-TWIKIT_CF_STREAK_FOR_GLOBAL_COOLDOWN = max(1, min(20, _env_int("TWIKIT_CF_STREAK_FOR_GLOBAL_COOLDOWN", 5)))
-TWIKIT_CF_STREAK_WINDOW_SEC = max(10.0, min(1800.0, _env_float("TWIKIT_CF_STREAK_WINDOW_SEC", 45.0)))
-TWIKIT_CF_GLOBAL_COOLDOWN_SEC = max(15.0, min(3600.0, _env_float("TWIKIT_CF_GLOBAL_COOLDOWN_SEC", 180.0)))
+TWIKIT_CF_STREAK_FOR_GLOBAL_COOLDOWN = max(1, min(20, _env_int("TWIKIT_CF_STREAK_FOR_GLOBAL_COOLDOWN", 3)))
+TWIKIT_CF_STREAK_WINDOW_SEC = max(10.0, min(1800.0, _env_float("TWIKIT_CF_STREAK_WINDOW_SEC", 60.0)))
+TWIKIT_CF_GLOBAL_COOLDOWN_SEC = max(15.0, min(3600.0, _env_float("TWIKIT_CF_GLOBAL_COOLDOWN_SEC", 300.0)))
 # Extra random rest added AFTER the global CF cooldown ends, before the first new request.
 # Prevents the bot from bursting again immediately and re-triggering the streak.
-TWIKIT_CF_POST_COOLDOWN_JITTER_SEC = max(0.0, min(600.0, _env_float("TWIKIT_CF_POST_COOLDOWN_JITTER_SEC", 90.0)))
+TWIKIT_CF_POST_COOLDOWN_JITTER_SEC = max(0.0, min(600.0, _env_float("TWIKIT_CF_POST_COOLDOWN_JITTER_SEC", 120.0)))
 # When every session is hard-blocked, pause the whole Twikit pool (minutes) before retrying.
 TWIKIT_ALL_SESSIONS_COOLDOWN_MIN = max(5, min(180, _env_int("TWIKIT_ALL_SESSIONS_COOLDOWN_MIN", 45)))
 # AI quota handling (prevents noisy repeated OpenAI insufficient_quota errors)

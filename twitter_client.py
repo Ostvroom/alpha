@@ -34,12 +34,15 @@ class TwitterClient:
         
         # User-Agents for stealth
         self._user_agents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_2; rv:121.0) Gecko/20100101 Firefox/121.0',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0'
+            # Keep these up-to-date with real Chrome/Firefox releases — stale UAs are a CF signal
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4; rv:125.0) Gecko/20100101 Firefox/125.0',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0'
         ]
         
         # Session rotation
@@ -786,7 +789,7 @@ class TwitterClient:
                 print(f"[{timestamp}] ERROR Login failed for @{username}: {e}")
             return False, err_msg
 
-    async def get_user_id(self, handle):
+    async def get_user_id(self, handle, _retry_depth=0):
         # Normalize handle
         handle = handle.lower()
         if handle in self._user_id_cache:
@@ -819,7 +822,9 @@ class TwitterClient:
 
             if any(code in err_msg for code in ["429", "503", "403", "502", "504"]) or "Empty" in err_msg or "Timeout" in err_msg:
                 self._mark_session_blocked(err_msg)
-                return await self.get_user_id(handle)
+                if _retry_depth < 2:  # Max 2 retries to prevent infinite CF 403 loop
+                    return await self.get_user_id(handle, _retry_depth=_retry_depth + 1)
+                return None
             # For hard "does not exist" / 404-style errors, cache a cooldown to reduce spam.
             low = err_msg.lower()
             if "does not exist" in low or "not found" in low or "no such user" in low:
@@ -829,7 +834,7 @@ class TwitterClient:
             print(f"      ERROR Lookup error for {handle}: {err_msg}")
             return None
 
-    async def get_new_following(self, user_id):
+    async def get_new_following(self, user_id, _retry_depth=0):
         if self.is_rate_limited: return [] 
         session = await self._ensure_session()
         if not session: return []
@@ -858,11 +863,13 @@ class TwitterClient:
             
             if any(code in err_msg for code in ["429", "503", "403", "502", "504"]) or "Empty" in err_msg or "Timeout" in err_msg:
                 self._mark_session_blocked(err_msg)
-                return await self.get_new_following(user_id)
+                if _retry_depth < 2:
+                    return await self.get_new_following(user_id, _retry_depth=_retry_depth + 1)
+                return []
             print(f"      ERROR Following error (ID: {user_id}): {err_msg}")
             return []
 
-    async def get_new_following_with_delta(self, user_id, hva_handle):
+    async def get_new_following_with_delta(self, user_id, hva_handle, _retry_depth=0):
         """Get new following with delta detection - only processes when count changes."""
         import database
         if self.is_rate_limited: return [], 0 
@@ -910,11 +917,13 @@ class TwitterClient:
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg:
                 print(f"      Retrying due to {err_msg}...")
                 self._mark_session_blocked(err_msg)
-                return await self.get_new_following_with_delta(user_id, hva_handle)
+                if _retry_depth < 2:
+                    return await self.get_new_following_with_delta(user_id, hva_handle, _retry_depth=_retry_depth + 1)
+                return [], 0
             print(f"      ERROR Following error (ID: {user_id}): {err_msg}")
             return [], 0
 
-    async def get_user_timeline(self, user_id, count=20):
+    async def get_user_timeline(self, user_id, count=20, _retry_depth=0):
         if self.is_rate_limited: return [] 
         session = await self._ensure_session()
         if not session: return []
@@ -935,11 +944,13 @@ class TwitterClient:
 
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg:
                 self._mark_session_blocked(err_msg)
-                return await self.get_user_timeline(user_id, count)
+                if _retry_depth < 2:
+                    return await self.get_user_timeline(user_id, count, _retry_depth=_retry_depth + 1)
+                return []
             print(f"      ERROR Timeline error (ID: {user_id}): {err_msg}")
             return []
 
-    async def get_user_info(self, user_id):
+    async def get_user_info(self, user_id, _retry_depth=0):
         if self.is_rate_limited: return None
         session = await self._ensure_session()
         if not session: return None
@@ -955,11 +966,13 @@ class TwitterClient:
 
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg:
                 self._mark_session_blocked(err_msg)
-                return await self.get_user_info(user_id)
+                if _retry_depth < 2:
+                    return await self.get_user_info(user_id, _retry_depth=_retry_depth + 1)
+                return None
             print(f"      ERROR User info error (ID: {user_id}): {err_msg}")
             return None
 
-    async def get_user_by_handle(self, handle: str):
+    async def get_user_by_handle(self, handle: str, _retry_depth=0):
         """Fetch a full user object from a @handle (screen_name)."""
         handle = (handle or "").strip().lstrip("@")
         if not handle:
@@ -979,7 +992,9 @@ class TwitterClient:
             err_msg = str(e) or f"Empty {type(e).__name__}"
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Timeout" in err_msg:
                 self._mark_session_blocked(err_msg)
-                return await self.get_user_by_handle(handle)
+                if _retry_depth < 2:
+                    return await self.get_user_by_handle(handle, _retry_depth=_retry_depth + 1)
+                return None
             return None
 
     async def search_recent_tweets(self, query: str, count: int = 15):
