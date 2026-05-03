@@ -109,7 +109,13 @@ def upsert_eth_wallet(address: str, label: str, x_url: Optional[str] = None) -> 
 
 # Seed ETH NFT whale wallets (labels + optional X profile links)
 _ETH_WHALE_SEED: List[tuple] = [
+    ("0x82dcba7a8bf3aa462040038ecb3d5d90901676e8", "aliu_eth", "https://x.com/MintedNFTs"),
+    ("0x8a8035f056af830b7205c58c1dc037f826fc2b92", "serc.eth", None),
+    ("0x239e9e51a7a881221c4cec228e1d093b5a434dc8", "sprnodes.eth", None),
+    ("0xf06bed3f0dad7932d8d00fe48c36751f5c10be23", "paschamo.eth", None),
+    ("0x3145a28b75e41c1a1ad664ca2e9c91d2e49c0b79", "0x3145...0b79", None),
     ("0x73da1af06106a7f3ac717ef0fd637177175d98b7", "br4ted", None),
+    ("0xaf29ab7418516cc3f22e609dc783d75864ab545a", "ctrlplus.eth", None),
     ("0xb4d64772218d36f97974e8bb6ef0d01b026c9a14", "GORILLA", "https://x.com/CryptoGorillaYT"),
     ("0x54be3a794282c030b15e43ae2bb182e14c409c5e", "DINGALING", "https://x.com/dingalingts"),
     ("0x1b523dc90a79cf5ee5d095825e586e33780f7188", "JRNY", "https://x.com/JRNYcrypto"),
@@ -129,6 +135,7 @@ _ETH_WHALE_SEED: List[tuple] = [
     ("0x419beee486a63971332cee7170c2f675d92ac5d3", "xcopys", "https://x.com/XCOPYART"),
     ("0x8e6804337f8d774ce3eb4d4c12bad9dfab2f56ad", "anon alt", None),
     ("0xdbd47f66aa2f00b3db03397f260ce9728298c495", "TMA", "https://x.com/tma_420?s=21"),
+    ("0x94ef56efad3cf722cd385bd6d5178c3063b83d1a", "0x94ef...3d1a", None),
 ]
 
 

@@ -129,6 +129,8 @@ _cached_eth_usd: float = 3000.0  # Safe default
 
 # Cached wallet profile pictures
 _wallet_avatar_cache: Dict[str, Optional[str]] = {}
+_wallet_profile_cache: Dict[str, dict] = {}
+_WALLET_PROFILE_TTL = 1800  # 30 minutes
 
 # Cached NFT collection socials — (data_dict, timestamp)
 _nft_socials_cache: Dict[str, tuple] = {}
@@ -540,6 +542,72 @@ async def fetch_wallet_avatar(wallet: str, session: aiohttp.ClientSession):
     avatar_url = EFFIGY_AVATAR.format(address=wallet)
     _wallet_avatar_cache[wallet_lower] = avatar_url
     return avatar_url, None
+
+
+async def fetch_wallet_profile(wallet: str, session: aiohttp.ClientSession) -> dict:
+    """Fetch wallet account profile metadata from OpenSea for richer embeds."""
+    wallet_lower = wallet.lower()
+    now_ts = time_module.time()
+    cached = _wallet_profile_cache.get(wallet_lower)
+    if cached and (now_ts - float(cached.get("_ts", 0))) < _WALLET_PROFILE_TTL:
+        return cached
+
+    profile = {
+        "name": f"{wallet[:6]}...{wallet[-4:]}",
+        "bio": "",
+        "joined": "",
+        "profile_image_url": "",
+        "banner_image_url": "",
+        "is_verified": False,
+        "opensea_url": f"https://opensea.io/{wallet_lower}",
+        "portfolio_usd": 0.0,
+        "nft_percent": 0.0,
+        "token_percent": 0.0,
+        "_ts": now_ts,
+    }
+
+    try:
+        headers = {"Accept": "application/json"}
+        opensea_api_key = os.getenv("OPENSEA_API_KEY")
+        if opensea_api_key:
+            headers["X-API-KEY"] = opensea_api_key
+        url = f"https://api.opensea.io/api/v2/accounts/{wallet_lower}"
+        async with session.get(url, headers=headers, timeout=6) as r:
+            if r.status == 200:
+                data = await r.json()
+                profile["name"] = (
+                    data.get("username")
+                    or data.get("name")
+                    or data.get("address")
+                    or profile["name"]
+                )
+                profile["bio"] = (data.get("bio") or "").strip()
+                profile["joined"] = (data.get("created_date") or "").strip()
+                profile["profile_image_url"] = (
+                    data.get("profile_image_url")
+                    or data.get("profile_img_url")
+                    or ""
+                )
+                profile["banner_image_url"] = (
+                    data.get("banner_image_url")
+                    or data.get("banner_img_url")
+                    or ""
+                )
+                profile["is_verified"] = bool(
+                    data.get("is_verified")
+                    or data.get("verified")
+                    or data.get("is_enabled")
+                )
+                # Portfolio figures are not guaranteed in API responses; parse defensively.
+                stats = data.get("stats") or data.get("totals") or {}
+                profile["portfolio_usd"] = float(stats.get("portfolio_usd", 0) or 0)
+                profile["nft_percent"] = float(stats.get("nfts_percent", 0) or 0)
+                profile["token_percent"] = float(stats.get("tokens_percent", 0) or 0)
+    except Exception:
+        pass
+
+    _wallet_profile_cache[wallet_lower] = profile
+    return profile
 
 async def fetch_eth_nft_socials(contract: str, session: aiohttp.ClientSession) -> dict:
     """Fetch social links for an ETH NFT collection. Returns a dict of URLs.
@@ -1183,9 +1251,12 @@ async def create_eth_nft_embed(
         action_word = "CLAIMED"
         
     files = []
+    wallet_profile = await fetch_wallet_profile(wallet, session)
     avatar_url, pfp_local = await fetch_wallet_avatar(wallet, session)
     if pfp_local:
         files.append(discord.File(pfp_local, filename=f"pfp_{wallet.lower()}.{pfp_local.split('.')[-1]}"))
+    if wallet_profile.get("profile_image_url") and not pfp_local:
+        avatar_url = wallet_profile.get("profile_image_url")
 
     bulk_suffix = f" ×{bulk_qty}" if bulk_qty else ""
 
@@ -1231,6 +1302,9 @@ async def create_eth_nft_embed(
     )
     if image_url:
         embed.set_thumbnail(url=image_url)
+    banner_url = str(wallet_profile.get("banner_image_url") or "").strip()
+    if banner_url.startswith("http"):
+        embed.set_image(url=banner_url)
 
     time_str = f"<t:{int(time.time())}:R>"
 
@@ -1265,6 +1339,35 @@ async def create_eth_nft_embed(
             ids_preview += f"  +{len(all_token_ids) - 15} more"
         embed.add_field(name=f"🛒 Token IDs  ×{bulk_qty}", value=ids_preview[:1024], inline=False)
 
+    # ── Wallet profile enrichment for premium tracking card ───────────────────
+    profile_name = str(wallet_profile.get("name") or "").strip()
+    profile_bio = str(wallet_profile.get("bio") or "").strip()
+    profile_value = float(wallet_profile.get("portfolio_usd") or 0.0)
+    nft_pct = float(wallet_profile.get("nft_percent") or 0.0)
+    token_pct = float(wallet_profile.get("token_percent") or 0.0)
+    verified_badge = " ✅" if wallet_profile.get("is_verified") else ""
+    joined_raw = str(wallet_profile.get("joined") or "").strip()
+    joined_txt = "n/a"
+    if joined_raw:
+        try:
+            joined_txt = datetime.fromisoformat(joined_raw.replace("Z", "+00:00")).strftime("%b %Y")
+        except Exception:
+            joined_txt = joined_raw[:10]
+
+    identity_bits = []
+    if profile_name and profile_name.lower() != wallet_label.lower():
+        identity_bits.append(f"**{profile_name}**{verified_badge}")
+    if joined_txt != "n/a":
+        identity_bits.append(f"since {joined_txt}")
+    if profile_value > 0:
+        identity_bits.append(f"portfolio **${profile_value:,.0f}**")
+    if nft_pct > 0 or token_pct > 0:
+        identity_bits.append(f"mix NFT {nft_pct:.0f}% · Token {token_pct:.0f}%")
+    if identity_bits:
+        embed.add_field(name="💎 Wallet Profile", value="  ·  ".join(identity_bits)[:1024], inline=False)
+    if profile_bio:
+        embed.add_field(name="📝 Bio", value=profile_bio[:1024], inline=False)
+
     # ── Socials & Links ───────────────────────────────────────────────────────
     socials_dict = {}
     if enable_socials:
@@ -1274,6 +1377,9 @@ async def create_eth_nft_embed(
     tx_url = f"https://etherscan.io/tx/{tx_hash}"
     contract_url = f"https://etherscan.io/address/{contract}"
     links = [f"[OpenSea]({opensea_url})", f"[Wallet](https://etherscan.io/address/{wallet})"]
+    opensea_profile_url = str(wallet_profile.get("opensea_url") or "").strip()
+    if opensea_profile_url.startswith("http"):
+        links.append(f"[Profile]({opensea_profile_url})")
     _x_prof = wallet_database.get_x_url(wallet)
     if _x_prof:
         links.append(f"[Trader 𝕏]({_x_prof})")
