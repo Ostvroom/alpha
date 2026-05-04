@@ -186,14 +186,13 @@
         '<div class="k">🧬 Smart HVA Engaged</div>'
         + '<div class="chips"><span class="badge"><b>Smart Engagers</b> '+esc(String(p.smart_followers_count||0))+'</span></div>';
       if (!isAdmin){
-        followersSec.classList.add("admin-blur");
         var lock = document.createElement("div");
         lock.className = "admin-lock";
-        lock.textContent = "Admin only — smart followers data";
+        lock.textContent = "Admin only — smart follower names";
         followersSec.parentNode.insertBefore(lock, followersSec.nextSibling);
       }
 
-      if(Array.isArray(p.smart_followers) && p.smart_followers.length){
+      if(isAdmin && Array.isArray(p.smart_followers) && p.smart_followers.length){
         var names = p.smart_followers.map(function(x){
           var h = String(x||"").replace(/^@/,"");
           return '<a href="https://x.com/'+esc(h)+'" target="_blank" rel="noreferrer" style="color:#ffcc00">@'+esc(h)+'</a>';
@@ -201,7 +200,6 @@
         var listSec = document.createElement("div");
         listSec.className = "section";
         listSec.innerHTML = '<div class="k">👥 Smart Followers</div><div class="v">'+names+'</div>';
-        if (!isAdmin) listSec.classList.add("admin-blur");
         document.getElementById("card").appendChild(listSec);
       }
       if(p.x_url){

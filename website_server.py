@@ -4560,6 +4560,9 @@ async def api_project_detail(request: Request, handle: str):
     """Project detail page payload with smart followers list."""
     if not _DEV_PREVIEW and not _has_access(request):
         raise HTTPException(401, "Unauthorized")
+    uid = _current_user_id(request)
+    admins = _admin_user_ids()
+    is_admin = bool(uid and admins and uid in admins)
     h = str(handle or "").strip().lstrip("@")
     if not h:
         raise HTTPException(400, "Missing handle")
@@ -4630,7 +4633,7 @@ async def api_project_detail(request: Request, handle: str):
         "pfp_url": pfp_url,
         "banner_url": banner_url,
         "x_url": f"https://x.com/{str(hdl or h).lstrip('@')}",
-        "smart_followers": smarts,
+        "smart_followers": smarts if is_admin else [],
         "smart_followers_v2": {
             "raw_score": float((sf_v2 or {}).get("raw_score") or 0.0),
             "unique_hvas": int((sf_v2 or {}).get("unique_hvas") or 0),
