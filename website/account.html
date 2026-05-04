@@ -65,6 +65,31 @@
     .gate-btns{display:flex;flex-direction:column;gap:8px}
     .gate-btn{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;padding:11px 18px;border-radius:4px;border:1px solid rgba(240,232,192,.30);background:transparent;color:#f0e8c0;cursor:pointer;text-align:center;text-decoration:none;transition:border-color .14s,color .14s}
     .gate-btn:hover{border-color:rgba(255,204,0,.55);color:#ffcc00}
+    .ref-box{border:1px solid rgba(255,204,0,.18);padding:10px 12px;background:rgba(255,204,0,.03)}
+    .ref-title{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,204,0,.72);margin-bottom:8px}
+    .ref-desc{font-size:12px;line-height:1.5;color:rgba(240,232,192,.82);margin-bottom:8px}
+    .ref-stats{font-size:11px;color:rgba(240,232,192,.60);margin-bottom:8px}
+    .ref-row{display:flex;gap:8px;align-items:center}
+    .ref-input{flex:1;background:rgba(0,0,0,.35);border:1px solid rgba(255,204,0,.25);color:rgba(240,232,192,.88);padding:8px 10px;font-size:11px;font-family:"JetBrains Mono",monospace}
+    .ref-sub{display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px}
+    .ref-min{font-size:10px;color:rgba(240,232,192,.50)}
+    .ref-msg{margin-top:8px;font-family:"JetBrains Mono",monospace;font-size:11px;display:none}
+    .ref-msg.ok{display:block;color:rgba(120,255,180,.92)}
+    .ref-msg.err{display:block;color:rgba(255,140,140,.92)}
+    .na-modal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .18s ease,visibility .18s ease}
+    .na-modal.is-open{opacity:1;visibility:visible;pointer-events:auto}
+    .na-modal-bg{position:absolute;inset:0;background:rgba(0,0,0,.62)}
+    .na-dialog{position:relative;width:min(560px,94vw);max-height:84vh;background:#0b0b0d;border:1px solid rgba(255,204,0,.26);border-radius:14px;box-shadow:0 28px 120px rgba(0,0,0,.78);display:flex;flex-direction:column;overflow:hidden}
+    .na-dialog-head{padding:12px 14px;border-bottom:1px solid rgba(255,204,0,.14);display:flex;justify-content:space-between;align-items:center;gap:12px}
+    .na-dialog-head-left{display:flex;align-items:center;gap:10px}
+    .na-dots{display:inline-flex;gap:5px}
+    .na-dots span{width:6px;height:6px;border-radius:999px;background:rgba(255,204,0,.7)}
+    .na-dialog-title{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,204,0,.92)}
+    .na-close{border:1px solid rgba(255,204,0,.35);background:rgba(255,204,0,.06);color:#ffcc00;width:36px;height:36px;font-size:22px;cursor:pointer;border-radius:8px}
+    .na-dialog-body{padding:20px 22px 18px}
+    .na-field{width:100%;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,204,0,.18);background:rgba(0,0,0,.28);color:#f0e8c0;font-family:"JetBrains Mono",monospace;font-size:12px}
+    .na-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+    .na-error{display:none;font-size:11px;color:rgba(255,140,140,.95)}
   </style>
 </head>
 <body>
@@ -129,6 +154,28 @@
           </ul>
         </div>
       </div>
+      <div class="card span12" id="referralCard" style="display:none;">
+        <div class="ph">
+          <div class="pt">Referral</div>
+          <div class="ps">Invite and earn rewards</div>
+        </div>
+        <div class="pb">
+          <div class="ref-box">
+            <div class="ref-title">Refer & Earn</div>
+            <div class="ref-desc" id="refDesc">Loading referral data...</div>
+            <div class="ref-stats" id="refStats"></div>
+            <div class="ref-row">
+              <input id="refLink" class="ref-input" readonly value="" />
+              <button id="refCopyBtn" class="btn" type="button" style="padding:8px 10px">Copy</button>
+            </div>
+            <div class="ref-sub">
+              <div class="ref-min" id="refMin"></div>
+              <button id="refWithdrawBtn" class="btn" type="button" style="padding:8px 10px">Request Withdraw</button>
+            </div>
+            <div class="ref-msg" id="refMsg"></div>
+          </div>
+        </div>
+      </div>
 
     </div>
   </div>
@@ -143,6 +190,143 @@
         if (!isNaN(d.getTime())) return d.toLocaleString();
       }catch(e){}
       return iso || "—";
+    }
+    function setRefMsg(msg, isErr){
+      var el = document.getElementById("refMsg");
+      if (!el) return;
+      if (!msg){
+        el.className = "ref-msg";
+        el.textContent = "";
+        return;
+      }
+      el.className = "ref-msg " + (isErr ? "err" : "ok");
+      el.textContent = String(msg);
+    }
+    function showWithdrawForm(minW, availableW){
+      return new Promise(function(resolve){
+        var existing = document.getElementById("acct-withdraw-modal");
+        if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+        var wrap = document.createElement("div");
+        wrap.id = "acct-withdraw-modal";
+        wrap.className = "na-modal is-open";
+        wrap.style.zIndex = "10021";
+        wrap.innerHTML = [
+          '<div class="na-modal-bg" id="acct-withdraw-bg"></div>',
+          '<div class="na-dialog">',
+          '  <div class="na-dialog-head">',
+          '    <div class="na-dialog-head-left">',
+          '      <div class="na-dots"><span></span><span></span><span></span></div>',
+          '      <span class="na-dialog-title">nerds alpha — withdraw request</span>',
+          '    </div>',
+          '    <button id="acct-withdraw-close" class="na-close" type="button" aria-label="Close">&times;</button>',
+          '  </div>',
+          '  <div class="na-dialog-body">',
+          '    <div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,204,0,.72);margin-bottom:10px">Manual payout request</div>',
+          '    <div style="font-size:12px;color:rgba(240,232,192,.68);margin-bottom:12px">Minimum withdraw is <b style="color:#ffcc00">$' + Number(minW || 10).toFixed(2) + '</b>. Available now: <b style="color:#7dffb0">$' + Number(availableW || 0).toFixed(2) + '</b>.</div>',
+          '    <div style="display:flex;flex-direction:column;gap:8px">',
+          '      <input id="acct-w-amount" class="na-field" placeholder="Withdraw amount in USD" />',
+          '      <select id="acct-w-chain" class="na-field"><option value="solana">solana</option><option value="base">base</option></select>',
+          '      <input id="acct-w-wallet" class="na-field" placeholder="Payout wallet address" />',
+          '      <div id="acct-w-err" class="na-error"></div>',
+          '    </div>',
+          '    <div class="na-actions">',
+          '      <button id="acct-w-cancel" class="btn" type="button">Cancel</button>',
+          '      <button id="acct-w-submit" class="btn primary" type="button">Submit Request</button>',
+          '    </div>',
+          '  </div>',
+          '</div>'
+        ].join("");
+        document.body.appendChild(wrap);
+        var amountEl = document.getElementById("acct-w-amount");
+        var chainEl = document.getElementById("acct-w-chain");
+        var walletEl = document.getElementById("acct-w-wallet");
+        var errEl = document.getElementById("acct-w-err");
+        if (amountEl) amountEl.value = String(Math.floor(Number(availableW || 0) * 100) / 100);
+        var close = function(val){
+          if (wrap && wrap.parentNode) wrap.parentNode.removeChild(wrap);
+          resolve(val || null);
+        };
+        var showErr = function(msg){
+          if (!errEl) return;
+          errEl.style.display = "block";
+          errEl.textContent = msg || "";
+        };
+        var closeBtn = document.getElementById("acct-withdraw-close");
+        var cancelBtn = document.getElementById("acct-w-cancel");
+        var submitBtn = document.getElementById("acct-w-submit");
+        var bg = document.getElementById("acct-withdraw-bg");
+        if (closeBtn) closeBtn.addEventListener("click", function(){ close(null); });
+        if (cancelBtn) cancelBtn.addEventListener("click", function(){ close(null); });
+        if (bg) bg.addEventListener("click", function(){ close(null); });
+        if (submitBtn) submitBtn.addEventListener("click", function(){
+          var amount = Number((amountEl && amountEl.value || "").trim());
+          var chain = String((chainEl && chainEl.value) || "solana").trim().toLowerCase();
+          var wallet = String((walletEl && walletEl.value) || "").trim();
+          if (!isFinite(amount) || amount <= 0) { showErr("Enter a valid withdraw amount."); return; }
+          if (!wallet) { showErr("Enter your payout wallet."); return; }
+          close({ amount_usd: amount, payout_chain: chain, payout_wallet: wallet });
+        });
+      });
+    }
+    async function loadReferral(){
+      try{
+        var card = document.getElementById("referralCard");
+        if (!card) return;
+        var r = await fetch("/api/referral/me",{credentials:"include"});
+        if(!r.ok) return;
+        var j = await r.json();
+        if (!j || !j.ok) return;
+        card.style.display = "block";
+        var reward = Number(j.reward_per_subscription_usd || 3);
+        var refs = Number(j.referrals || 0);
+        var earned = Number(j.reward_usd || 0);
+        var available = Number(j.available_withdraw_usd || 0);
+        var minW = Number(j.min_withdraw_usd || 10);
+        var link = String(j.link || "");
+        setText("refDesc", "Anyone who subscribes from your invite link earns you $" + reward.toFixed(0) + ".");
+        setText("refStats", "Referrals: " + refs + " · Earned: $" + earned.toFixed(2) + " · Available: $" + available.toFixed(2));
+        setText("refMin", "Min withdraw: $" + minW.toFixed(2));
+        var linkEl = document.getElementById("refLink");
+        if (linkEl) linkEl.value = link;
+        var copyBtn = document.getElementById("refCopyBtn");
+        if (copyBtn){
+          copyBtn.onclick = async function(){
+            try{
+              var val = (linkEl && linkEl.value) || link;
+              await navigator.clipboard.writeText(val);
+              copyBtn.textContent = "Copied";
+              setTimeout(function(){ copyBtn.textContent = "Copy"; }, 1200);
+            }catch(e){
+              setRefMsg("Could not copy link.", true);
+            }
+          };
+        }
+        var withdrawBtn = document.getElementById("refWithdrawBtn");
+        if (withdrawBtn){
+          withdrawBtn.onclick = async function(){
+            setRefMsg("", false);
+            if (available < minW){
+              setRefMsg("Minimum withdraw is $" + minW.toFixed(2) + ". Available now: $" + available.toFixed(2), true);
+              return;
+            }
+            var formData = await showWithdrawForm(minW, available);
+            if (!formData) return;
+            var rr = await fetch("/api/referral/withdraw/request", {
+              method:"POST",
+              credentials:"include",
+              headers: {"Content-Type":"application/json"},
+              body: JSON.stringify(formData)
+            });
+            var rj = await rr.json().catch(function(){ return {}; });
+            if (!rr.ok){
+              setRefMsg((rj && (rj.detail || rj.message)) || "Withdraw request failed.", true);
+              return;
+            }
+            setRefMsg("Withdraw request submitted. We will review it manually.", false);
+            loadReferral();
+          };
+        }
+      }catch(e){}
     }
 
     async function load(){
@@ -179,6 +363,7 @@
           wlb.innerHTML = "<b>Live Feed</b> " + (wl ? "Whitelisted" : "Not whitelisted");
           wlb.className = "badge " + (wl ? "g" : "");
         }
+        if (me.is_whitelisted) loadReferral();
         var av = document.getElementById("avatar");
         if(av){
           av.src = (me.avatar_url||"");
