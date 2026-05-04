@@ -130,6 +130,7 @@ _SUPABASE_MIRROR_PAYMENTS = str(os.getenv("SUPABASE_MIRROR_PAYMENTS", "1") or "1
 )
 _SUPABASE_PAYMENT_CLAIMS_TABLE = (os.getenv("SUPABASE_PAYMENT_CLAIMS_TABLE") or "payment_claims").strip()
 _SUPABASE_PREMIUM_SUBSCRIPTIONS_TABLE = (os.getenv("SUPABASE_PREMIUM_SUBSCRIPTIONS_TABLE") or "premium_subscriptions").strip()
+_SUPABASE_PAYMENT_INTENTS_TABLE = (os.getenv("SUPABASE_PAYMENT_INTENTS_TABLE") or "payment_intents").strip()
 
 
 def _sb_enabled() -> bool:
@@ -1923,6 +1924,242 @@ def _helio_is_payment_confirmed(payload: dict[str, Any]) -> bool:
     }
     ok_status = {"COMPLETED", "CONFIRMED", "PAID", "SUCCESS", "SUCCEEDED"}
     return (event in ok_events) or (status in ok_status)
+
+
+def _normalize_payer_wallet(chain: str, wallet: str) -> str:
+    w = str(wallet or "").strip()
+    if chain in ("eth_mainnet", "eth_base"):
+        if not re.fullmatch(r"0x[a-fA-F0-9]{40}", w):
+            return ""
+        return w.lower()
+    if chain == "solana":
+        if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", w):
+            return ""
+        return w
+    return ""
+
+
+def _monthly_exact_amount(chain: str, user_id: int) -> tuple[float, str]:
+    """
+    Create a deterministic-ish exact amount by adding a tiny nonce
+    to the configured monthly minimum.
+    """
+    base = float(_min_amount("monthly", chain) or 0.0)
+    if base <= 0:
+        return 0.0, "0"
+    seed = int(time.time() * 1000) ^ int(user_id or 0)
+    if chain in ("eth_mainnet", "eth_base"):
+        # + 0.000011 .. 0.000099 ETH
+        bump = ((seed % 89) + 11) / 1_000_000
+        exact = round(base + bump, 6)
+        return exact, str(payment_verify.eth_to_wei(exact))
+    # + 0.00011 .. 0.00099 SOL
+    bump = ((seed % 89) + 11) / 100_000
+    exact = round(base + bump, 6)
+    return exact, str(payment_verify.sol_to_lamports(exact))
+
+
+def _payment_intents_init() -> None:
+    conn = sqlite3.connect(payment_database.DB_FILE)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS payment_intents (
+            intent_id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            chain TEXT NOT NULL,
+            tier TEXT NOT NULL,
+            payer_wallet TEXT NOT NULL,
+            treasury_wallet TEXT NOT NULL,
+            exact_amount TEXT NOT NULL,
+            amount_raw TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            matched_tx_hash TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            matched_at TEXT,
+            claimed_at TEXT
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def _sb_mirror_payment_intent(intent: dict[str, Any]) -> None:
+    if not (_sb_enabled() and _SUPABASE_MIRROR_PAYMENTS and _SUPABASE_PAYMENT_INTENTS_TABLE):
+        return
+    payload = {
+        "intent_id": str(intent.get("intent_id") or ""),
+        "user_id": int(intent.get("user_id") or 0),
+        "chain": str(intent.get("chain") or ""),
+        "tier": str(intent.get("tier") or "monthly"),
+        "payer_wallet": str(intent.get("payer_wallet") or ""),
+        "treasury_wallet": str(intent.get("treasury_wallet") or ""),
+        "exact_amount": str(intent.get("exact_amount") or ""),
+        "amount_raw": str(intent.get("amount_raw") or ""),
+        "status": str(intent.get("status") or "pending"),
+        "matched_tx_hash": str(intent.get("matched_tx_hash") or "") or None,
+        "created_at": str(intent.get("created_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())),
+        "matched_at": str(intent.get("matched_at") or "") or None,
+        "claimed_at": str(intent.get("claimed_at") or "") or None,
+    }
+    try:
+        r = requests.post(
+            _sb_url(f"/{_SUPABASE_PAYMENT_INTENTS_TABLE}"),
+            headers=_sb_headers(prefer="resolution=merge-duplicates"),
+            data=json.dumps(payload),
+            timeout=12,
+        )
+        if r.status_code not in (200, 201, 204):
+            print(f"[SupabaseMirror] payment intent mirror failed: HTTP {r.status_code}: {(r.text or '')[:220]}", flush=True)
+    except Exception as e:
+        print(f"[SupabaseMirror] payment intent mirror exception: {e}", flush=True)
+
+
+async def _find_matching_evm_transfer(
+    session: aiohttp.ClientSession,
+    *,
+    chain: str,
+    payer_wallet: str,
+    treasury_wallet: str,
+    amount_raw: str,
+) -> str:
+    chain_id = 8453 if chain == "eth_base" else 1
+    api_key = (config.ETHSCAN_API_KEY or "").strip()
+    if not api_key:
+        return ""
+    url = (
+        f"https://api.etherscan.io/v2/api?chainid={chain_id}&module=account&action=txlist"
+        f"&address={payer_wallet}&sort=desc&apikey={api_key}"
+    )
+    async with session.get(url, timeout=45) as r:
+        try:
+            data = await r.json()
+        except Exception:
+            return ""
+    rows = data.get("result") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return ""
+    tre = str(treasury_wallet or "").lower()
+    need = str(amount_raw or "").strip()
+    min_conf = int(config.PAYMENT_MIN_CONFIRMATIONS_BASE if chain == "eth_base" else config.PAYMENT_MIN_CONFIRMATIONS_ETH)
+    now_ts = int(time.time())
+    for tx in rows[:80]:
+        if not isinstance(tx, dict):
+            continue
+        to_addr = str(tx.get("to") or "").lower()
+        val = str(tx.get("value") or "")
+        frm = str(tx.get("from") or "").lower()
+        conf = int(str(tx.get("confirmations") or "0") or "0")
+        if to_addr != tre or frm != payer_wallet.lower():
+            continue
+        if val != need:
+            continue
+        if conf < min_conf:
+            continue
+        try:
+            age_sec = now_ts - int(str(tx.get("timeStamp") or "0") or "0")
+        except Exception:
+            age_sec = 0
+        if age_sec > 6 * 3600:
+            continue
+        h = payment_verify.normalize_evm_tx_hash(str(tx.get("hash") or "")) or ""
+        if h:
+            return h
+    return ""
+
+
+async def _find_matching_solana_transfer(
+    session: aiohttp.ClientSession,
+    *,
+    payer_wallet: str,
+    treasury_wallet: str,
+    amount_raw: str,
+) -> str:
+    need = int(str(amount_raw or "0") or "0")
+    if need <= 0:
+        return ""
+    rpc = payment_verify._solana_rpc_url()
+    sig_req = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getSignaturesForAddress",
+        "params": [treasury_wallet, {"limit": 40}],
+    }
+    async with session.post(rpc, json=sig_req, timeout=45) as r:
+        try:
+            body = await r.json()
+        except Exception:
+            return ""
+    sigs = body.get("result") if isinstance(body, dict) else None
+    if not isinstance(sigs, list):
+        return ""
+    for row in sigs[:40]:
+        sig = str((row or {}).get("signature") or "")
+        if not sig:
+            continue
+        tx_req = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTransaction",
+            "params": [sig, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0, "commitment": "finalized"}],
+        }
+        async with session.post(rpc, json=tx_req, timeout=45) as tr:
+            try:
+                tx_body = await tr.json()
+            except Exception:
+                continue
+        tx = tx_body.get("result") if isinstance(tx_body, dict) else None
+        if not isinstance(tx, dict):
+            continue
+        meta = tx.get("meta") or {}
+        if meta.get("err"):
+            continue
+        msg = ((tx.get("transaction") or {}).get("message") or {})
+        instructions = msg.get("instructions") or []
+        for ins in instructions:
+            if not isinstance(ins, dict):
+                continue
+            parsed = ins.get("parsed") or {}
+            if not isinstance(parsed, dict):
+                continue
+            info = parsed.get("info") or {}
+            if not isinstance(info, dict):
+                continue
+            src = str(info.get("source") or "")
+            dst = str(info.get("destination") or "")
+            lam = int(str(info.get("lamports") or "0") or "0")
+            if src == payer_wallet and dst == treasury_wallet and lam == need:
+                out = payment_verify.normalize_sol_signature(sig) or ""
+                if out:
+                    return out
+    return ""
+
+
+async def _find_matching_payment_tx(
+    session: aiohttp.ClientSession,
+    *,
+    chain: str,
+    payer_wallet: str,
+    treasury_wallet: str,
+    amount_raw: str,
+) -> str:
+    if chain in ("eth_mainnet", "eth_base"):
+        return await _find_matching_evm_transfer(
+            session,
+            chain=chain,
+            payer_wallet=payer_wallet,
+            treasury_wallet=treasury_wallet,
+            amount_raw=amount_raw,
+        )
+    if chain == "solana":
+        return await _find_matching_solana_transfer(
+            session,
+            payer_wallet=payer_wallet,
+            treasury_wallet=treasury_wallet,
+            amount_raw=amount_raw,
+        )
+    return ""
 
 
 def _member_roles_include_premium(role_ids: list[str]) -> bool:
@@ -4060,6 +4297,199 @@ class ClaimRequest(BaseModel):
     tier: str          # "monthly" | "lifetime"
     chain: str         # "eth_mainnet" | "eth_base" | "solana"
     tx_hash: str
+
+
+class PaymentIntentCreateRequest(BaseModel):
+    chain: str  # "eth_base" | "solana"
+    payer_wallet: str
+
+
+class PaymentIntentClaimRequest(BaseModel):
+    intent_id: str
+
+
+@app.post("/api/payments/intent/create")
+async def api_payments_intent_create(request: Request, body: PaymentIntentCreateRequest):
+    uid = _current_user_id(request)
+    if uid <= 0:
+        raise HTTPException(401, "Unauthorized")
+    chain = str(body.chain or "").strip().lower()
+    if chain not in ("eth_base", "solana"):
+        raise HTTPException(400, "chain must be 'eth_base' or 'solana'")
+    payer_wallet = _normalize_payer_wallet(chain, str(body.payer_wallet or ""))
+    if not payer_wallet:
+        raise HTTPException(400, "Invalid payer wallet for selected chain")
+    treasury_wallet = str(_treasury(chain) or "").strip()
+    if not treasury_wallet:
+        raise HTTPException(400, "Treasury wallet is not configured for this chain")
+    exact_amount, amount_raw = _monthly_exact_amount(chain, uid)
+    if exact_amount <= 0:
+        raise HTTPException(400, "Monthly payment is not enabled for this chain")
+
+    _payment_intents_init()
+    intent_id = f"pi_{int(time.time())}_{int(uid)}_{chain}_{int(time.time_ns() % 100000)}"
+    created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    conn = sqlite3.connect(payment_database.DB_FILE)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO payment_intents
+        (intent_id, user_id, chain, tier, payer_wallet, treasury_wallet, exact_amount, amount_raw, status, created_at)
+        VALUES (?, ?, ?, 'monthly', ?, ?, ?, ?, 'pending', ?)
+        """,
+        (
+            intent_id,
+            int(uid),
+            chain,
+            payer_wallet,
+            treasury_wallet,
+            f"{exact_amount:.6f}",
+            str(amount_raw),
+            created_at,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    _sb_mirror_payment_intent(
+        {
+            "intent_id": intent_id,
+            "user_id": int(uid),
+            "chain": chain,
+            "tier": "monthly",
+            "payer_wallet": payer_wallet,
+            "treasury_wallet": treasury_wallet,
+            "exact_amount": f"{exact_amount:.6f}",
+            "amount_raw": str(amount_raw),
+            "status": "pending",
+            "created_at": created_at,
+        }
+    )
+
+    return {
+        "ok": True,
+        "intent_id": intent_id,
+        "tier": "monthly",
+        "chain": chain,
+        "payer_wallet": payer_wallet,
+        "treasury_wallet": treasury_wallet,
+        "exact_amount": f"{exact_amount:.6f}",
+        "amount_raw": str(amount_raw),
+    }
+
+
+@app.post("/api/payments/intent/claim")
+async def api_payments_intent_claim(request: Request, body: PaymentIntentClaimRequest):
+    uid = _current_user_id(request)
+    if uid <= 0:
+        raise HTTPException(401, "Unauthorized")
+    intent_id = str(body.intent_id or "").strip()
+    if not intent_id:
+        raise HTTPException(400, "intent_id required")
+
+    _payment_intents_init()
+    conn = sqlite3.connect(payment_database.DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT intent_id, user_id, chain, tier, payer_wallet, treasury_wallet, exact_amount, amount_raw, status, matched_tx_hash
+        FROM payment_intents
+        WHERE intent_id=? AND user_id=?
+        LIMIT 1
+        """,
+        (intent_id, int(uid)),
+    )
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Payment intent not found")
+    item = dict(row)
+    if str(item.get("status") or "").strip().lower() == "claimed":
+        conn.close()
+        return {"ok": True, "already_claimed": True, "intent_id": intent_id, "tx_hash": str(item.get("matched_tx_hash") or "")}
+
+    chain = str(item.get("chain") or "")
+    payer_wallet = str(item.get("payer_wallet") or "")
+    treasury_wallet = str(item.get("treasury_wallet") or "")
+    amount_raw = str(item.get("amount_raw") or "")
+
+    async with aiohttp.ClientSession() as session:
+        tx_hash = await _find_matching_payment_tx(
+            session,
+            chain=chain,
+            payer_wallet=payer_wallet,
+            treasury_wallet=treasury_wallet,
+            amount_raw=amount_raw,
+        )
+    if not tx_hash:
+        conn.close()
+        raise HTTPException(400, "Payment not detected yet. Please wait for confirmation and try again.")
+
+    payment_database.init_db()
+    if payment_database.claim_exists(tx_hash, chain):
+        cur.execute(
+            "UPDATE payment_intents SET status='claimed', matched_tx_hash=?, matched_at=datetime('now'), claimed_at=datetime('now') WHERE intent_id=?",
+            (tx_hash, intent_id),
+        )
+        conn.commit()
+        conn.close()
+        return {"ok": True, "already_claimed": True, "intent_id": intent_id, "tx_hash": tx_hash}
+
+    import sqlite3 as _sqlite3
+    try:
+        payment_database.insert_claim(tx_hash, chain, int(uid), GUILD_ID, "monthly", amount_raw)
+        _sb_mirror_payment_claim(
+            tx_hash=tx_hash,
+            chain=chain,
+            user_id=int(uid),
+            guild_id=GUILD_ID,
+            tier="monthly",
+            amount_raw=amount_raw,
+        )
+    except _sqlite3.IntegrityError:
+        conn.close()
+        return {"ok": True, "duplicate": True, "intent_id": intent_id, "tx_hash": tx_hash}
+
+    expires_iso = ""
+    try:
+        exp = payment_database.upsert_monthly_subscription(int(uid), GUILD_ID, tx_hash, chain, int(config.PREMIUM_MONTHLY_DAYS))
+        expires_iso = exp.isoformat()
+        _sb_mirror_subscription(user_id=int(uid), guild_id=GUILD_ID, expires_at_iso=expires_iso, tx_hash=tx_hash)
+    except Exception:
+        pass
+
+    cur.execute(
+        "UPDATE payment_intents SET status='claimed', matched_tx_hash=?, matched_at=datetime('now'), claimed_at=datetime('now') WHERE intent_id=?",
+        (tx_hash, intent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    _sb_mirror_payment_intent(
+        {
+            "intent_id": intent_id,
+            "user_id": int(uid),
+            "chain": chain,
+            "tier": "monthly",
+            "payer_wallet": payer_wallet,
+            "treasury_wallet": treasury_wallet,
+            "exact_amount": str(item.get("exact_amount") or ""),
+            "amount_raw": amount_raw,
+            "status": "claimed",
+            "matched_tx_hash": tx_hash,
+            "matched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "claimed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+    )
+
+    return {
+        "ok": True,
+        "intent_id": intent_id,
+        "tx_hash": tx_hash,
+        "expires_at": expires_iso,
+        "message": "Payment verified. Monthly website access is now active.",
+    }
 
 
 @app.post("/api/claim")

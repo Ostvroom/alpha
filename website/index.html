@@ -1439,7 +1439,28 @@
             <div class="ps-limit-label">1 Month</div>
             <div class="ps-limit-val">$20</div>
             <div class="ps-limit-per">per month · billed monthly</div>
-            <a class="ps-pay-btn" id="payBtn1m" href="#" target="_blank" rel="noopener noreferrer">Pay Now</a>
+            <button class="ps-pay-btn" id="payBtn1m" type="button">Start Payment</button>
+          </div>
+        </div>
+
+        <div class="ps-access" style="margin-top:0">
+          <div class="ps-access-title">In-house payment flow</div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="ps-nav-btn" type="button" id="pmChainBase" style="flex:0 0 auto;min-width:140px">ETH (Base)</button>
+              <button class="ps-nav-btn" type="button" id="pmChainSol" style="flex:0 0 auto;min-width:140px">SOL (Solana)</button>
+            </div>
+            <label class="ps-wallet-label" for="pmPayerWallet">Your payer wallet address</label>
+            <input id="pmPayerWallet" class="cl-input" placeholder="Paste the wallet you will pay from" />
+            <button class="ps-nav-btn" type="button" id="pmCreateIntent">Get exact amount & wallet</button>
+            <div id="pmIntentBox" style="display:none;border:1px solid rgba(255,204,0,.16);border-radius:12px;padding:12px;background:rgba(255,204,0,.04)">
+              <div class="ps-wallet-label">Send exact amount to this wallet</div>
+              <div id="pmTreasuryWallet" class="ps-wallet-box ps-wallet-addr" style="margin-top:6px"></div>
+              <div class="ps-wallet-label" style="margin-top:10px">Exact amount</div>
+              <div id="pmExactAmount" class="ps-wallet-box ps-wallet-addr" style="margin-top:6px"></div>
+              <button class="ps-nav-btn" type="button" id="pmClaimNow" style="margin-top:10px">Claim access</button>
+            </div>
+            <div id="pmStatus" class="ps-status" style="display:none"></div>
           </div>
         </div>
 
@@ -1455,7 +1476,7 @@
         </div>
 
         <div class="ps-status ok" style="display:block">
-          Payments can be accepted in <b>ETH (Ethereum)</b>, <b>ETH (Base)</b>, and <b>SOL</b>. Follow <a href="https://x.com/Degensultan" target="_blank" rel="noopener noreferrer" style="color:#ffcc00">@Degensultan</a> for subscription opening updates.
+          Flow: choose chain → submit payer wallet → send exact amount to shown treasury wallet → click claim. Access activates after on-chain confirmation.
         </div>
 
         <!-- Bottom nav -->
@@ -1826,25 +1847,99 @@
     var psBtnCollab = document.getElementById("psBtnCollab");
     if (psBtnCollab) psBtnCollab.addEventListener("click", function(){ openModal("collab"); });
 
-    // Subscribe checkout links (replace with your real Helio URLs)
-    var SUBSCRIBE_CHECKOUT_LINKS = {
-      month1: "https://moonpay.hel.io/pay/69f4aa8268e648fbe19d5978"
-    };
+    // In-house payment intent flow (website-only access)
+    var pmChain = "eth_base";
+    var pmIntentId = "";
+    var pmAmount = "";
+    var pmTreasury = "";
+    var pmStatus = document.getElementById("pmStatus");
+    var pmIntentBox = document.getElementById("pmIntentBox");
+    var pmPayerInput = document.getElementById("pmPayerWallet");
+    var pmTreasuryEl = document.getElementById("pmTreasuryWallet");
+    var pmExactEl = document.getElementById("pmExactAmount");
 
-    function wirePayButton(btnId, checkoutUrl) {
-      var btn = document.getElementById(btnId);
-      if (!btn) return;
-      var ok = /^https?:\/\//i.test(checkoutUrl || "") && String(checkoutUrl).indexOf("REPLACE_") === -1;
-      if (!ok) {
-        btn.classList.add("is-disabled");
-        btn.setAttribute("aria-disabled", "true");
-        btn.removeAttribute("href");
-        btn.title = "Set your Helio checkout link in SUBSCRIBE_CHECKOUT_LINKS.";
+    function setPmStatus(type, txt){
+      if (!pmStatus) return;
+      pmStatus.className = "ps-status " + (type === "ok" ? "ok" : "err");
+      pmStatus.style.display = "block";
+      pmStatus.textContent = txt || "";
+    }
+    function setPmChain(chain){
+      pmChain = chain;
+      var b = document.getElementById("pmChainBase");
+      var s = document.getElementById("pmChainSol");
+      if (b) b.style.color = chain === "eth_base" ? "#ffcc00" : "rgba(240,232,192,.60)";
+      if (s) s.style.color = chain === "solana" ? "#ffcc00" : "rgba(240,232,192,.60)";
+    }
+    setPmChain("eth_base");
+    var chainBaseBtn = document.getElementById("pmChainBase");
+    var chainSolBtn = document.getElementById("pmChainSol");
+    if (chainBaseBtn) chainBaseBtn.addEventListener("click", function(){ setPmChain("eth_base"); });
+    if (chainSolBtn) chainSolBtn.addEventListener("click", function(){ setPmChain("solana"); });
+
+    var payStartBtn = document.getElementById("payBtn1m");
+    if (payStartBtn) payStartBtn.addEventListener("click", function(){
+      if (pmPayerInput) pmPayerInput.focus();
+      setPmStatus("ok", "Enter your payer wallet and click 'Get exact amount & wallet'.");
+    });
+
+    var createIntentBtn = document.getElementById("pmCreateIntent");
+    if (createIntentBtn) createIntentBtn.addEventListener("click", async function(){
+      var payerWallet = (pmPayerInput && pmPayerInput.value || "").trim();
+      if (!payerWallet) {
+        setPmStatus("err", "Please paste your payer wallet first.");
         return;
       }
-      btn.href = checkoutUrl;
-    }
-    wirePayButton("payBtn1m", SUBSCRIBE_CHECKOUT_LINKS.month1);
+      try {
+        setPmStatus("ok", "Creating payment intent...");
+        var r = await fetch("/api/payments/intent/create", {
+          method: "POST",
+          credentials: "include",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({chain: pmChain, payer_wallet: payerWallet})
+        });
+        var j = await r.json().catch(function(){ return {}; });
+        if (!r.ok || !j || !j.ok) {
+          setPmStatus("err", (j && (j.detail || j.message)) || "Could not create payment intent.");
+          return;
+        }
+        pmIntentId = String(j.intent_id || "");
+        pmAmount = String(j.exact_amount || "");
+        pmTreasury = String(j.treasury_wallet || "");
+        if (pmIntentBox) pmIntentBox.style.display = "block";
+        if (pmTreasuryEl) pmTreasuryEl.textContent = pmTreasury;
+        if (pmExactEl) pmExactEl.textContent = pmAmount + (pmChain === "solana" ? " SOL" : " ETH");
+        setPmStatus("ok", "Send the exact amount from the submitted wallet, then click Claim access.");
+      } catch (e) {
+        setPmStatus("err", "Network error while creating payment intent.");
+      }
+    });
+
+    var claimNowBtn = document.getElementById("pmClaimNow");
+    if (claimNowBtn) claimNowBtn.addEventListener("click", async function(){
+      if (!pmIntentId) {
+        setPmStatus("err", "Create payment intent first.");
+        return;
+      }
+      try {
+        setPmStatus("ok", "Checking blockchain payment...");
+        var r = await fetch("/api/payments/intent/claim", {
+          method: "POST",
+          credentials: "include",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({intent_id: pmIntentId})
+        });
+        var j = await r.json().catch(function(){ return {}; });
+        if (!r.ok || !j || !j.ok) {
+          setPmStatus("err", (j && (j.detail || j.message)) || "Payment not detected yet.");
+          return;
+        }
+        setPmStatus("ok", "Payment verified. Access is now active. Opening live feed...");
+        setTimeout(function(){ window.location.href = "/projects"; }, 900);
+      } catch (e) {
+        setPmStatus("err", "Network error while claiming access.");
+      }
+    });
 
     // Close triggers (backdrop + X button)
     document.querySelectorAll("[data-naclose]").forEach(function(el){
