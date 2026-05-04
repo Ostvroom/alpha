@@ -101,6 +101,18 @@ DISCORD_OAUTH_CLIENT_ID = (os.getenv("DISCORD_OAUTH_CLIENT_ID") or "").strip()
 DISCORD_OAUTH_CLIENT_SECRET = (os.getenv("DISCORD_OAUTH_CLIENT_SECRET") or "").strip()
 DISCORD_OAUTH_REDIRECT_URI = (os.getenv("DISCORD_OAUTH_REDIRECT_URI") or "").strip()
 _DISCORD_STATE_COOKIE = "na_discord_state"
+HELIO_WEBHOOK_SHARED_TOKEN = (os.getenv("HELIO_WEBHOOK_SHARED_TOKEN") or "").strip()
+HELIO_AUTO_MONTHLY_ENABLED = str(os.getenv("HELIO_AUTO_MONTHLY_ENABLED", "1") or "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+HELIO_MONTHLY_PAYLINK_IDS = {
+    s.strip()
+    for s in str(os.getenv("HELIO_MONTHLY_PAYLINK_IDS", "") or "").split(",")
+    if s.strip()
+}
 
 # ---------------------------------------------------------------------------
 # Account DB (Discord profile + points + task claims)
@@ -110,6 +122,14 @@ _ACCOUNT_DB = str(DATA_DIR / "account.db")
 # Supabase (PostgREST) — optional. If configured, accounts/points/claims use Supabase instead of SQLite.
 _SUPABASE_URL = (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
 _SUPABASE_SERVICE_ROLE_KEY = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
+_SUPABASE_MIRROR_PAYMENTS = str(os.getenv("SUPABASE_MIRROR_PAYMENTS", "1") or "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+_SUPABASE_PAYMENT_CLAIMS_TABLE = (os.getenv("SUPABASE_PAYMENT_CLAIMS_TABLE") or "payment_claims").strip()
+_SUPABASE_PREMIUM_SUBSCRIPTIONS_TABLE = (os.getenv("SUPABASE_PREMIUM_SUBSCRIPTIONS_TABLE") or "premium_subscriptions").strip()
 
 
 def _sb_enabled() -> bool:
@@ -139,6 +159,75 @@ def _sb_url(path: str) -> str:
     if not p.startswith("/"):
         p = "/" + p
     return _SUPABASE_URL + "/rest/v1" + p
+
+
+def _sb_mirror_payment_claim(
+    *,
+    tx_hash: str,
+    chain: str,
+    user_id: int,
+    guild_id: int,
+    tier: str,
+    amount_raw: str,
+) -> None:
+    """Best-effort mirror into Supabase payment_claims-compatible table."""
+    if not (_sb_enabled() and _SUPABASE_MIRROR_PAYMENTS and _SUPABASE_PAYMENT_CLAIMS_TABLE):
+        return
+    payload = {
+        "tx_hash": str(tx_hash or ""),
+        "chain": str(chain or ""),
+        "user_id": int(user_id or 0),
+        "guild_id": int(guild_id or 0),
+        "tier": str(tier or ""),
+        "amount_raw": str(amount_raw or "0"),
+        "verified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    try:
+        r = requests.post(
+            _sb_url(f"/{_SUPABASE_PAYMENT_CLAIMS_TABLE}"),
+            headers=_sb_headers(prefer="resolution=merge-duplicates"),
+            data=json.dumps(payload),
+            timeout=12,
+        )
+        if r.status_code not in (200, 201, 204):
+            print(
+                f"[SupabaseMirror] payment claim mirror failed: HTTP {r.status_code}: {(r.text or '')[:220]}",
+                flush=True,
+            )
+    except Exception as e:
+        print(f"[SupabaseMirror] payment claim mirror exception: {e}", flush=True)
+
+
+def _sb_mirror_subscription(
+    *,
+    user_id: int,
+    guild_id: int,
+    expires_at_iso: str,
+    tx_hash: str,
+) -> None:
+    """Best-effort mirror into Supabase premium_subscriptions-compatible table."""
+    if not (_sb_enabled() and _SUPABASE_MIRROR_PAYMENTS and _SUPABASE_PREMIUM_SUBSCRIPTIONS_TABLE):
+        return
+    payload = {
+        "user_id": int(user_id or 0),
+        "guild_id": int(guild_id or 0),
+        "expires_at": str(expires_at_iso or ""),
+        "last_tx_hash": str(tx_hash or ""),
+    }
+    try:
+        r = requests.post(
+            _sb_url(f"/{_SUPABASE_PREMIUM_SUBSCRIPTIONS_TABLE}"),
+            headers=_sb_headers(prefer="resolution=merge-duplicates"),
+            data=json.dumps(payload),
+            timeout=12,
+        )
+        if r.status_code not in (200, 201, 204):
+            print(
+                f"[SupabaseMirror] subscription mirror failed: HTTP {r.status_code}: {(r.text or '')[:220]}",
+                flush=True,
+            )
+    except Exception as e:
+        print(f"[SupabaseMirror] subscription mirror exception: {e}", flush=True)
 
 
 def _acct_init() -> None:
@@ -1685,6 +1774,155 @@ def _grant_user_website_whitelist(user_id: int, *, added_by: str = "system") -> 
         conn.close()
     except Exception:
         return
+
+
+def _deep_get(obj: Any, path: str, default: Any = None) -> Any:
+    cur = obj
+    for key in str(path or "").split("."):
+        if isinstance(cur, dict) and key in cur:
+            cur = cur[key]
+        else:
+            return default
+    return cur
+
+
+def _first_non_empty(obj: Any, paths: list[str]) -> Any:
+    for p in paths:
+        v = _deep_get(obj, p, None)
+        if v is not None and str(v).strip() != "":
+            return v
+    return None
+
+
+def _helio_extract_discord_user_id(payload: dict[str, Any]) -> int:
+    raw = _first_non_empty(
+        payload,
+        [
+            "meta.discord_user_id",
+            "meta.discordId",
+            "meta.user_id",
+            "transactionObject.meta.discord_user_id",
+            "transactionObject.meta.discordId",
+            "transactionObject.meta.user_id",
+            "transactionObject.additionalJson.discord_user_id",
+            "transactionObject.additionalJson.discordId",
+            "transactionObject.additionalJson.user_id",
+            "additionalJson.discord_user_id",
+            "additionalJson.discordId",
+            "additionalJson.user_id",
+            "customerDetails.discord_user_id",
+            "customerDetails.discordId",
+            "customerDetails.user_id",
+        ],
+    )
+    if raw is None:
+        return 0
+    try:
+        uid = int(str(raw).strip())
+        return uid if uid > 0 else 0
+    except Exception:
+        return 0
+
+
+def _helio_extract_paylink_id(payload: dict[str, Any]) -> str:
+    raw = _first_non_empty(
+        payload,
+        [
+            "paylinkId",
+            "paylink.id",
+            "transactionObject.paylinkId",
+            "transactionObject.paylink.id",
+        ],
+    )
+    return str(raw or "").strip()
+
+
+def _helio_extract_chain(payload: dict[str, Any]) -> str:
+    raw = str(
+        _first_non_empty(
+            payload,
+            [
+                "transactionObject.network",
+                "transactionObject.chain",
+                "transactionObject.blockchain",
+                "network",
+                "chain",
+                "blockchain",
+            ],
+        )
+        or ""
+    ).strip().lower()
+    if not raw:
+        return ""
+    if "base" in raw:
+        return "eth_base"
+    if "eth" in raw or "ethereum" in raw or raw == "1":
+        return "eth_mainnet"
+    if "sol" in raw:
+        return "solana"
+    return ""
+
+
+def _helio_extract_tx_hash(payload: dict[str, Any], chain: str) -> str:
+    raw = str(
+        _first_non_empty(
+            payload,
+            [
+                "transactionObject.transactionSignature",
+                "transactionObject.signature",
+                "transactionObject.txHash",
+                "transactionObject.hash",
+                "transactionSignature",
+                "signature",
+                "txHash",
+                "hash",
+                "id",
+            ],
+        )
+        or ""
+    ).strip()
+    if not raw:
+        return ""
+    if chain in ("eth_mainnet", "eth_base"):
+        return payment_verify.normalize_evm_tx_hash(raw) or ""
+    if chain == "solana":
+        return payment_verify.normalize_sol_signature(raw) or ""
+    return ""
+
+
+def _helio_extract_amount_raw(payload: dict[str, Any]) -> str:
+    raw = _first_non_empty(
+        payload,
+        [
+            "transactionObject.amount",
+            "transactionObject.amountRaw",
+            "transactionObject.cryptoAmount",
+            "amount",
+            "amountRaw",
+        ],
+    )
+    return str(raw if raw is not None else "0")
+
+
+def _helio_is_payment_confirmed(payload: dict[str, Any]) -> bool:
+    event = str(payload.get("event") or payload.get("type") or "").strip().upper()
+    status = str(
+        _first_non_empty(
+            payload,
+            ["status", "transactionObject.status", "transactionObject.paymentStatus"],
+        )
+        or ""
+    ).strip().upper()
+    ok_events = {
+        "COMPLETED",
+        "CONFIRMED",
+        "PAID",
+        "SUCCESS",
+        "DEPOSIT_TX_CONFIRMED",
+        "DEPOSIT_TX_ENRICHED",
+    }
+    ok_status = {"COMPLETED", "CONFIRMED", "PAID", "SUCCESS", "SUCCEEDED"}
+    return (event in ok_events) or (status in ok_status)
 
 
 def _member_roles_include_premium(role_ids: list[str]) -> bool:
@@ -3897,17 +4135,31 @@ async def api_claim(req: ClaimRequest, request: Request):
         import sqlite3
         try:
             payment_database.insert_claim(tx_store, chain, discord_user_id, GUILD_ID, tier, str(raw_amount))
+            _sb_mirror_payment_claim(
+                tx_hash=tx_store,
+                chain=chain,
+                user_id=discord_user_id,
+                guild_id=GUILD_ID,
+                tier=tier,
+                amount_raw=str(raw_amount),
+            )
         except sqlite3.IntegrityError:
             raise HTTPException(409, "Transaction already claimed (race condition).")
 
-        # Assign role
-        role_id = LIFETIME_ROLE_ID if tier == "lifetime" else MONTHLY_ROLE_ID
-        granted, role_msg = await _discord_grant_role(session, discord_user_id, role_id)
+        # Website-only access mode: do not assign Discord roles from payment flow.
+        granted = False
+        role_msg = "Website access recorded."
 
         if tier == "monthly":
             try:
-                payment_database.upsert_monthly_subscription(
+                sub_exp = payment_database.upsert_monthly_subscription(
                     discord_user_id, GUILD_ID, tx_store, chain, config.PREMIUM_MONTHLY_DAYS
+                )
+                _sb_mirror_subscription(
+                    user_id=discord_user_id,
+                    guild_id=GUILD_ID,
+                    expires_at_iso=sub_exp.isoformat(),
+                    tx_hash=tx_store,
                 )
             except Exception:
                 pass
@@ -3922,10 +4174,111 @@ async def api_claim(req: ClaimRequest, request: Request):
         "success": True,
         "role_assigned": granted,
         "access_code": access_code,
-        "message": (
-            f"Payment verified! {'Role granted — welcome to Velcor3!' if granted else role_msg}"
-        ),
+        "message": "Payment verified! Website access has been activated.",
     })
+
+
+@app.post("/api/payments/helio/webhook")
+async def api_payments_helio_webhook(request: Request):
+    """
+    MoonPay/Helio webhook for monthly auto-activation.
+    Requires HELIO_WEBHOOK_SHARED_TOKEN signature verification in production.
+    """
+    raw_body = await request.body()
+    sig = str(request.headers.get("x-signature") or "").strip().lower()
+    if HELIO_WEBHOOK_SHARED_TOKEN:
+        if not sig:
+            raise HTTPException(401, "Missing webhook signature")
+        expected = hmac.new(
+            HELIO_WEBHOOK_SHARED_TOKEN.encode("utf-8"),
+            raw_body,
+            hashlib.sha256,
+        ).hexdigest().lower()
+        if not hmac.compare_digest(expected, sig):
+            raise HTTPException(401, "Invalid webhook signature")
+
+    try:
+        payload = json.loads(raw_body.decode("utf-8") or "{}")
+    except Exception:
+        raise HTTPException(400, "Invalid JSON payload")
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "Invalid webhook payload")
+
+    if not HELIO_AUTO_MONTHLY_ENABLED:
+        return JSONResponse({"ok": True, "ignored": "auto_monthly_disabled"})
+    if not _helio_is_payment_confirmed(payload):
+        return JSONResponse({"ok": True, "ignored": "event_not_confirmed"})
+
+    paylink_id = _helio_extract_paylink_id(payload)
+    if HELIO_MONTHLY_PAYLINK_IDS and paylink_id not in HELIO_MONTHLY_PAYLINK_IDS:
+        return JSONResponse({"ok": True, "ignored": "paylink_not_allowed", "paylink_id": paylink_id})
+
+    discord_user_id = _helio_extract_discord_user_id(payload)
+    if discord_user_id <= 0:
+        return JSONResponse({"ok": True, "ignored": "missing_discord_user_id"})
+
+    chain = _helio_extract_chain(payload)
+    if chain not in ("eth_mainnet", "eth_base", "solana"):
+        return JSONResponse({"ok": True, "ignored": "unsupported_chain", "chain": chain})
+
+    tx_hash = _helio_extract_tx_hash(payload, chain)
+    if not tx_hash:
+        return JSONResponse({"ok": True, "ignored": "missing_or_invalid_tx_hash"})
+
+    payment_database.init_db()
+    if payment_database.claim_exists(tx_hash, chain):
+        return JSONResponse({"ok": True, "duplicate": True, "tx_hash": tx_hash, "chain": chain})
+
+    amount_raw = _helio_extract_amount_raw(payload)
+    import sqlite3
+    try:
+        payment_database.insert_claim(tx_hash, chain, discord_user_id, GUILD_ID, "monthly", amount_raw)
+        _sb_mirror_payment_claim(
+            tx_hash=tx_hash,
+            chain=chain,
+            user_id=discord_user_id,
+            guild_id=GUILD_ID,
+            tier="monthly",
+            amount_raw=amount_raw,
+        )
+    except sqlite3.IntegrityError:
+        return JSONResponse({"ok": True, "duplicate": True, "tx_hash": tx_hash, "chain": chain})
+
+    try:
+        expires_at = payment_database.upsert_monthly_subscription(
+            discord_user_id,
+            GUILD_ID,
+            tx_hash,
+            chain,
+            int(config.PREMIUM_MONTHLY_DAYS),
+        )
+        expires_iso = expires_at.isoformat()
+        _sb_mirror_subscription(
+            user_id=discord_user_id,
+            guild_id=GUILD_ID,
+            expires_at_iso=expires_iso,
+            tx_hash=tx_hash,
+        )
+    except Exception:
+        expires_iso = ""
+
+    # Website-only access mode: keep payment automation independent from Discord roles.
+    role_assigned = False
+    role_msg = "Monthly website access recorded."
+
+    return JSONResponse(
+        {
+            "ok": True,
+            "applied": True,
+            "tier": "monthly",
+            "discord_user_id": int(discord_user_id),
+            "chain": chain,
+            "tx_hash": tx_hash,
+            "expires_at": expires_iso,
+            "role_assigned": bool(role_assigned),
+            "role_message": role_msg,
+        }
+    )
 
 
 class RedeemRequest(BaseModel):
