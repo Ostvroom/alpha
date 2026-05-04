@@ -2069,6 +2069,90 @@ async def _find_matching_evm_transfer(
     return ""
 
 
+async def _diagnose_evm_intent_miss(
+    session: aiohttp.ClientSession,
+    *,
+    chain: str,
+    payer_wallet: str,
+    treasury_wallet: str,
+    amount_raw: str,
+) -> str:
+    chain_id = 8453 if chain == "eth_base" else 1
+    api_key = (config.ETHSCAN_API_KEY or "").strip()
+    if not api_key:
+        return "Payment not detected yet. Etherscan key is missing on server."
+
+    min_conf = int(config.PAYMENT_MIN_CONFIRMATIONS_BASE if chain == "eth_base" else config.PAYMENT_MIN_CONFIRMATIONS_ETH)
+    now_ts = int(time.time())
+    need = str(amount_raw or "").strip()
+    payer = str(payer_wallet or "").lower()
+    treasury = str(treasury_wallet or "").lower()
+
+    async def _txlist(address: str) -> list[dict[str, Any]]:
+        url = (
+            f"https://api.etherscan.io/v2/api?chainid={chain_id}&module=account&action=txlist"
+            f"&address={address}&sort=desc&apikey={api_key}"
+        )
+        async with session.get(url, timeout=45) as r:
+            try:
+                data = await r.json()
+            except Exception:
+                return []
+        rows = data.get("result") if isinstance(data, dict) else None
+        return rows if isinstance(rows, list) else []
+
+    payer_rows = await _txlist(payer)
+    # 1) Same payer -> treasury but low confirmations
+    for tx in payer_rows[:120]:
+        if not isinstance(tx, dict):
+            continue
+        frm = str(tx.get("from") or "").lower()
+        to_addr = str(tx.get("to") or "").lower()
+        val = str(tx.get("value") or "")
+        if frm == payer and to_addr == treasury and val == need:
+            conf = int(str(tx.get("confirmations") or "0") or "0")
+            if conf < min_conf:
+                return f"Payment found, waiting confirmations ({conf}/{min_conf}). Please retry shortly."
+
+    # 2) Same payer -> treasury but wrong amount
+    for tx in payer_rows[:120]:
+        if not isinstance(tx, dict):
+            continue
+        frm = str(tx.get("from") or "").lower()
+        to_addr = str(tx.get("to") or "").lower()
+        val = str(tx.get("value") or "")
+        if frm == payer and to_addr == treasury and val != need:
+            try:
+                sent_eth = int(val) / 1e18
+                need_eth = int(need) / 1e18
+                return f"Payment found from submitted wallet but amount mismatch (sent {sent_eth:.6f} ETH, expected {need_eth:.6f} ETH)."
+            except Exception:
+                return "Payment found from submitted wallet but amount does not match the exact required amount."
+
+    # 3) Treasury received exact amount from different wallet (likely wrong payer wallet submitted)
+    treasury_rows = await _txlist(treasury)
+    for tx in treasury_rows[:120]:
+        if not isinstance(tx, dict):
+            continue
+        frm = str(tx.get("from") or "").lower()
+        to_addr = str(tx.get("to") or "").lower()
+        val = str(tx.get("value") or "")
+        if to_addr != treasury:
+            continue
+        if val != need:
+            continue
+        try:
+            age_sec = now_ts - int(str(tx.get("timeStamp") or "0") or "0")
+        except Exception:
+            age_sec = 0
+        if age_sec > 8 * 3600:
+            continue
+        if frm != payer:
+            return "We found a matching payment amount to treasury, but from a different wallet than submitted. Use the exact sending wallet address and try again."
+
+    return "Payment not detected yet. Make sure you sent the exact amount from the submitted wallet and wait for chain confirmations."
+
+
 async def _find_matching_solana_transfer(
     session: aiohttp.ClientSession,
     *,
@@ -2160,6 +2244,25 @@ async def _find_matching_payment_tx(
             amount_raw=amount_raw,
         )
     return ""
+
+
+async def _payment_not_detected_reason(
+    session: aiohttp.ClientSession,
+    *,
+    chain: str,
+    payer_wallet: str,
+    treasury_wallet: str,
+    amount_raw: str,
+) -> str:
+    if chain in ("eth_mainnet", "eth_base"):
+        return await _diagnose_evm_intent_miss(
+            session,
+            chain=chain,
+            payer_wallet=payer_wallet,
+            treasury_wallet=treasury_wallet,
+            amount_raw=amount_raw,
+        )
+    return "Payment not detected yet. Make sure you sent the exact amount from the submitted wallet and wait for confirmation."
 
 
 def _member_roles_include_premium(role_ids: list[str]) -> bool:
@@ -4422,6 +4525,16 @@ async def api_payments_intent_claim(request: Request, body: PaymentIntentClaimRe
             treasury_wallet=treasury_wallet,
             amount_raw=amount_raw,
         )
+        if not tx_hash:
+            reason = await _payment_not_detected_reason(
+                session,
+                chain=chain,
+                payer_wallet=payer_wallet,
+                treasury_wallet=treasury_wallet,
+                amount_raw=amount_raw,
+            )
+            conn.close()
+            raise HTTPException(400, reason)
     if not tx_hash:
         conn.close()
         raise HTTPException(400, "Payment not detected yet. Please wait for confirmation and try again.")
