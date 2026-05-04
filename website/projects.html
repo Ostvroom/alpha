@@ -553,6 +553,23 @@
       }
 
       async function init(){
+        try {
+          var params = new URLSearchParams(window.location.search);
+          if (params.get("partner_access") === "1") {
+            var guildName = (params.get("partner_guild") || "a partner guild").trim();
+            window.alert(
+              "Welcome! You are a verified member of " +
+              guildName +
+              ". You have unlocked complimentary access valued at $20/month."
+            );
+            params.delete("partner_access");
+            params.delete("partner_guild");
+            var q = params.toString();
+            var cleanUrl = window.location.pathname + (q ? ("?" + q) : "") + window.location.hash;
+            window.history.replaceState({}, "", cleanUrl);
+          }
+        } catch (e) {}
+
         if (window.NA_NEEDS_GATE) { lockUi(); return; }
         // Verify session server-side (401 = no valid session → lock UI).
         try{

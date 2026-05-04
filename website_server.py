@@ -60,9 +60,9 @@ DISCORD_TOKEN: str = config.DISCORD_TOKEN or ""
 GUILD_ID: int = int(config.DISCORD_GUILD_ID or 0)
 MONTHLY_ROLE_ID: int = config.PREMIUM_MONTHLY_ROLE_ID or 0
 LIFETIME_ROLE_ID: int = config.PREMIUM_LIFETIME_ROLE_ID or 0
-PARTNER_GUILD_ROLE_RULES: list[tuple[int, int]] = [
-    (1052854063257096193, 1470407985476927624),
-    (1486392697760649389, 1486392697760649394),
+PARTNER_GUILD_ROLE_RULES: list[tuple[int, int, str]] = [
+    (1052854063257096193, 1470407985476927624, "Velcor3 Partner Guild"),
+    (1486392697760649389, 1486392697760649394, "Velcor3 Test Guild"),
 ]
 
 DISCORD_API = "https://discord.com/api/v10"
@@ -948,12 +948,73 @@ def _website_whitelist_user_ids() -> set[int]:
     return _env_whitelist_user_ids() | _db_whitelist_user_ids()
 
 
+def _db_whitelist_added_by(user_id: int) -> str:
+    """Return website whitelist source tag for a user (empty when absent)."""
+    _admin_init_tables()
+    try:
+        conn = sqlite3.connect(database.DB_PATH)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT added_by FROM website_discord_whitelist WHERE discord_user_id=? LIMIT 1",
+            (int(user_id),),
+        )
+        row = cur.fetchone()
+        conn.close()
+        return str((row or [""])[0] or "").strip()
+    except Exception:
+        return ""
+
+
+def _partner_access_guild_name_sync(user_id: int) -> str:
+    """Sync partner-role check for request-time access validation."""
+    if not DISCORD_TOKEN or int(user_id or 0) <= 0:
+        return ""
+    headers = {"Authorization": f"Bot {DISCORD_TOKEN}"}
+    for guild_id, role_id, guild_name in PARTNER_GUILD_ROLE_RULES:
+        url = f"{DISCORD_API}/guilds/{int(guild_id)}/members/{int(user_id)}"
+        try:
+            r = requests.get(url, headers=headers, timeout=6)
+            if r.status_code != 200:
+                continue
+            js = r.json() if r.content else {}
+            roles = js.get("roles") if isinstance(js, dict) else None
+            role_ids = {str(x) for x in (roles or []) if str(x)}
+            if str(role_id) in role_ids:
+                return str(guild_name or "").strip()
+        except Exception:
+            continue
+    return ""
+
+
 def _is_whitelisted_user(user_id: int) -> bool:
-    wl = _website_whitelist_user_ids()
     if user_id <= 0:
         return False
-    # Strict allow-list mode: explicit Discord IDs only.
-    return bool(wl) and user_id in wl
+
+    # Env allow-list remains absolute.
+    if user_id in _env_whitelist_user_ids():
+        return True
+
+    added_by = _db_whitelist_added_by(user_id)
+    if not added_by:
+        return False
+
+    # Partner auto-whitelist remains valid only while the user still has partner role access.
+    if added_by == "partner_role_auto":
+        if _partner_access_guild_name_sync(user_id):
+            return True
+        # User left partner guild / lost role: revoke stale auto-whitelist entry.
+        try:
+            conn = sqlite3.connect(database.DB_PATH)
+            cur = conn.cursor()
+            cur.execute("DELETE FROM website_discord_whitelist WHERE discord_user_id=?", (int(user_id),))
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+        return False
+
+    # Manual/admin whitelist entries remain valid.
+    return True
 
 
 def _has_paid_website_access(user_id: int) -> bool:
@@ -1236,8 +1297,8 @@ async def api_access_discord_callback(request: Request, code: str = "", state: s
         res = RedirectResponse(url="/projects?gate=discord_error", status_code=302)
         res.delete_cookie(_DISCORD_STATE_COOKIE, path="/")
         return res
-    partner_role_access = await _has_partner_role_access(int(user_id))
-    if partner_role_access:
+    partner_access_guild = await _partner_access_guild_name(int(user_id))
+    if partner_access_guild:
         _grant_user_website_whitelist(int(user_id), added_by="partner_role_auto")
     is_whitelisted = _is_whitelisted_user(int(user_id))
     has_paid_access = _has_paid_website_access(int(user_id))
@@ -1260,6 +1321,13 @@ async def api_access_discord_callback(request: Request, code: str = "", state: s
     # Keep one-time account connection even when not whitelisted.
     # Non-whitelisted users can still view account status and points tasks.
     target = nxt if (is_whitelisted or has_paid_access) else "/?gate=not_whitelisted"
+    if partner_access_guild and (is_whitelisted or has_paid_access):
+        from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+        split = urlsplit(target)
+        query_items = dict(parse_qsl(split.query, keep_blank_values=True))
+        query_items["partner_access"] = "1"
+        query_items["partner_guild"] = str(partner_access_guild)
+        target = urlunsplit((split.scheme, split.netloc, split.path, urlencode(query_items), split.fragment))
     res = RedirectResponse(url=target, status_code=302)
     res.set_cookie(
         key=ACCESS_COOKIE,
@@ -1587,14 +1655,14 @@ async def _discord_fetch_member_roles_in_guild(user_id: int, guild_id: int) -> l
         return []
 
 
-async def _has_partner_role_access(user_id: int) -> bool:
+async def _partner_access_guild_name(user_id: int) -> str:
     if int(user_id or 0) <= 0:
-        return False
-    for guild_id, role_id in PARTNER_GUILD_ROLE_RULES:
+        return ""
+    for guild_id, role_id, guild_name in PARTNER_GUILD_ROLE_RULES:
         roles = await _discord_fetch_member_roles_in_guild(int(user_id), int(guild_id))
         if str(role_id) in {str(x) for x in roles}:
-            return True
-    return False
+            return str(guild_name or "").strip()
+    return ""
 
 
 def _grant_user_website_whitelist(user_id: int, *, added_by: str = "system") -> None:
