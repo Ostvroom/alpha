@@ -1454,7 +1454,10 @@
             <button class="ps-nav-btn" type="button" id="pmCreateIntent">Get exact amount & wallet</button>
             <div id="pmIntentBox" style="display:none;border:1px solid rgba(255,204,0,.16);border-radius:12px;padding:12px;background:rgba(255,204,0,.04)">
               <div class="ps-wallet-label">Send exact amount to this wallet</div>
-              <div id="pmTreasuryWallet" class="ps-wallet-box ps-wallet-addr" style="margin-top:6px"></div>
+              <div id="pmTreasuryWallet" class="ps-wallet-box" style="margin-top:6px;cursor:pointer" title="Click to copy treasury wallet">
+                <span id="pmTreasuryWalletText" class="ps-wallet-addr" style="margin:0"></span>
+                <button id="pmTreasuryWalletCopy" class="ps-copy-btn" type="button">Copy</button>
+              </div>
               <div class="ps-wallet-label" style="margin-top:10px">Exact amount</div>
               <div id="pmExactAmount" class="ps-wallet-box ps-wallet-addr" style="margin-top:6px"></div>
               <button class="ps-nav-btn" type="button" id="pmClaimNow" style="margin-top:10px">Claim access</button>
@@ -1749,6 +1752,113 @@
 
     async function renderReferralBox() {
       try {
+        function showStyledNotice(message, isError) {
+          var existing = document.getElementById("tg-styled-notice");
+          if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+          var wrap = document.createElement("div");
+          wrap.id = "tg-styled-notice";
+          wrap.className = "na-modal is-open";
+          wrap.style.zIndex = "10020";
+          wrap.innerHTML = [
+            '<div class="na-modal-bg" id="tg-styled-notice-bg"></div>',
+            '<div class="na-dialog" style="max-width:520px">',
+            '  <div class="na-dialog-head">',
+            '    <div class="na-dialog-head-left">',
+            '      <div class="na-dots"><span></span><span></span><span></span></div>',
+            '      <span class="na-dialog-title">nerds alpha — withdraw</span>',
+            '    </div>',
+            '    <button id="tg-styled-notice-close" class="na-close" type="button" aria-label="Close">&times;</button>',
+            '  </div>',
+            '  <div class="na-dialog-body">',
+            '    <div style="padding:22px 22px 18px">',
+            '      <div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:' + (isError ? "rgba(255,150,150,.95)" : "rgba(255,204,0,.85)") + ';margin-bottom:10px">' + (isError ? "Withdraw request error" : "Withdraw request update") + '</div>',
+            '      <div style="font-size:13px;line-height:1.6;color:rgba(240,232,192,.82);margin-bottom:14px">' + String(message || "").replace(/</g, "&lt;") + '</div>',
+            '      <div style="display:flex;justify-content:flex-end"><button id="tg-styled-notice-ok" class="tg-btn-discord" type="button" style="padding:8px 14px">OK</button></div>',
+            '    </div>',
+            '  </div>',
+            '</div>'
+          ].join("");
+          document.body.appendChild(wrap);
+          var close = function() {
+            if (wrap && wrap.parentNode) wrap.parentNode.removeChild(wrap);
+          };
+          var okBtn = document.getElementById("tg-styled-notice-ok");
+          var xBtn = document.getElementById("tg-styled-notice-close");
+          var bg = document.getElementById("tg-styled-notice-bg");
+          if (okBtn) okBtn.addEventListener("click", close);
+          if (xBtn) xBtn.addEventListener("click", close);
+          if (bg) bg.addEventListener("click", close);
+        }
+
+        function showWithdrawForm(minW, availableW) {
+          return new Promise(function(resolve){
+            var existing = document.getElementById("tg-withdraw-modal");
+            if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+            var wrap = document.createElement("div");
+            wrap.id = "tg-withdraw-modal";
+            wrap.className = "na-modal is-open";
+            wrap.style.zIndex = "10021";
+            wrap.innerHTML = [
+              '<div class="na-modal-bg" id="tg-withdraw-bg"></div>',
+              '<div class="na-dialog" style="max-width:560px">',
+              '  <div class="na-dialog-head">',
+              '    <div class="na-dialog-head-left">',
+              '      <div class="na-dots"><span></span><span></span><span></span></div>',
+              '      <span class="na-dialog-title">nerds alpha — withdraw request</span>',
+              '    </div>',
+              '    <button id="tg-withdraw-close" class="na-close" type="button" aria-label="Close">&times;</button>',
+              '  </div>',
+              '  <div class="na-dialog-body">',
+              '    <div style="padding:20px 22px 18px">',
+              '      <div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,204,0,.72);margin-bottom:10px">Manual payout request</div>',
+              '      <div style="font-size:12px;color:rgba(240,232,192,.68);margin-bottom:12px">Minimum withdraw is <b style="color:#ffcc00">$' + Number(minW || 10).toFixed(2) + '</b>. Available now: <b style="color:#7dffb0">$' + Number(availableW || 0).toFixed(2) + '</b>.</div>',
+              '      <div style="display:flex;flex-direction:column;gap:8px">',
+              '        <input id="tg-w-amount" class="cl-input" placeholder="Withdraw amount in USD" />',
+              '        <select id="tg-w-chain" class="cl-input"><option value="solana">solana</option><option value="base">base</option></select>',
+              '        <input id="tg-w-wallet" class="cl-input" placeholder="Payout wallet address" />',
+              '        <div id="tg-w-err" style="display:none;font-size:11px;color:rgba(255,140,140,.95)"></div>',
+              '      </div>',
+              '      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">',
+              '        <button id="tg-w-cancel" class="tg-btn-discord" type="button">Cancel</button>',
+              '        <button id="tg-w-submit" class="tg-btn-discord" type="button">Submit Request</button>',
+              '      </div>',
+              '    </div>',
+              '  </div>',
+              '</div>'
+            ].join("");
+            document.body.appendChild(wrap);
+            var amountEl = document.getElementById("tg-w-amount");
+            var chainEl = document.getElementById("tg-w-chain");
+            var walletEl = document.getElementById("tg-w-wallet");
+            var errEl = document.getElementById("tg-w-err");
+            if (amountEl) amountEl.value = String(Math.floor(Number(availableW || 0) * 100) / 100);
+            var close = function(val){
+              if (wrap && wrap.parentNode) wrap.parentNode.removeChild(wrap);
+              resolve(val || null);
+            };
+            var showErr = function(msg){
+              if (!errEl) return;
+              errEl.style.display = "block";
+              errEl.textContent = msg || "";
+            };
+            var closeBtn = document.getElementById("tg-withdraw-close");
+            var cancelBtn = document.getElementById("tg-w-cancel");
+            var submitBtn = document.getElementById("tg-w-submit");
+            var bg = document.getElementById("tg-withdraw-bg");
+            if (closeBtn) closeBtn.addEventListener("click", function(){ close(null); });
+            if (cancelBtn) cancelBtn.addEventListener("click", function(){ close(null); });
+            if (bg) bg.addEventListener("click", function(){ close(null); });
+            if (submitBtn) submitBtn.addEventListener("click", function(){
+              var amount = Number((amountEl && amountEl.value || "").trim());
+              var chain = String((chainEl && chainEl.value) || "solana").trim().toLowerCase();
+              var wallet = String((walletEl && walletEl.value) || "").trim();
+              if (!isFinite(amount) || amount <= 0) { showErr("Enter a valid withdraw amount."); return; }
+              if (!wallet) { showErr("Enter your payout wallet."); return; }
+              close({ amount_usd: amount, payout_chain: chain, payout_wallet: wallet });
+            });
+          });
+        }
+
         var slot = document.getElementById("tg-referral-slot");
         if (!slot) return;
         var r = await fetch("/api/referral/me", {credentials:"include"});
@@ -1794,35 +1904,23 @@
           withdrawBtn.addEventListener("click", async function(){
             try {
               if (availableW < minW) {
-                alert("Minimum withdraw is $" + minW.toFixed(2) + ". Available now: $" + availableW.toFixed(2));
+                showStyledNotice("Minimum withdraw is $" + minW.toFixed(2) + ". Available now: $" + availableW.toFixed(2), true);
                 return;
               }
-              var amountInput = window.prompt(
-                "Withdraw amount in USD (minimum $" + minW.toFixed(2) + "):",
-                String(Math.floor(availableW * 100) / 100)
-              );
-              if (amountInput === null) return;
-              var amount = Number(String(amountInput || "").trim());
-              if (!isFinite(amount) || amount <= 0) return;
-              var chain = (window.prompt("Payout chain: solana or base", "solana") || "solana").trim().toLowerCase();
-              var wallet = (window.prompt("Payout wallet address:", "") || "").trim();
-              if (!wallet) return;
+              var formData = await showWithdrawForm(minW, availableW);
+              if (!formData) return;
               var rr = await fetch("/api/referral/withdraw/request", {
                 method: "POST",
                 credentials: "include",
                 headers: {"Content-Type":"application/json"},
-                body: JSON.stringify({
-                  amount_usd: amount,
-                  payout_chain: chain,
-                  payout_wallet: wallet
-                })
+                body: JSON.stringify(formData)
               });
               var rj = await rr.json().catch(function(){ return {}; });
               if (!rr.ok) {
-                alert((rj && (rj.detail || rj.message)) || "Withdraw request failed.");
+                showStyledNotice((rj && (rj.detail || rj.message)) || "Withdraw request failed.", true);
                 return;
               }
-              alert("Withdraw request submitted. We will review and process it manually.");
+              showStyledNotice("Withdraw request submitted. We will review and process it manually.", false);
               renderReferralBox();
             } catch (e) {}
           });
@@ -1948,7 +2046,35 @@
     var pmIntentBox = document.getElementById("pmIntentBox");
     var pmPayerInput = document.getElementById("pmPayerWallet");
     var pmTreasuryEl = document.getElementById("pmTreasuryWallet");
+    var pmTreasuryTextEl = document.getElementById("pmTreasuryWalletText");
+    var pmTreasuryCopyBtn = document.getElementById("pmTreasuryWalletCopy");
     var pmExactEl = document.getElementById("pmExactAmount");
+
+    async function copyTextWithFeedback(text, btn) {
+      try {
+        await navigator.clipboard.writeText(String(text || ""));
+        if (btn) {
+          var prev = btn.textContent;
+          btn.textContent = "Copied";
+          setTimeout(function(){ btn.textContent = prev || "Copy"; }, 1200);
+        }
+      } catch (e) {}
+    }
+
+    if (pmTreasuryEl) {
+      pmTreasuryEl.addEventListener("click", function(){
+        if (!pmTreasury) return;
+        copyTextWithFeedback(pmTreasury, pmTreasuryCopyBtn);
+      });
+    }
+    if (pmTreasuryCopyBtn) {
+      pmTreasuryCopyBtn.addEventListener("click", function(e){
+        e.preventDefault();
+        e.stopPropagation();
+        if (!pmTreasury) return;
+        copyTextWithFeedback(pmTreasury, pmTreasuryCopyBtn);
+      });
+    }
 
     function setPmStatus(type, txt){
       if (!pmStatus) return;
@@ -1995,7 +2121,7 @@
         pmAmount = String(j.exact_amount || "");
         pmTreasury = String(j.treasury_wallet || "");
         if (pmIntentBox) pmIntentBox.style.display = "block";
-        if (pmTreasuryEl) pmTreasuryEl.textContent = pmTreasury;
+        if (pmTreasuryTextEl) pmTreasuryTextEl.textContent = pmTreasury;
         if (pmExactEl) pmExactEl.textContent = pmAmount + (pmChain === "solana" ? " SOL" : " ETH");
         setPmStatus("ok", "Send the exact amount from the submitted wallet, then click Claim access.");
       } catch (e) {
