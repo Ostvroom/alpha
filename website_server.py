@@ -130,6 +130,10 @@ _SUPABASE_MIRROR_PAYMENTS = str(os.getenv("SUPABASE_MIRROR_PAYMENTS", "1") or "1
 _SUPABASE_PAYMENT_CLAIMS_TABLE = (os.getenv("SUPABASE_PAYMENT_CLAIMS_TABLE") or "payment_claims").strip()
 _SUPABASE_PREMIUM_SUBSCRIPTIONS_TABLE = (os.getenv("SUPABASE_PREMIUM_SUBSCRIPTIONS_TABLE") or "premium_subscriptions").strip()
 _SUPABASE_PAYMENT_INTENTS_TABLE = (os.getenv("SUPABASE_PAYMENT_INTENTS_TABLE") or "payment_intents").strip()
+_SUPABASE_REFERRAL_CODES_TABLE = (os.getenv("SUPABASE_REFERRAL_CODES_TABLE") or "referral_codes").strip()
+_SUPABASE_REFERRALS_TABLE = (os.getenv("SUPABASE_REFERRALS_TABLE") or "referrals").strip()
+_SUPABASE_REFERRAL_REWARDS_TABLE = (os.getenv("SUPABASE_REFERRAL_REWARDS_TABLE") or "referral_rewards").strip()
+REFERRAL_REWARD_USD_MONTHLY = float(os.getenv("REFERRAL_REWARD_USD_MONTHLY", "3") or "3")
 
 
 def _sb_enabled() -> bool:
@@ -228,6 +232,248 @@ def _sb_mirror_subscription(
             )
     except Exception as e:
         print(f"[SupabaseMirror] subscription mirror exception: {e}", flush=True)
+
+
+def _ref_code_alphabet() -> str:
+    return "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+
+
+def _new_ref_code(length: int = 8) -> str:
+    import secrets
+    alpha = _ref_code_alphabet()
+    return "".join(secrets.choice(alpha) for _ in range(max(6, int(length))))
+
+
+def _sb_get_or_create_referral_code(user_id: int) -> str:
+    if not (_sb_enabled() and _SUPABASE_REFERRAL_CODES_TABLE):
+        return payment_database.get_or_create_referral_code(int(user_id))
+    uid = int(user_id or 0)
+    if uid <= 0:
+        return ""
+    try:
+        r = requests.get(
+            _sb_url(f"/{_SUPABASE_REFERRAL_CODES_TABLE}?user_id=eq.{uid}&select=code&limit=1"),
+            headers=_sb_headers(),
+            timeout=12,
+        )
+        if r.status_code == 200:
+            rows = r.json()
+            if isinstance(rows, list) and rows and rows[0].get("code"):
+                return str(rows[0]["code"]).strip().upper()
+    except Exception:
+        pass
+    for _ in range(30):
+        code = _new_ref_code(8)
+        payload = {
+            "user_id": uid,
+            "code": code,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        try:
+            r2 = requests.post(
+                _sb_url(f"/{_SUPABASE_REFERRAL_CODES_TABLE}"),
+                headers=_sb_headers(prefer="resolution=merge-duplicates"),
+                data=json.dumps(payload),
+                timeout=12,
+            )
+            if r2.status_code in (200, 201, 204):
+                return code
+        except Exception:
+            continue
+    return payment_database.get_or_create_referral_code(uid)
+
+
+def _sb_lookup_referrer_by_code(code: str) -> int:
+    s = str(code or "").strip().upper()
+    if not s:
+        return 0
+    if not (_sb_enabled() and _SUPABASE_REFERRAL_CODES_TABLE):
+        return int(payment_database.lookup_referrer_by_code(s) or 0)
+    try:
+        r = requests.get(
+            _sb_url(f"/{_SUPABASE_REFERRAL_CODES_TABLE}?code=eq.{s}&select=user_id&limit=1"),
+            headers=_sb_headers(),
+            timeout=12,
+        )
+        if r.status_code != 200:
+            return 0
+        rows = r.json()
+        if isinstance(rows, list) and rows:
+            return int(rows[0].get("user_id") or 0)
+    except Exception:
+        return 0
+    return 0
+
+
+def _sb_get_referral_record(referred_user_id: int) -> dict[str, Any] | None:
+    uid = int(referred_user_id or 0)
+    if uid <= 0:
+        return None
+    if not (_sb_enabled() and _SUPABASE_REFERRALS_TABLE):
+        rec = payment_database.get_referral_record(uid)
+        if not rec:
+            return None
+        return {
+            "referrer_user_id": int(getattr(rec, "referrer_user_id", 0) or 0),
+            "code_used": "",
+            "source": str(getattr(rec, "source", "") or ""),
+            "created_at": str(getattr(rec, "created_at", "") or ""),
+        }
+    try:
+        r = requests.get(
+            _sb_url(f"/{_SUPABASE_REFERRALS_TABLE}?referred_user_id=eq.{uid}&select=referrer_user_id,code_used,source,created_at&limit=1"),
+            headers=_sb_headers(),
+            timeout=12,
+        )
+        if r.status_code != 200:
+            return None
+        rows = r.json()
+        if isinstance(rows, list) and rows:
+            row = rows[0] or {}
+            return {
+                "referrer_user_id": int(row.get("referrer_user_id") or 0),
+                "code_used": str(row.get("code_used") or ""),
+                "source": str(row.get("source") or ""),
+                "created_at": str(row.get("created_at") or ""),
+            }
+    except Exception:
+        return None
+    return None
+
+
+def _sb_set_referral(referred_user_id: int, code: str, *, source: str = "website") -> tuple[bool, str]:
+    referred = int(referred_user_id or 0)
+    s = str(code or "").strip().upper()
+    if referred <= 0 or not s:
+        return False, "Invalid referral."
+    referrer = _sb_lookup_referrer_by_code(s)
+    if referrer <= 0:
+        return False, "Invalid referral code."
+    if referrer == referred:
+        return False, "You cannot refer yourself."
+    existing = _sb_get_referral_record(referred)
+    if existing and int(existing.get("referrer_user_id") or 0) > 0:
+        return False, "Referral already set for this user."
+
+    if not (_sb_enabled() and _SUPABASE_REFERRALS_TABLE):
+        return payment_database.set_referral(
+            referred,
+            referrer,
+            code_used=s,
+            guild_id=GUILD_ID,
+            source=source,
+            invite_code="",
+        )
+
+    payload = {
+        "referred_user_id": int(referred),
+        "referrer_user_id": int(referrer),
+        "code_used": s,
+        "guild_id": int(GUILD_ID or 0),
+        "source": str(source or "website")[:20],
+        "invite_code": "",
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    try:
+        r = requests.post(
+            _sb_url(f"/{_SUPABASE_REFERRALS_TABLE}"),
+            headers=_sb_headers(prefer="resolution=merge-duplicates"),
+            data=json.dumps(payload),
+            timeout=12,
+        )
+        if r.status_code in (200, 201, 204):
+            return True, "Referral saved."
+        return False, "Could not save referral."
+    except Exception:
+        return False, "Could not save referral."
+
+
+def _referral_credit_on_monthly_subscription(*, referred_user_id: int, tx_hash: str, chain: str, amount_raw: str) -> None:
+    if int(referred_user_id or 0) <= 0:
+        return
+    rec = _sb_get_referral_record(int(referred_user_id))
+    if not rec:
+        return
+    referrer_user_id = int(rec.get("referrer_user_id") or 0)
+    if referrer_user_id <= 0:
+        return
+
+    if not (_sb_enabled() and _SUPABASE_REFERRAL_REWARDS_TABLE):
+        try:
+            payment_database.insert_referral_credit(
+                referrer_user_id=referrer_user_id,
+                referred_user_id=int(referred_user_id),
+                tx_hash=tx_hash,
+                chain=chain,
+                tier="monthly",
+                amount_raw=int(str(amount_raw or "0") or "0"),
+                credited_raw=int(round(REFERRAL_REWARD_USD_MONTHLY * 100)),
+            )
+        except Exception:
+            pass
+        return
+
+    payload = {
+        "referrer_user_id": int(referrer_user_id),
+        "referred_user_id": int(referred_user_id),
+        "tx_hash": str(tx_hash or ""),
+        "chain": str(chain or ""),
+        "tier": "monthly",
+        "amount_raw": str(amount_raw or "0"),
+        "reward_usd": float(REFERRAL_REWARD_USD_MONTHLY),
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    try:
+        requests.post(
+            _sb_url(f"/{_SUPABASE_REFERRAL_REWARDS_TABLE}"),
+            headers=_sb_headers(prefer="resolution=merge-duplicates"),
+            data=json.dumps(payload),
+            timeout=12,
+        )
+    except Exception:
+        pass
+
+
+def _referral_stats(user_id: int) -> dict[str, Any]:
+    uid = int(user_id or 0)
+    if uid <= 0:
+        return {"referrals": 0, "reward_usd": 0.0}
+    if not (_sb_enabled() and _SUPABASE_REFERRALS_TABLE and _SUPABASE_REFERRAL_REWARDS_TABLE):
+        try:
+            conn = sqlite3.connect(payment_database.DB_FILE)
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM referrals WHERE referrer_user_id = ?", (uid,))
+            referrals = int((cur.fetchone() or [0])[0] or 0)
+            cur.execute("SELECT SUM(CAST(credited_raw AS INTEGER)) FROM referral_credits WHERE referrer_user_id = ?", (uid,))
+            cents = int((cur.fetchone() or [0])[0] or 0)
+            conn.close()
+            return {"referrals": referrals, "reward_usd": round(cents / 100.0, 2)}
+        except Exception:
+            return {"referrals": 0, "reward_usd": 0.0}
+    referrals = 0
+    reward = 0.0
+    try:
+        r1 = requests.get(
+            _sb_url(f"/{_SUPABASE_REFERRALS_TABLE}?referrer_user_id=eq.{uid}&select=referred_user_id"),
+            headers=_sb_headers(),
+            timeout=12,
+        )
+        if r1.status_code == 200:
+            rows = r1.json()
+            if isinstance(rows, list):
+                referrals = len(rows)
+        r2 = requests.get(
+            _sb_url(f"/{_SUPABASE_REFERRAL_REWARDS_TABLE}?referrer_user_id=eq.{uid}&select=reward_usd"),
+            headers=_sb_headers(),
+            timeout=12,
+        )
+        if r2.status_code == 200:
+            rows2 = r2.json()
+            if isinstance(rows2, list):
+                reward = float(sum(float((x or {}).get("reward_usd") or 0) for x in rows2))
+    except Exception:
+        pass
+    return {"referrals": int(referrals), "reward_usd": round(float(reward), 2)}
 
 
 def _acct_init() -> None:
@@ -1386,6 +1632,19 @@ async def api_access_discord_callback(request: Request, code: str = "", state: s
         res = RedirectResponse(url="/projects?gate=discord_error", status_code=302)
         res.delete_cookie(_DISCORD_STATE_COOKIE, path="/")
         return res
+    ref_code_from_next = ""
+    try:
+        from urllib.parse import urlsplit, parse_qsl
+        _sp = urlsplit(nxt)
+        _qs = dict(parse_qsl(_sp.query, keep_blank_values=True))
+        ref_code_from_next = str(_qs.get("ref") or "").strip().upper()
+    except Exception:
+        ref_code_from_next = ""
+    if ref_code_from_next:
+        try:
+            _sb_set_referral(int(user_id), ref_code_from_next, source="website")
+        except Exception:
+            pass
     partner_access_guild = await _partner_access_guild_name(int(user_id))
     if partner_access_guild:
         _grant_user_website_whitelist(int(user_id), added_by="partner_role_auto")
@@ -1410,6 +1669,12 @@ async def api_access_discord_callback(request: Request, code: str = "", state: s
     # Keep one-time account connection even when not whitelisted.
     # Non-whitelisted users can still view account status and points tasks.
     target = nxt if (is_whitelisted or has_paid_access) else "/?gate=not_whitelisted"
+    if (not (is_whitelisted or has_paid_access)) and ref_code_from_next:
+        from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+        split2 = urlsplit(target)
+        query_items2 = dict(parse_qsl(split2.query, keep_blank_values=True))
+        query_items2["ref"] = ref_code_from_next
+        target = urlunsplit((split2.scheme, split2.netloc, split2.path, urlencode(query_items2), split2.fragment))
     if partner_access_guild and (is_whitelisted or has_paid_access):
         from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
         split = urlsplit(target)
@@ -1456,6 +1721,48 @@ async def api_me(request: Request):
         "is_premium": bool(is_premium),
         "engage_tweet_url": engage_tweet_url,
     }
+
+
+class ReferralApplyRequest(BaseModel):
+    code: str
+
+
+@app.get("/api/referral/me")
+async def api_referral_me(request: Request):
+    tok = request.cookies.get(ACCESS_COOKIE, "")
+    payload = _verify_access_token(tok) or {}
+    uid = int(payload.get("uid") or 0)
+    if uid <= 0:
+        raise HTTPException(401, "Unauthorized")
+    code = _sb_get_or_create_referral_code(uid)
+    base = str(request.base_url).rstrip("/")
+    link = f"{base}/?ref={code}" if code else f"{base}/"
+    st = _referral_stats(uid)
+    return {
+        "ok": True,
+        "user_id": uid,
+        "code": code,
+        "link": link,
+        "referrals": int(st.get("referrals") or 0),
+        "reward_usd": float(st.get("reward_usd") or 0.0),
+        "reward_per_subscription_usd": float(REFERRAL_REWARD_USD_MONTHLY),
+    }
+
+
+@app.post("/api/referral/apply")
+async def api_referral_apply(request: Request, body: ReferralApplyRequest):
+    tok = request.cookies.get(ACCESS_COOKIE, "")
+    payload = _verify_access_token(tok) or {}
+    uid = int(payload.get("uid") or 0)
+    if uid <= 0:
+        raise HTTPException(401, "Unauthorized")
+    code = str(body.code or "").strip().upper()
+    if not code:
+        raise HTTPException(400, "code required")
+    ok, msg = _sb_set_referral(uid, code, source="website")
+    if not ok:
+        raise HTTPException(400, msg)
+    return {"ok": True, "message": msg}
 
 
 @app.get("/api/admin/status")
@@ -4608,6 +4915,12 @@ async def api_payments_intent_claim(request: Request, body: PaymentIntentClaimRe
         exp = payment_database.upsert_monthly_subscription(int(uid), GUILD_ID, tx_hash, chain, int(config.PREMIUM_MONTHLY_DAYS))
         expires_iso = exp.isoformat()
         _sb_mirror_subscription(user_id=int(uid), guild_id=GUILD_ID, expires_at_iso=expires_iso, tx_hash=tx_hash)
+        _referral_credit_on_monthly_subscription(
+            referred_user_id=int(uid),
+            tx_hash=tx_hash,
+            chain=chain,
+            amount_raw=amount_raw,
+        )
     except Exception:
         pass
 
@@ -4743,6 +5056,12 @@ async def api_claim(req: ClaimRequest, request: Request):
                     expires_at_iso=sub_exp.isoformat(),
                     tx_hash=tx_store,
                 )
+                _referral_credit_on_monthly_subscription(
+                    referred_user_id=int(discord_user_id),
+                    tx_hash=tx_store,
+                    chain=chain,
+                    amount_raw=str(raw_amount),
+                )
             except Exception:
                 pass
 
@@ -4840,6 +5159,12 @@ async def api_payments_helio_webhook(request: Request):
             guild_id=GUILD_ID,
             expires_at_iso=expires_iso,
             tx_hash=tx_hash,
+        )
+        _referral_credit_on_monthly_subscription(
+            referred_user_id=int(discord_user_id),
+            tx_hash=tx_hash,
+            chain=chain,
+            amount_raw=amount_raw,
         )
     except Exception:
         expires_iso = ""

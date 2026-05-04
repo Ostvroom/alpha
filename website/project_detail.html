@@ -32,6 +32,24 @@
     .k{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:rgba(240,232,192,.55)}
     .v{margin-top:6px;font-size:13px;color:rgba(240,232,192,.82);overflow-wrap:anywhere}
     .section{margin:0 14px 12px;border:1px solid rgba(255,204,0,.12);border-radius:12px;padding:10px 12px;background:rgba(0,0,0,.18)}
+    .admin-blur{
+      filter: blur(7px);
+      opacity: .55;
+      pointer-events: none;
+      user-select: none;
+    }
+    .admin-lock{
+      margin-top:10px;
+      font-family:"JetBrains Mono",monospace;
+      font-size:10px;
+      letter-spacing:.12em;
+      text-transform:uppercase;
+      color:rgba(255,204,0,.74);
+      border:1px dashed rgba(255,204,0,.25);
+      border-radius:8px;
+      padding:8px 10px;
+      background:rgba(255,204,0,.04);
+    }
     .chips{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
     .badge{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:999px;font-family:"JetBrains Mono",monospace;font-size:10px;border:1px solid rgba(255,204,0,.12);background:rgba(255,204,0,.08);color:rgba(240,232,192,.88)}
     .badge b{font-weight:800;color:#ffcc00}
@@ -92,6 +110,14 @@
       return "Early";
     }
     async function main(){
+      var isAdmin = false;
+      try{
+        var a = await fetch("/api/admin/status", {credentials:"include"});
+        if (a.ok){
+          var aj = await a.json();
+          isAdmin = !!(aj && aj.is_admin);
+        }
+      }catch(e){}
       var h=getHandle();
       if(!h){ document.getElementById("err").style.display="block"; document.getElementById("err").textContent="Missing project handle."; return; }
       var r = await fetch("/api/project/"+encodeURIComponent(h), {credentials:"include"});
@@ -157,8 +183,15 @@
       var followersSec = document.getElementById("followersSec");
       followersSec.style.display = "block";
       followersSec.innerHTML =
-        '<div class="k">🧬 Velcor3 Engaged</div>'
+        '<div class="k">🧬 Smart HVA Engaged</div>'
         + '<div class="chips"><span class="badge"><b>Smart Engagers</b> '+esc(String(p.smart_followers_count||0))+'</span></div>';
+      if (!isAdmin){
+        followersSec.classList.add("admin-blur");
+        var lock = document.createElement("div");
+        lock.className = "admin-lock";
+        lock.textContent = "Admin only — smart followers data";
+        followersSec.parentNode.insertBefore(lock, followersSec.nextSibling);
+      }
 
       if(Array.isArray(p.smart_followers) && p.smart_followers.length){
         var names = p.smart_followers.map(function(x){
@@ -168,6 +201,7 @@
         var listSec = document.createElement("div");
         listSec.className = "section";
         listSec.innerHTML = '<div class="k">👥 Smart Followers</div><div class="v">'+names+'</div>';
+        if (!isAdmin) listSec.classList.add("admin-blur");
         document.getElementById("card").appendChild(listSec);
       }
       if(p.x_url){

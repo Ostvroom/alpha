@@ -1525,7 +1525,7 @@
             <div class="cl-step-body">
               <div class="cl-step-title">Like · Retweet · Reply</div>
               <div class="cl-step-desc">
-                <a href="https://x.com/Degensultan/status/1996738765730066530" target="_blank" rel="noopener noreferrer">Open this tweet</a> and like, retweet, and leave a reply.
+                <a href="https://x.com/Degensultan/status/2051311323342840161" target="_blank" rel="noopener noreferrer">Open this tweet</a> and like, retweet, and leave a reply.
               </div>
             </div>
           </div>
@@ -1729,12 +1729,66 @@
     document.addEventListener("keydown", function(e){ if (e.key === "Escape") close(); });
 
     if (connectBtn) connectBtn.addEventListener("click", function(){
-      var next = "/projects";
+      var ref = new URLSearchParams(window.location.search).get("ref") || "";
+      var next = "/projects" + (ref ? ("?ref=" + encodeURIComponent(ref)) : "");
       window.location.href = "/api/access/discord/start?next=" + encodeURIComponent(next);
     });
 
+    async function applyReferralIfPresent() {
+      try {
+        var ref = (new URLSearchParams(window.location.search).get("ref") || "").trim();
+        if (!ref) return;
+        await fetch("/api/referral/apply", {
+          method: "POST",
+          credentials: "include",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({code: ref})
+        });
+      } catch (e) {}
+    }
+
+    async function renderReferralBox() {
+      try {
+        var slot = document.getElementById("tg-referral-slot");
+        if (!slot) return;
+        var r = await fetch("/api/referral/me", {credentials:"include"});
+        if (!r.ok) return;
+        var j = await r.json();
+        if (!j || !j.ok) return;
+        var reward = Number(j.reward_per_subscription_usd || 3);
+        var link = String(j.link || "");
+        var earned = Number(j.reward_usd || 0);
+        var refs = Number(j.referrals || 0);
+        var boxHtml = [
+          '<div style="border:1px solid rgba(255,204,0,.18);padding:10px 12px;margin-bottom:10px;background:rgba(255,204,0,.03)">',
+          '  <div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,204,0,.72);margin-bottom:8px">Refer & Earn</div>',
+          '  <div style="font-size:12px;line-height:1.5;color:rgba(240,232,192,.82);margin-bottom:8px">Anyone who subscribes from your invite link earns you <b style="color:#ffcc00">$' + reward.toFixed(0) + '</b>.</div>',
+          '  <div style="font-size:11px;color:rgba(240,232,192,.60);margin-bottom:8px">Referrals: <b style="color:#f8f0d0">' + refs + '</b> · Earned: <b style="color:#7dffb0">$' + earned.toFixed(2) + '</b></div>',
+          '  <div style="display:flex;gap:8px;align-items:center">',
+          '    <input id="tg-ref-link" readonly value="' + link.replace(/"/g, "&quot;") + '" style="flex:1;background:rgba(0,0,0,.35);border:1px solid rgba(255,204,0,.25);color:rgba(240,232,192,.88);padding:7px 8px;font-size:11px" />',
+          '    <button id="tg-ref-copy" class="tg-btn-discord" type="button" style="padding:7px 10px">Copy</button>',
+          '  </div>',
+          '</div>'
+        ].join("");
+        slot.innerHTML = boxHtml;
+        var copyBtn = document.getElementById("tg-ref-copy");
+        if (copyBtn) {
+          copyBtn.addEventListener("click", async function(){
+            try {
+              var inp = document.getElementById("tg-ref-link");
+              var val = (inp && inp.value) || link;
+              await navigator.clipboard.writeText(val);
+              copyBtn.textContent = "Copied";
+              setTimeout(function(){ copyBtn.textContent = "Copy"; }, 1300);
+            } catch (e) {}
+          });
+        }
+      } catch (e) {}
+    }
+
     // If OAuth bounced back with an error or whitelist rejection, explain it.
     try {
+      applyReferralIfPresent();
       var gate = new URLSearchParams(window.location.search).get("gate") || "";
       if (gate === "discord_error" || gate === "not_whitelisted") {
         open();
@@ -1768,8 +1822,10 @@
             '  <div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,204,0,.72);margin-bottom:8px">Eligible partners for free access</div>',
             '  <ul style="margin:0;padding-left:16px;display:flex;flex-direction:column;gap:6px;font-size:12px;line-height:1.5">' + partnerRows + '</ul>',
             '</div>',
+            '<div id="tg-referral-slot"></div>',
             '<div class="tg-help">Already approved? <a href="/api/access/discord/start?next=/projects" style="color:rgba(255,204,0,.65)">Try another account</a></div>'
           ].join("");
+          renderReferralBox();
           var closeBtn2 = document.getElementById("tg-close-denied");
           if (closeBtn2) closeBtn2.addEventListener("click", close);
           var openSubBtn = document.getElementById("tg-open-subscribe");
