@@ -142,24 +142,38 @@
     }
     var allItems = [];
     function applyFilters(){
-      var q = String((document.getElementById("q").value || "")).trim().toLowerCase();
+      var qRaw = String((document.getElementById("q").value || "")).trim().toLowerCase();
+      var q = qRaw.replace(/^@+/, "");
       var out = allItems.filter(function(p){
         if (!q) return true;
         var blob = [
           p.handle, p.name, p.summary, p.description, p.category, inferCategory(p)
         ].map(function(x){ return String(x || "").toLowerCase(); }).join(" ");
-        return blob.indexOf(q) !== -1;
+        var handle = String(p.handle || "").toLowerCase().replace(/^@+/, "");
+        return blob.indexOf(q) !== -1 || handle.indexOf(q) !== -1;
       });
       document.getElementById("stat").textContent = out.length + " / " + allItems.length + " finds";
       render(out);
     }
     async function refresh(){
       var day = (document.getElementById("day").value || "").trim();
-      var r = await fetch("/api/daily-finds?limit=250&day="+encodeURIComponent(day), {credentials:"include"});
-      if(!r.ok) return;
-      var d = await r.json();
-      allItems = (d && d.items) || [];
-      applyFilters();
+      var statEl = document.getElementById("stat");
+      try{
+        var r = await fetch("/api/daily-finds?limit=250&day="+encodeURIComponent(day), {credentials:"include"});
+        if(!r.ok){
+          allItems = [];
+          render([]);
+          if (statEl) statEl.textContent = "Failed to load (" + r.status + ")";
+          return;
+        }
+        var d = await r.json();
+        allItems = (d && d.items) || [];
+        applyFilters();
+      }catch(e){
+        allItems = [];
+        render([]);
+        if (statEl) statEl.textContent = "Network error";
+      }
     }
     (function init(){
       var inp = document.getElementById("day");
@@ -170,6 +184,7 @@
       var dd = String(now.getUTCDate()).padStart(2,"0");
       inp.value = yyyy+"-"+mm+"-"+dd;
       inp.addEventListener("change", refresh);
+      inp.addEventListener("input", refresh);
       q.addEventListener("input", applyFilters);
       refresh();
       setInterval(refresh, 15000);
