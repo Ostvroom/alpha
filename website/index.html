@@ -1819,8 +1819,9 @@
             '  <button class="tg-btn-discord" id="tg-open-collab" style="text-align:center;cursor:pointer;width:100%">Request Early Access</button>',
             '</div>',
             '<div style="border:1px solid rgba(255,204,0,.18);padding:10px 12px;margin-bottom:10px">',
-            '  <div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,204,0,.72);margin-bottom:8px">Eligible partners for free access</div>',
+            '  <div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,204,0,.72);margin-bottom:8px">Eligible DAOs for free access</div>',
             '  <ul style="margin:0;padding-left:16px;display:flex;flex-direction:column;gap:6px;font-size:12px;line-height:1.5">' + partnerRows + '</ul>',
+            '  <button class="tg-btn-discord" id="tg-open-collab-under-daos" style="text-align:center;cursor:pointer;width:100%;margin-top:10px">Request Early Access</button>',
             '</div>',
             '<div id="tg-referral-slot"></div>',
             '<div class="tg-help">Already approved? <a href="/api/access/discord/start?next=/projects" style="color:rgba(255,204,0,.65)">Try another account</a></div>'
@@ -1837,6 +1838,12 @@
           var openCollabBtn = document.getElementById("tg-open-collab");
           if (openCollabBtn) {
             openCollabBtn.addEventListener("click", function(){
+              if (window.__naOpenModal) window.__naOpenModal("collab");
+            });
+          }
+          var openCollabUnderDaosBtn = document.getElementById("tg-open-collab-under-daos");
+          if (openCollabUnderDaosBtn) {
+            openCollabUnderDaosBtn.addEventListener("click", function(){
               if (window.__naOpenModal) window.__naOpenModal("collab");
             });
           }
