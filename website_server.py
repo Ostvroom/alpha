@@ -133,7 +133,9 @@ _SUPABASE_PAYMENT_INTENTS_TABLE = (os.getenv("SUPABASE_PAYMENT_INTENTS_TABLE") o
 _SUPABASE_REFERRAL_CODES_TABLE = (os.getenv("SUPABASE_REFERRAL_CODES_TABLE") or "referral_codes").strip()
 _SUPABASE_REFERRALS_TABLE = (os.getenv("SUPABASE_REFERRALS_TABLE") or "referrals").strip()
 _SUPABASE_REFERRAL_REWARDS_TABLE = (os.getenv("SUPABASE_REFERRAL_REWARDS_TABLE") or "referral_rewards").strip()
+_SUPABASE_REFERRAL_WITHDRAW_TABLE = (os.getenv("SUPABASE_REFERRAL_WITHDRAW_TABLE") or "referral_withdraw_requests").strip()
 REFERRAL_REWARD_USD_MONTHLY = float(os.getenv("REFERRAL_REWARD_USD_MONTHLY", "3") or "3")
+REFERRAL_MIN_WITHDRAW_USD = float(os.getenv("REFERRAL_MIN_WITHDRAW_USD", "10") or "10")
 
 
 def _sb_enabled() -> bool:
@@ -474,6 +476,139 @@ def _referral_stats(user_id: int) -> dict[str, Any]:
     except Exception:
         pass
     return {"referrals": int(referrals), "reward_usd": round(float(reward), 2)}
+
+
+def _referral_withdraw_init() -> None:
+    conn = sqlite3.connect(payment_database.DB_FILE)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS referral_withdraw_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            amount_usd REAL NOT NULL,
+            payout_chain TEXT NOT NULL,
+            payout_wallet TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            note TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            processed_at TEXT,
+            processed_by TEXT,
+            payout_tx_hash TEXT
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def _referral_requested_amount_usd(user_id: int) -> float:
+    uid = int(user_id or 0)
+    if uid <= 0:
+        return 0.0
+    if not (_sb_enabled() and _SUPABASE_REFERRAL_WITHDRAW_TABLE):
+        _referral_withdraw_init()
+        conn = sqlite3.connect(payment_database.DB_FILE)
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(amount_usd), 0)
+            FROM referral_withdraw_requests
+            WHERE user_id = ?
+              AND lower(status) IN ('pending','approved','paid')
+            """,
+            (uid,),
+        )
+        amt = float((cur.fetchone() or [0])[0] or 0.0)
+        conn.close()
+        return round(amt, 2)
+    try:
+        r = requests.get(
+            _sb_url(f"/{_SUPABASE_REFERRAL_WITHDRAW_TABLE}?user_id=eq.{uid}&select=amount_usd,status"),
+            headers=_sb_headers(),
+            timeout=12,
+        )
+        if r.status_code != 200:
+            return 0.0
+        rows = r.json()
+        total = 0.0
+        if isinstance(rows, list):
+            for row in rows:
+                st = str((row or {}).get("status") or "").strip().lower()
+                if st in ("pending", "approved", "paid"):
+                    total += float((row or {}).get("amount_usd") or 0.0)
+        return round(total, 2)
+    except Exception:
+        return 0.0
+
+
+def _referral_create_withdraw_request(
+    *,
+    user_id: int,
+    amount_usd: float,
+    payout_chain: str,
+    payout_wallet: str,
+) -> tuple[bool, str]:
+    uid = int(user_id or 0)
+    if uid <= 0:
+        return False, "Unauthorized"
+    chain = str(payout_chain or "").strip().lower()
+    if chain not in ("solana", "base"):
+        return False, "payout_chain must be 'solana' or 'base'"
+    wallet = str(payout_wallet or "").strip()
+    if chain == "solana":
+        if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", wallet):
+            return False, "Invalid Solana payout wallet"
+    else:
+        if not re.fullmatch(r"0x[a-fA-F0-9]{40}", wallet):
+            return False, "Invalid Base payout wallet"
+        wallet = wallet.lower()
+    amount = round(float(amount_usd or 0.0), 2)
+    if amount < float(REFERRAL_MIN_WITHDRAW_USD):
+        return False, f"Minimum withdraw is ${REFERRAL_MIN_WITHDRAW_USD:.2f}"
+
+    earned = float((_referral_stats(uid) or {}).get("reward_usd") or 0.0)
+    requested = float(_referral_requested_amount_usd(uid) or 0.0)
+    available = round(max(0.0, earned - requested), 2)
+    if amount > available:
+        return False, f"Insufficient available rewards. Available: ${available:.2f}"
+
+    if not (_sb_enabled() and _SUPABASE_REFERRAL_WITHDRAW_TABLE):
+        _referral_withdraw_init()
+        conn = sqlite3.connect(payment_database.DB_FILE)
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO referral_withdraw_requests
+            (user_id, amount_usd, payout_chain, payout_wallet, status, created_at)
+            VALUES (?, ?, ?, ?, 'pending', ?)
+            """,
+            (uid, amount, chain, wallet, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())),
+        )
+        conn.commit()
+        conn.close()
+        return True, "Withdraw request submitted."
+
+    payload = {
+        "user_id": uid,
+        "amount_usd": amount,
+        "payout_chain": chain,
+        "payout_wallet": wallet,
+        "status": "pending",
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    try:
+        r = requests.post(
+            _sb_url(f"/{_SUPABASE_REFERRAL_WITHDRAW_TABLE}"),
+            headers=_sb_headers(),
+            data=json.dumps(payload),
+            timeout=12,
+        )
+        if r.status_code in (200, 201, 204):
+            return True, "Withdraw request submitted."
+        return False, "Could not submit withdraw request."
+    except Exception:
+        return False, "Could not submit withdraw request."
 
 
 def _acct_init() -> None:
@@ -1727,6 +1862,12 @@ class ReferralApplyRequest(BaseModel):
     code: str
 
 
+class ReferralWithdrawRequest(BaseModel):
+    amount_usd: float
+    payout_chain: str = "solana"
+    payout_wallet: str
+
+
 @app.get("/api/referral/me")
 async def api_referral_me(request: Request):
     tok = request.cookies.get(ACCESS_COOKIE, "")
@@ -1738,6 +1879,8 @@ async def api_referral_me(request: Request):
     base = str(request.base_url).rstrip("/")
     link = f"{base}/?ref={code}" if code else f"{base}/"
     st = _referral_stats(uid)
+    requested = _referral_requested_amount_usd(uid)
+    available = round(max(0.0, float(st.get("reward_usd") or 0.0) - float(requested or 0.0)), 2)
     return {
         "ok": True,
         "user_id": uid,
@@ -1745,6 +1888,9 @@ async def api_referral_me(request: Request):
         "link": link,
         "referrals": int(st.get("referrals") or 0),
         "reward_usd": float(st.get("reward_usd") or 0.0),
+        "pending_withdraw_usd": float(requested or 0.0),
+        "available_withdraw_usd": float(available),
+        "min_withdraw_usd": float(REFERRAL_MIN_WITHDRAW_USD),
         "reward_per_subscription_usd": float(REFERRAL_REWARD_USD_MONTHLY),
     }
 
@@ -1760,6 +1906,24 @@ async def api_referral_apply(request: Request, body: ReferralApplyRequest):
     if not code:
         raise HTTPException(400, "code required")
     ok, msg = _sb_set_referral(uid, code, source="website")
+    if not ok:
+        raise HTTPException(400, msg)
+    return {"ok": True, "message": msg}
+
+
+@app.post("/api/referral/withdraw/request")
+async def api_referral_withdraw_request(request: Request, body: ReferralWithdrawRequest):
+    tok = request.cookies.get(ACCESS_COOKIE, "")
+    payload = _verify_access_token(tok) or {}
+    uid = int(payload.get("uid") or 0)
+    if uid <= 0:
+        raise HTTPException(401, "Unauthorized")
+    ok, msg = _referral_create_withdraw_request(
+        user_id=uid,
+        amount_usd=float(body.amount_usd or 0.0),
+        payout_chain=str(body.payout_chain or "solana"),
+        payout_wallet=str(body.payout_wallet or ""),
+    )
     if not ok:
         raise HTTPException(400, msg)
     return {"ok": True, "message": msg}

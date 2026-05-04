@@ -1759,14 +1759,20 @@
         var link = String(j.link || "");
         var earned = Number(j.reward_usd || 0);
         var refs = Number(j.referrals || 0);
+        var minW = Number(j.min_withdraw_usd || 10);
+        var availableW = Number(j.available_withdraw_usd || 0);
         var boxHtml = [
           '<div style="border:1px solid rgba(255,204,0,.18);padding:10px 12px;margin-bottom:10px;background:rgba(255,204,0,.03)">',
           '  <div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,204,0,.72);margin-bottom:8px">Refer & Earn</div>',
           '  <div style="font-size:12px;line-height:1.5;color:rgba(240,232,192,.82);margin-bottom:8px">Anyone who subscribes from your invite link earns you <b style="color:#ffcc00">$' + reward.toFixed(0) + '</b>.</div>',
-          '  <div style="font-size:11px;color:rgba(240,232,192,.60);margin-bottom:8px">Referrals: <b style="color:#f8f0d0">' + refs + '</b> · Earned: <b style="color:#7dffb0">$' + earned.toFixed(2) + '</b></div>',
+          '  <div style="font-size:11px;color:rgba(240,232,192,.60);margin-bottom:8px">Referrals: <b style="color:#f8f0d0">' + refs + '</b> · Earned: <b style="color:#7dffb0">$' + earned.toFixed(2) + '</b> · Available: <b style="color:#7dffb0">$' + availableW.toFixed(2) + '</b></div>',
           '  <div style="display:flex;gap:8px;align-items:center">',
           '    <input id="tg-ref-link" readonly value="' + link.replace(/"/g, "&quot;") + '" style="flex:1;background:rgba(0,0,0,.35);border:1px solid rgba(255,204,0,.25);color:rgba(240,232,192,.88);padding:7px 8px;font-size:11px" />',
           '    <button id="tg-ref-copy" class="tg-btn-discord" type="button" style="padding:7px 10px">Copy</button>',
+          '  </div>',
+          '  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px">',
+          '    <div style="font-size:10px;color:rgba(240,232,192,.50)">Min withdraw: $' + minW.toFixed(2) + '</div>',
+          '    <button id="tg-ref-withdraw" class="tg-btn-discord" type="button" style="padding:7px 10px">Request Withdraw</button>',
           '  </div>',
           '</div>'
         ].join("");
@@ -1780,6 +1786,44 @@
               await navigator.clipboard.writeText(val);
               copyBtn.textContent = "Copied";
               setTimeout(function(){ copyBtn.textContent = "Copy"; }, 1300);
+            } catch (e) {}
+          });
+        }
+        var withdrawBtn = document.getElementById("tg-ref-withdraw");
+        if (withdrawBtn) {
+          withdrawBtn.addEventListener("click", async function(){
+            try {
+              if (availableW < minW) {
+                alert("Minimum withdraw is $" + minW.toFixed(2) + ". Available now: $" + availableW.toFixed(2));
+                return;
+              }
+              var amountInput = window.prompt(
+                "Withdraw amount in USD (minimum $" + minW.toFixed(2) + "):",
+                String(Math.floor(availableW * 100) / 100)
+              );
+              if (amountInput === null) return;
+              var amount = Number(String(amountInput || "").trim());
+              if (!isFinite(amount) || amount <= 0) return;
+              var chain = (window.prompt("Payout chain: solana or base", "solana") || "solana").trim().toLowerCase();
+              var wallet = (window.prompt("Payout wallet address:", "") || "").trim();
+              if (!wallet) return;
+              var rr = await fetch("/api/referral/withdraw/request", {
+                method: "POST",
+                credentials: "include",
+                headers: {"Content-Type":"application/json"},
+                body: JSON.stringify({
+                  amount_usd: amount,
+                  payout_chain: chain,
+                  payout_wallet: wallet
+                })
+              });
+              var rj = await rr.json().catch(function(){ return {}; });
+              if (!rr.ok) {
+                alert((rj && (rj.detail || rj.message)) || "Withdraw request failed.");
+                return;
+              }
+              alert("Withdraw request submitted. We will review and process it manually.");
+              renderReferralBox();
             } catch (e) {}
           });
         }
@@ -1816,7 +1860,6 @@
             '</div>',
             '<div class="tg-row" style="flex-direction:column;gap:8px;margin-bottom:12px">',
             '  <button class="tg-btn-discord" id="tg-open-subscribe" style="text-align:center;cursor:pointer;width:100%">Subscribe</button>',
-            '  <button class="tg-btn-discord" id="tg-open-collab" style="text-align:center;cursor:pointer;width:100%">Request Early Access</button>',
             '</div>',
             '<div style="border:1px solid rgba(255,204,0,.18);padding:10px 12px;margin-bottom:10px">',
             '  <div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,204,0,.72);margin-bottom:8px">Eligible DAOs for free access</div>',
@@ -1833,12 +1876,6 @@
           if (openSubBtn) {
             openSubBtn.addEventListener("click", function(){
               if (window.__naOpenModal) window.__naOpenModal("mint");
-            });
-          }
-          var openCollabBtn = document.getElementById("tg-open-collab");
-          if (openCollabBtn) {
-            openCollabBtn.addEventListener("click", function(){
-              if (window.__naOpenModal) window.__naOpenModal("collab");
             });
           }
           var openCollabUnderDaosBtn = document.getElementById("tg-open-collab-under-daos");
