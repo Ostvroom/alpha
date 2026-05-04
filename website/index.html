@@ -810,6 +810,35 @@
       font-size:14px;line-height:1.55;max-width:38ch;
       color:rgba(240,232,192,.62);margin-bottom:26px;
     }
+    .ps-meta{
+      margin:-10px 0 20px;
+      font-family:"JetBrains Mono",monospace;
+      font-size:10px;
+      letter-spacing:.1em;
+      text-transform:uppercase;
+      color:rgba(240,232,192,.45);
+    }
+    .ps-kpis{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      margin:-4px 0 22px;
+    }
+    .ps-kpi{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      padding:5px 10px;
+      border-radius:999px;
+      border:1px solid rgba(255,204,0,.2);
+      background:rgba(255,204,0,.08);
+      color:rgba(240,232,192,.82);
+      font-family:"JetBrains Mono",monospace;
+      font-size:10px;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+    }
+    .ps-kpi b{color:#ffcc00;font-weight:700}
     .ps-collection{
       border:1px solid rgba(255,204,0,.18);
       background:rgba(255,204,0,.04);
@@ -1429,29 +1458,35 @@
     </div>
     <div class="na-dialog-body">
       <div class="ps-inner">
-        <div class="ps-eyebrow">Monthly subscription</div>
-        <div class="ps-h">NERDS <span class="yl">ACCESS</span></div>
-        <p class="ps-tagline">Start with monthly access and unlock the full Nerds Alpha stack.</p>
+        <div class="ps-eyebrow">Premium membership</div>
+        <div class="ps-h">NERDS <span class="yl">ACCESS PRO</span></div>
+        <p class="ps-tagline">Get instant access to the full Nerds Alpha stack: early projects, high-signal calls, and daily alpha in one clean dashboard.</p>
+        <div class="ps-meta">Cancel anytime · Access starts after on-chain confirmation</div>
+        <div class="ps-kpis">
+          <span class="ps-kpi"><b>Live</b> Projects Feed</span>
+          <span class="ps-kpi"><b>100+</b> Token Sources</span>
+          <span class="ps-kpi"><b>24h</b> Daily Finds</span>
+        </div>
 
         <!-- Monthly tier -->
         <div class="ps-limits single-tier">
           <div class="ps-limit">
-            <div class="ps-limit-label">1 Month</div>
+            <div class="ps-limit-label">Monthly pass</div>
             <div class="ps-limit-val">$20</div>
-            <div class="ps-limit-per">per month · billed monthly</div>
-            <button class="ps-pay-btn" id="payBtn1m" type="button">Start Payment</button>
+            <div class="ps-limit-per">USD per month · billed monthly</div>
+            <button class="ps-pay-btn" id="payBtn1m" type="button">Unlock Access</button>
           </div>
         </div>
 
         <div class="ps-access" style="margin-top:0">
-          <div class="ps-access-title">In-house payment flow</div>
+          <div class="ps-access-title">Secure in-house payment flow</div>
           <div style="display:flex;flex-direction:column;gap:10px">
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               <button class="ps-nav-btn" type="button" id="pmChainSol" style="flex:0 0 auto;min-width:140px">SOL (Solana)</button>
             </div>
-            <label class="ps-wallet-label" for="pmPayerWallet">Your payer wallet address</label>
+            <label class="ps-wallet-label" for="pmPayerWallet">Your paying wallet address</label>
             <input id="pmPayerWallet" class="cl-input" placeholder="Paste the wallet you will pay from" />
-            <button class="ps-nav-btn" type="button" id="pmCreateIntent">Get exact amount & wallet</button>
+            <button class="ps-nav-btn" type="button" id="pmCreateIntent">Generate exact payment details</button>
             <div id="pmIntentBox" style="display:none;border:1px solid rgba(255,204,0,.16);border-radius:12px;padding:12px;background:rgba(255,204,0,.04)">
               <div class="ps-wallet-label">Send exact amount to this wallet</div>
               <div id="pmTreasuryWallet" class="ps-wallet-box" style="margin-top:6px;cursor:pointer" title="Click to copy treasury wallet">
@@ -1460,7 +1495,7 @@
               </div>
               <div class="ps-wallet-label" style="margin-top:10px">Exact amount</div>
               <div id="pmExactAmount" class="ps-wallet-box ps-wallet-addr" style="margin-top:6px"></div>
-              <button class="ps-nav-btn" type="button" id="pmClaimNow" style="margin-top:10px">Claim access</button>
+              <button class="ps-nav-btn" type="button" id="pmClaimNow" style="margin-top:10px">I have paid — activate access</button>
             </div>
             <div id="pmStatus" class="ps-status" style="display:none"></div>
           </div>
@@ -1469,16 +1504,16 @@
         <div class="ps-access">
           <div class="ps-access-title">Access included</div>
           <ul class="ps-access-list">
-            <li><b>Projects</b> — Spot early projects before they go mainstream, filtered by our HVA network and posted only when it meets our alert rules.</li>
-            <li><b>Token alerts</b> — Monitor 100+ Telegram sources without joining them all. We surface the important calls and show MC at call, ATH, and performance.</li>
+            <li><b>Projects</b> — Catch early projects before they go mainstream, filtered through our HVA signal framework and strict alert rules.</li>
+            <li><b>Token alerts</b> — Track 100+ Telegram sources in one place with key metrics: MC at call, ATH, and performance.</li>
             <li><b>Wallet tracker (coming soon)</b> — Track NFT mints, transfers, and token activity across ETH, SOL, and Base with smart filters to cut noise.</li>
-            <li><b>Daily finds</b> — Your rolling 24h digest: every newly alerted project in one clean list (with age, followers, and category).</li>
+            <li><b>Daily finds</b> — Your rolling 24h digest of newly alerted projects with age, followers, and category in one clean view.</li>
             <li><b>Mint overview (coming soon)</b> — Live mint radar across ETH, Base, and Solana to monitor what is minting now and what is trending.</li>
           </ul>
         </div>
 
         <div class="ps-status ok" style="display:block">
-          Flow: choose chain → submit payer wallet → send exact amount to shown treasury wallet → click claim. Access activates after on-chain confirmation.
+          Flow: choose chain → generate payment details → send exact amount → click activate. Access is enabled automatically after on-chain confirmation.
         </div>
 
         <!-- Bottom nav -->
@@ -1536,7 +1571,6 @@
 
         <!-- DAO notice (shown only for DAO type) -->
         <div class="cl-dao-notice" id="clDaoNotice">
-          <span class="cl-dao-icon">⚡</span>
           <div>
             <div class="cl-dao-title">DAO / Project Collaboration</div>
             <div class="cl-dao-body">We only do <strong>X collaborations</strong> — your community gets whitelisted spots in exchange for a post on your official channels. Are you up for it?</div>

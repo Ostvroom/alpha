@@ -3529,13 +3529,32 @@ async def api_daily_finds(request: Request, day: str = "", limit: int = 200):
     limit = max(1, min(500, int(limit or 200)))
     from datetime import datetime, timedelta, timezone
 
-    try:
+    def _parse_day_flexible(raw: str):
+        s = str(raw or "").strip()
+        if not s:
+            return None
+        # Accept native YYYY-MM-DD, UI locale DD/MM/YYYY, and MM/DD/YYYY.
+        fmts = ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y")
+        for fmt in fmts:
+            try:
+                return datetime.strptime(s, fmt).date()
+            except Exception:
+                pass
+        # Also accept ISO datetime strings by slicing the date part.
+        if len(s) >= 10:
+            head = s[:10]
+            try:
+                return datetime.strptime(head, "%Y-%m-%d").date()
+            except Exception:
+                pass
+        return None
+
+    d0 = _parse_day_flexible(day) if day else None
+    if d0 is None:
         if not day:
             d0 = datetime.now(timezone.utc).date()
         else:
-            d0 = datetime.strptime(day, "%Y-%m-%d").date()
-    except Exception:
-        raise HTTPException(400, "Invalid day (expected YYYY-MM-DD)")
+            raise HTTPException(400, "Invalid day (expected YYYY-MM-DD or DD/MM/YYYY)")
 
     start_dt = datetime(d0.year, d0.month, d0.day, tzinfo=timezone.utc)
     end_dt = start_dt + timedelta(days=1)

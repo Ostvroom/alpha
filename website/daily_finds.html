@@ -89,6 +89,22 @@
       if (v >= 1e3) return (v/1e3).toFixed(1).replace(/\.0$/,"") + "k";
       return String(v);
     }
+    function normalizeDayInput(raw){
+      var s = String(raw || "").trim();
+      if (!s) return "";
+      // Native date input value should already be YYYY-MM-DD.
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+      // Fallbacks for manually typed locale-style values.
+      var m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (m){
+        var a = Number(m[1]), b = Number(m[2]), y = Number(m[3]);
+        // Prefer day/month for this UI locale.
+        var dd = String(a).padStart(2, "0");
+        var mm = String(b).padStart(2, "0");
+        return String(y) + "-" + mm + "-" + dd;
+      }
+      return s;
+    }
     function badge(label, value, cls){
       var v = (value===null||value===undefined||value==="") ? "—" : String(value);
       return '<span class="badge '+esc(cls||"")+'"><b>'+esc(label)+'</b> '+esc(v)+'</span>';
@@ -156,7 +172,8 @@
       render(out);
     }
     async function refresh(){
-      var day = (document.getElementById("day").value || "").trim();
+      var dayInput = document.getElementById("day");
+      var day = normalizeDayInput((dayInput && dayInput.value) || "");
       var statEl = document.getElementById("stat");
       try{
         var r = await fetch("/api/daily-finds?limit=250&day="+encodeURIComponent(day), {credentials:"include"});
