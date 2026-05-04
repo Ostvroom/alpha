@@ -654,7 +654,8 @@
             lockUi(); return;
           }
           var me = await r.json();
-          if (!me || !me.is_whitelisted){
+          var canAccess = !!(me && (me.can_access_live_feed || me.is_whitelisted));
+          if (!canAccess){
             lockUi();
             var connectCard = document.getElementById("gateCardConnect");
             var deniedCard  = document.getElementById("gateCardDenied");
