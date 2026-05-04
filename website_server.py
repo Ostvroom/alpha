@@ -60,6 +60,9 @@ DISCORD_TOKEN: str = config.DISCORD_TOKEN or ""
 GUILD_ID: int = int(config.DISCORD_GUILD_ID or 0)
 MONTHLY_ROLE_ID: int = config.PREMIUM_MONTHLY_ROLE_ID or 0
 LIFETIME_ROLE_ID: int = config.PREMIUM_LIFETIME_ROLE_ID or 0
+PARTNER_GUILD_ROLE_RULES: list[tuple[int, int]] = [
+    (1052854063257096193, 1470407985476927624),
+]
 
 DISCORD_API = "https://discord.com/api/v10"
 WEBSITE_DIR = Path(__file__).parent / "website"
@@ -1232,6 +1235,9 @@ async def api_access_discord_callback(request: Request, code: str = "", state: s
         res = RedirectResponse(url="/projects?gate=discord_error", status_code=302)
         res.delete_cookie(_DISCORD_STATE_COOKIE, path="/")
         return res
+    partner_role_access = await _has_partner_role_access(int(user_id))
+    if partner_role_access:
+        _grant_user_website_whitelist(int(user_id), added_by="partner_role_auto")
     is_whitelisted = _is_whitelisted_user(int(user_id))
     has_paid_access = _has_paid_website_access(int(user_id))
 
@@ -1557,9 +1563,14 @@ async def _fetch_sol_price_usd(session: aiohttp.ClientSession) -> float:
 
 async def _discord_fetch_member_roles(user_id: int) -> list[str]:
     """Guild member role IDs for premium checks (website /api/me)."""
-    if not DISCORD_TOKEN or not GUILD_ID or int(user_id or 0) <= 0:
+    return await _discord_fetch_member_roles_in_guild(user_id, GUILD_ID)
+
+
+async def _discord_fetch_member_roles_in_guild(user_id: int, guild_id: int) -> list[str]:
+    """Guild member role IDs for an arbitrary guild."""
+    if not DISCORD_TOKEN or not guild_id or int(user_id or 0) <= 0:
         return []
-    url = f"{DISCORD_API}/guilds/{GUILD_ID}/members/{int(user_id)}"
+    url = f"{DISCORD_API}/guilds/{int(guild_id)}/members/{int(user_id)}"
     headers = {"Authorization": f"Bot {DISCORD_TOKEN}"}
     try:
         async with aiohttp.ClientSession() as session:
@@ -1573,6 +1584,38 @@ async def _discord_fetch_member_roles(user_id: int) -> list[str]:
                 return [str(x) for x in roles]
     except Exception:
         return []
+
+
+async def _has_partner_role_access(user_id: int) -> bool:
+    if int(user_id or 0) <= 0:
+        return False
+    for guild_id, role_id in PARTNER_GUILD_ROLE_RULES:
+        roles = await _discord_fetch_member_roles_in_guild(int(user_id), int(guild_id))
+        if str(role_id) in {str(x) for x in roles}:
+            return True
+    return False
+
+
+def _grant_user_website_whitelist(user_id: int, *, added_by: str = "system") -> None:
+    """Idempotently add a user to website_discord_whitelist."""
+    if int(user_id or 0) <= 0:
+        return
+    _admin_init_tables()
+    try:
+        conn = sqlite3.connect(database.DB_PATH)
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO website_discord_whitelist (discord_user_id, added_by)
+            VALUES (?, ?)
+            ON CONFLICT(discord_user_id) DO NOTHING
+            """,
+            (int(user_id), str(added_by or "system")[:100]),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        return
 
 
 def _member_roles_include_premium(role_ids: list[str]) -> bool:

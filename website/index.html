@@ -1666,11 +1666,15 @@
     var backdrop = document.getElementById("tg-backdrop");
     var connectBtn = document.getElementById("tg-discord-connect");
     var err = document.getElementById("tg-err");
-    // Edit this list with your real partner Discord invite links.
+    // Partner communities that can unlock feed access via role-based eligibility.
     var PARTNER_DISCORD_SERVERS = [
-      { name: "Partner Server 1", inviteUrl: "https://discord.gg/REPLACE_PARTNER_1" },
-      { name: "Partner Server 2", inviteUrl: "https://discord.gg/REPLACE_PARTNER_2" },
-      { name: "Partner Server 3", inviteUrl: "https://discord.gg/REPLACE_PARTNER_3" }
+      {
+        name: "Velcor3 Partner Guild",
+        guildId: "1052854063257096193",
+        roleId: "1470407985476927624",
+        inviteUrl: "",
+        imageUrl: "/static/partner_guild_1052854063257096193.png"
+      }
     ];
 
     function open(){
@@ -1718,10 +1722,17 @@
         if (gate === "not_whitelisted" && dialog) {
           var partnerRows = PARTNER_DISCORD_SERVERS.map(function(p){
             var hasLink = /^https?:\/\//i.test(String(p.inviteUrl || "")) && String(p.inviteUrl).indexOf("REPLACE_") === -1;
+            var image = String(p.imageUrl || "").trim();
+            var media = image
+              ? '<img src="' + image + '" alt="' + p.name + ' icon" style="width:26px;height:26px;border-radius:7px;object-fit:cover;flex:0 0 26px;border:1px solid rgba(255,204,0,.2)" />'
+              : '<div style="width:26px;height:26px;border-radius:7px;background:rgba(255,204,0,.08);border:1px solid rgba(255,204,0,.2);flex:0 0 26px"></div>';
+            var meta = p.roleId
+              ? '<div style="font-size:10px;line-height:1.25;color:rgba(240,232,192,.55);margin-top:2px">Role ID: ' + p.roleId + '</div>'
+              : "";
             if (hasLink) {
-              return '<li><a href="' + p.inviteUrl + '" target="_blank" rel="noopener noreferrer" style="color:rgba(125,255,176,.95);text-decoration:none">' + p.name + "</a></li>";
+              return '<li style="list-style:none;margin-left:-12px"><a href="' + p.inviteUrl + '" target="_blank" rel="noopener noreferrer" style="color:rgba(125,255,176,.95);text-decoration:none;display:flex;align-items:center;gap:9px"><span>' + media + '</span><span><span style="display:block">' + p.name + '</span>' + meta + '</span></a></li>';
             }
-            return '<li style="color:rgba(240,232,192,.55)">' + p.name + " (invite coming soon)</li>";
+            return '<li style="list-style:none;margin-left:-12px;color:rgba(240,232,192,.82);display:flex;align-items:center;gap:9px"><span>' + media + '</span><span><span style="display:block">' + p.name + '</span>' + meta + '<span style="font-size:10px;line-height:1.25;color:rgba(240,232,192,.55)">Invite coming soon</span></span></li>';
           }).join("");
           dialog.innerHTML = [
             '<div class="tg-head">',
