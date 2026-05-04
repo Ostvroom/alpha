@@ -1981,6 +1981,13 @@ def _payment_intents_init() -> None:
         )
         """
     )
+    # Fast lookup for wallet-lock checks.
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_payment_intents_wallet_user
+        ON payment_intents (payer_wallet, user_id, status)
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -4403,7 +4410,7 @@ class ClaimRequest(BaseModel):
 
 
 class PaymentIntentCreateRequest(BaseModel):
-    chain: str  # "eth_base" | "solana"
+    chain: str  # "solana"
     payer_wallet: str
 
 
@@ -4417,8 +4424,8 @@ async def api_payments_intent_create(request: Request, body: PaymentIntentCreate
     if uid <= 0:
         raise HTTPException(401, "Unauthorized")
     chain = str(body.chain or "").strip().lower()
-    if chain not in ("eth_base", "solana"):
-        raise HTTPException(400, "chain must be 'eth_base' or 'solana'")
+    if chain != "solana":
+        raise HTTPException(400, "Solana payments only (Base temporarily disabled).")
     payer_wallet = _normalize_payer_wallet(chain, str(body.payer_wallet or ""))
     if not payer_wallet:
         raise HTTPException(400, "Invalid payer wallet for selected chain")
@@ -4430,10 +4437,27 @@ async def api_payments_intent_create(request: Request, body: PaymentIntentCreate
         raise HTTPException(400, "Monthly payment is not enabled for this chain")
 
     _payment_intents_init()
-    intent_id = f"pi_{int(time.time())}_{int(uid)}_{chain}_{int(time.time_ns() % 100000)}"
-    created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    # One wallet ↔ one user lock: block if wallet is already claimed by another user.
     conn = sqlite3.connect(payment_database.DB_FILE)
     cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT user_id
+        FROM payment_intents
+        WHERE payer_wallet = ?
+          AND user_id != ?
+          AND status = 'claimed'
+        LIMIT 1
+        """,
+        (payer_wallet, int(uid)),
+    )
+    row = cur.fetchone()
+    if row:
+        conn.close()
+        raise HTTPException(403, "This wallet is already linked to another account.")
+
+    intent_id = f"pi_{int(time.time())}_{int(uid)}_{chain}_{int(time.time_ns() % 100000)}"
+    created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     cur.execute(
         """
         INSERT INTO payment_intents
@@ -4516,6 +4540,22 @@ async def api_payments_intent_claim(request: Request, body: PaymentIntentClaimRe
     payer_wallet = str(item.get("payer_wallet") or "")
     treasury_wallet = str(item.get("treasury_wallet") or "")
     amount_raw = str(item.get("amount_raw") or "")
+    # Re-check wallet lock at claim time (race-safe).
+    cur.execute(
+        """
+        SELECT user_id
+        FROM payment_intents
+        WHERE payer_wallet = ?
+          AND user_id != ?
+          AND status = 'claimed'
+        LIMIT 1
+        """,
+        (payer_wallet, int(uid)),
+    )
+    wallet_owner = cur.fetchone()
+    if wallet_owner:
+        conn.close()
+        raise HTTPException(403, "This wallet is already linked to another account.")
 
     async with aiohttp.ClientSession() as session:
         tx_hash = await _find_matching_payment_tx(

@@ -1447,7 +1447,6 @@
           <div class="ps-access-title">In-house payment flow</div>
           <div style="display:flex;flex-direction:column;gap:10px">
             <div style="display:flex;gap:8px;flex-wrap:wrap">
-              <button class="ps-nav-btn" type="button" id="pmChainBase" style="flex:0 0 auto;min-width:140px">ETH (Base)</button>
               <button class="ps-nav-btn" type="button" id="pmChainSol" style="flex:0 0 auto;min-width:140px">SOL (Solana)</button>
             </div>
             <label class="ps-wallet-label" for="pmPayerWallet">Your payer wallet address</label>
@@ -1848,7 +1847,7 @@
     if (psBtnCollab) psBtnCollab.addEventListener("click", function(){ openModal("collab"); });
 
     // In-house payment intent flow (website-only access)
-    var pmChain = "eth_base";
+    var pmChain = "solana";
     var pmIntentId = "";
     var pmAmount = "";
     var pmTreasury = "";
@@ -1866,15 +1865,11 @@
     }
     function setPmChain(chain){
       pmChain = chain;
-      var b = document.getElementById("pmChainBase");
       var s = document.getElementById("pmChainSol");
-      if (b) b.style.color = chain === "eth_base" ? "#ffcc00" : "rgba(240,232,192,.60)";
       if (s) s.style.color = chain === "solana" ? "#ffcc00" : "rgba(240,232,192,.60)";
     }
-    setPmChain("eth_base");
-    var chainBaseBtn = document.getElementById("pmChainBase");
+    setPmChain("solana");
     var chainSolBtn = document.getElementById("pmChainSol");
-    if (chainBaseBtn) chainBaseBtn.addEventListener("click", function(){ setPmChain("eth_base"); });
     if (chainSolBtn) chainSolBtn.addEventListener("click", function(){ setPmChain("solana"); });
 
     var payStartBtn = document.getElementById("payBtn1m");
