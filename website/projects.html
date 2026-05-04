@@ -140,6 +140,35 @@
     .modal-body{padding:10px 14px;overflow:auto;max-height:calc(min(86vh, 860px) - 58px)}
     .modal-err{padding:12px 14px;color:rgba(255,150,150,.88);font-family:"JetBrains Mono",monospace;font-size:11px}
     .modal-wait{padding:14px 14px;color:rgba(240,232,192,.55);font-family:"JetBrains Mono",monospace;font-size:11px;line-height:1.6}
+    .partner-modal-card{
+      width:min(640px, 94vw);
+      max-height:none;
+      border:1px solid rgba(255,204,0,.34);
+      background:linear-gradient(180deg, rgba(18,18,20,.98), rgba(8,8,9,.98));
+      box-shadow:0 28px 120px rgba(0,0,0,.82), 0 0 0 1px rgba(255,204,0,.08) inset;
+    }
+    .partner-modal-body{padding:18px 18px 20px}
+    .partner-badge{
+      display:inline-flex;align-items:center;gap:8px;
+      font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+      color:rgba(255,204,0,.90);border:1px solid rgba(255,204,0,.24);border-radius:999px;
+      padding:6px 10px;background:rgba(255,204,0,.06);margin-bottom:12px;
+    }
+    .partner-badge i{width:8px;height:8px;border-radius:50%;background:#ffcc00;box-shadow:0 0 14px rgba(255,204,0,.72)}
+    .partner-copy{
+      color:rgba(240,232,192,.82);font-size:14px;line-height:1.7;
+      border:1px solid rgba(255,204,0,.14);border-radius:12px;padding:14px;background:rgba(255,204,0,.04);
+    }
+    .partner-copy b{color:#ffcc00}
+    .partner-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+    .partner-btn{
+      font-family:"JetBrains Mono",monospace;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+      border:1px solid rgba(255,204,0,.30);border-radius:10px;padding:10px 12px;cursor:pointer;
+      color:#f0e8c0;background:rgba(255,204,0,.06);text-decoration:none;
+    }
+    .partner-btn:hover{border-color:rgba(255,204,0,.62);color:#ffcc00;background:rgba(255,204,0,.12)}
+    .partner-btn--primary{background:#ffcc00;color:#090909;border-color:#ffcc00;font-weight:700}
+    .partner-btn--primary:hover{background:#ffe16a;color:#090909}
 
     /* In-panel scrollbars (match Token Alerts style) */
     .pb, .modal-body{
@@ -228,6 +257,27 @@
         <button class="modal-close" type="button" id="trendModalClose" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body" id="trendModalBody"></div>
+    </div>
+  </div>
+
+  <div class="modal" id="partnerUnlockModal" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Partner access unlocked">
+    <div class="modal-back" id="partnerUnlockBack"></div>
+    <div class="modal-card partner-modal-card">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">🎉 Partner Access Unlocked</div>
+          <div class="modal-sub" id="partnerUnlockGuild">Verified partner guild</div>
+        </div>
+        <button class="modal-close" type="button" id="partnerUnlockClose" aria-label="Close">&times;</button>
+      </div>
+      <div class="partner-modal-body">
+        <div class="partner-badge"><i></i>Membership Verified</div>
+        <div class="partner-copy" id="partnerUnlockCopy"></div>
+        <div class="partner-actions">
+          <a class="partner-btn partner-btn--primary" href="https://x.com/Degensultan" target="_blank" rel="noopener noreferrer">Follow Sultan on X</a>
+          <button class="partner-btn" type="button" id="partnerUnlockGotIt">Continue to dashboard</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -557,11 +607,37 @@
           var params = new URLSearchParams(window.location.search);
           if (params.get("partner_access") === "1") {
             var guildName = (params.get("partner_guild") || "a partner guild").trim();
-            window.alert(
-              "Welcome! You are a verified member of " +
-              guildName +
-              ". You have unlocked complimentary access valued at $20/month."
-            );
+            var modal = document.getElementById("partnerUnlockModal");
+            var back = document.getElementById("partnerUnlockBack");
+            var closeBtn = document.getElementById("partnerUnlockClose");
+            var gotItBtn = document.getElementById("partnerUnlockGotIt");
+            var guildEl = document.getElementById("partnerUnlockGuild");
+            var copyEl = document.getElementById("partnerUnlockCopy");
+            if (guildEl) guildEl.textContent = guildName;
+            if (copyEl) {
+              copyEl.innerHTML =
+                "Welcome to Nerds Alpha. Your Discord account is verified as an active member of <b>" +
+                esc(guildName) +
+                "</b>, so your account now has complimentary premium website access valued at <b>$20/month</b>.<br/><br/>" +
+                "You now have full access to trending projects, live escalations, and the finds feed. Stay close to new drops and platform updates by following <b>Sultan on X</b>.";
+            }
+            function closePartnerUnlock(){
+              if (!modal) return;
+              modal.classList.remove("on");
+              modal.setAttribute("aria-hidden","true");
+              document.body.style.overflow = "";
+            }
+            if (modal) {
+              modal.classList.add("on");
+              modal.setAttribute("aria-hidden","false");
+              document.body.style.overflow = "hidden";
+            }
+            if (closeBtn) closeBtn.addEventListener("click", closePartnerUnlock);
+            if (back) back.addEventListener("click", closePartnerUnlock);
+            if (gotItBtn) gotItBtn.addEventListener("click", closePartnerUnlock);
+            document.addEventListener("keydown", function(e){
+              if (e.key === "Escape") closePartnerUnlock();
+            });
             params.delete("partner_access");
             params.delete("partner_guild");
             var q = params.toString();
