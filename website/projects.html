@@ -66,10 +66,38 @@
     .colH{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:rgba(240,232,192,.45)}
     .colV{font-family:"JetBrains Mono",monospace;font-size:11px;color:rgba(240,232,192,.82)}
     .colV .badge{transform:translateY(-1px)}
+    /* Narrow screens: keep Age / Followers / Category visible — stack under the text block */
     @media (max-width: 980px){
-      .findsHeader,.findsRow{grid-template-columns:46px 1fr}
-      .findsHeader .colH{display:none}
-      .findsRow .colAge,.findsRow .colFol,.findsRow .colCat{display:none}
+      .findsHeader{display:none}
+      .findsRow{
+        display:flex;
+        flex-wrap:wrap;
+        align-items:flex-start;
+        gap:10px 12px;
+      }
+      .findsRow .av{
+        flex:0 0 46px;
+        width:46px;
+        align-self:flex-start;
+      }
+      .findsRow > div:nth-child(2){
+        flex:1 1 calc(100% - 58px);
+        min-width:0;
+      }
+      .findsRow .colAge,
+      .findsRow .colFol,
+      .findsRow .colCat{
+        display:flex !important;
+        align-items:center;
+        flex:1 1 calc(33.333% - 10px);
+        min-width:min(140px, calc(50% - 8px));
+      }
+      .findsRow .colCat .badge,
+      .findsRow .colCat .colV{max-width:100%}
+      /* Long locale timestamps from toLocaleString() */
+      .findsRow .sub .badge{white-space:normal;word-break:break-word;max-width:100%}
+      .projRow > div:nth-child(2){min-width:0}
+      .projRow .sub .badge{white-space:normal;word-break:break-word;max-width:100%}
     }
 
     /* Gate overlay: blur/dim page behind a small modal */
