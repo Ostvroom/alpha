@@ -6,7 +6,7 @@ import json
 import os
 import re
 import time as time_module
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import defaultdict, deque
 from typing import Dict, List, Optional, Set, Any, Tuple
 from web3 import Web3
@@ -23,10 +23,15 @@ except Exception:
 
 load_dotenv(override=True)
 
-# Velcor3 — wallet tracker embed branding (matches token / mint overview style)
+# Velocr3 — wallet tracker embed branding (matches token / mint overview style)
 _BRAND_NAME = (
-    (os.getenv("VELCOR3_BRAND_NAME") or os.getenv("NERDS_BRAND_NAME") or "Velcor3").strip()
-    or "Velcor3"
+    (
+        os.getenv("VELOCR3_BRAND_NAME")
+        or os.getenv("VELCOR3_BRAND_NAME")
+        or os.getenv("NERDS_BRAND_NAME")
+        or "Velocr3"
+    ).strip()
+    or "Velocr3"
 )
 _EMBED_NEUTRAL = 0x202025
 
@@ -1044,6 +1049,29 @@ def _fresh_discord_files(files: Optional[List[discord.File]]) -> Optional[List[d
     return out or None
 
 
+def _normalize_nft_media_url(url: Optional[str]) -> Optional[str]:
+    """Return a Discord-embed-friendly http(s) URL; normalize ipfs:// to an HTTP gateway."""
+    if not url or not isinstance(url, str):
+        return None
+    u = url.strip()
+    if not u:
+        return None
+    if u.startswith("ipfs://"):
+        tail = u.replace("ipfs://", "").lstrip("/")
+        return f"https://cf-ipfs.com/ipfs/{tail}"
+    if u.startswith("http://") or u.startswith("https://"):
+        return u
+    return None
+
+
+def _embed_box(text: str, *, max_len: int = 988) -> str:
+    """Discord multiline code block for a compact 'card / box' look."""
+    t = (text or "").replace("```", "`\u200b``")
+    if len(t) > max_len:
+        t = t[: max_len - 1] + "…"
+    return f"```{t}```"
+
+
 async def create_eth_nft_embed(
     action_type,
     wallet,
@@ -1186,11 +1214,6 @@ async def create_eth_nft_embed(
         source = "Marketplace"
             
     # NOTE: Avoid per-embed HTTP price calls. We maintain _cached_eth_usd via refresh_eth_usd_price().
-    usd_price_str = ""
-    if price_eth >= 0 and _cached_eth_usd > 0:
-        usd_price = price_eth * _cached_eth_usd
-        usd_price_str = f" (${usd_price:,.0f})" if usd_price > 0 else " ($0)"
-        
     info = await get_contract_info(contract)
     image_url = await fetch_token_image(contract, token_id)
     col_name = info.get("name")
@@ -1200,35 +1223,38 @@ async def create_eth_nft_embed(
     if enable_floor:
         floor_eth = await fetch_collection_floor_price(session, contract)
     
-    if not col_name or col_name == "Unknown":
-        # 1. Try Alchemy
-        if ALCHEMY_API_KEY:
-            try:
-                url = f"https://eth-mainnet.g.alchemy.com/nft/v3/{ALCHEMY_API_KEY}/getContractMetadata"
-                params = {"contractAddress": contract.lower()}
-                async with session.get(url, params=params, timeout=5) as r:
-                    if r.status == 200:
-                        data = await r.json()
-                        c_name = data.get("name")
-                        if c_name:
-                            col_name = c_name
-            except: pass
+    alchemy_contract_data = None
+    if ALCHEMY_API_KEY:
+        try:
+            url = f"https://eth-mainnet.g.alchemy.com/nft/v3/{ALCHEMY_API_KEY}/getContractMetadata"
+            params = {"contractAddress": contract.lower()}
+            async with session.get(url, params=params, timeout=5) as r:
+                if r.status == 200:
+                    alchemy_contract_data = await r.json()
+        except Exception:
+            pass
 
+    if alchemy_contract_data and (not col_name or col_name == "Unknown"):
+        c_name = alchemy_contract_data.get("name")
+        if c_name:
+            col_name = c_name
+
+    if not col_name or col_name == "Unknown":
         # 2. Try OpenSea
-        if not col_name or col_name == "Unknown":
-            try:
-                opensea_url = f"https://api.opensea.io/api/v2/chain/ethereum/contract/{contract.lower()}"
-                headers = {"Accept": "application/json"}
-                if os.getenv("OPENSEA_API_KEY"):
-                    headers["X-API-KEY"] = os.getenv("OPENSEA_API_KEY")
-                async with session.get(opensea_url, headers=headers, timeout=5) as r:
-                    if r.status == 200:
-                        data = await r.json()
-                        c_name = data.get("collection", {}).get("name") or data.get("name")
-                        if c_name:
-                            col_name = c_name
-            except: pass
-            
+        try:
+            opensea_url = f"https://api.opensea.io/api/v2/chain/ethereum/contract/{contract.lower()}"
+            headers = {"Accept": "application/json"}
+            if os.getenv("OPENSEA_API_KEY"):
+                headers["X-API-KEY"] = os.getenv("OPENSEA_API_KEY")
+            async with session.get(opensea_url, headers=headers, timeout=5) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    c_name = data.get("collection", {}).get("name") or data.get("name")
+                    if c_name:
+                        col_name = c_name
+        except Exception:
+            pass
+
         # 3. Try Reservoir
         if not col_name or col_name == "Unknown":
             try:
@@ -1241,11 +1267,58 @@ async def create_eth_nft_embed(
                             c_name = collections[0].get("name")
                             if c_name:
                                 col_name = c_name
-            except: pass
+            except Exception:
+                pass
 
         if not col_name or col_name == "Unknown":
             col_name = "Collection"
-            
+
+    # Collection artwork for large embed image (token metadata → Alchemy → OpenSea → Reservoir → identicon)
+    project_image_url = _normalize_nft_media_url(image_url)
+    if not project_image_url and alchemy_contract_data:
+        osm = alchemy_contract_data.get("openSeaMetadata") or {}
+        project_image_url = _normalize_nft_media_url(
+            osm.get("imageUrl")
+            or osm.get("image_url")
+            or alchemy_contract_data.get("imageUrl")
+            or alchemy_contract_data.get("image_url")
+        )
+    if not project_image_url:
+        try:
+            opensea_contract_url = f"https://api.opensea.io/api/v2/chain/ethereum/contract/{contract.lower()}"
+            headers = {"Accept": "application/json"}
+            if os.getenv("OPENSEA_API_KEY"):
+                headers["X-API-KEY"] = os.getenv("OPENSEA_API_KEY")
+            async with session.get(opensea_contract_url, headers=headers, timeout=5) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    coll = data.get("collection") if isinstance(data.get("collection"), dict) else {}
+                    project_image_url = _normalize_nft_media_url(
+                        data.get("image_url")
+                        or data.get("imageUrl")
+                        or coll.get("image_url")
+                        or coll.get("banner_image_url")
+                    )
+        except Exception:
+            pass
+    if not project_image_url:
+        try:
+            reservoir_url = f"https://api.reservoir.tools/collections/v7?id={contract.lower()}"
+            async with session.get(reservoir_url, timeout=5) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    collections = data.get("collections") or []
+                    if collections:
+                        c0 = collections[0]
+                        meta = c0.get("metadata") if isinstance(c0.get("metadata"), dict) else {}
+                        project_image_url = _normalize_nft_media_url(
+                            c0.get("image") or c0.get("imageUrl") or meta.get("imageUrl") or meta.get("image")
+                        )
+        except Exception:
+            pass
+    if not project_image_url:
+        project_image_url = f"https://cdn.stamp.fyi/avatar/eth:{contract}?s=512"
+
     # Smart label correction for older collections
     if action_word == "MINTED" and floor_eth > 0:
         action_word = "CLAIMED"
@@ -1274,70 +1347,74 @@ async def create_eth_nft_embed(
 
     if price_eth == 0 and source == "Mint" and floor_eth == 0:
         value_str = "FREE 🆓"
-        price_desc = "FREE 🆓"
     elif price_eth == 0 and source == "Mint" and floor_eth > 0:
         value_str = f"FREE 🆓  ·  floor **{floor_eth:,.4f} ETH**{usd_str}"
-        price_desc = "FREE 🆓"
     elif is_floor and bulk_qty:
         value_str = f"~**{display_eth:,.4f} ETH**{usd_str}  *(floor × {bulk_qty})*"
-        price_desc = f"~**{display_eth:,.4f} ETH** (floor × {bulk_qty})"
     elif is_floor:
         value_str = f"~**{display_eth:,.4f} ETH**{usd_str}  *(floor)*"
-        price_desc = f"~**{display_eth:,.4f} ETH** (floor)"
     elif price_eth == 0 and action_word == "TRANSFERRED":
         value_str = "—"
-        price_desc = ""
     elif bulk_qty and price_eth > 0:
         value_str = f"**{display_eth:,.4f} ETH**{usd_str}  *(×{bulk_qty} total)*"
-        price_desc = f"**{display_eth:,.4f} ETH** (×{bulk_qty})"
     else:
         value_str = f"**{display_eth:,.4f} ETH**{usd_str}"
-        price_desc = f"**{display_eth:,.4f} ETH**"
 
-    # ── Embed ─────────────────────────────────────────────────────────────────
-    embed = discord.Embed(color=color)
-    embed.set_author(
-        name=f"{emoji} {wallet_label} · {action_word} · {col_name}{bulk_suffix}",
-        icon_url=avatar_url,
+    # ── Embed (boxed sections + large collection image — Penni-style layout) ──
+    _title_action = {
+        "BOUGHT": "bought",
+        "SOLD": "sold",
+        "MINTED": "minted",
+        "CLAIMED": "claimed",
+        "TRANSFERRED": "transferred",
+    }
+    headline_verb = _title_action.get(action_word, action_word.lower())
+
+    wallet_addr_short = f"{wallet[:6]}...{wallet[-4:]}"
+    contract_short = f"{contract[:6]}...{contract[-4:]}"
+
+    embed = discord.Embed(
+        title=f"{wallet_label} {headline_verb} {col_name}{bulk_suffix}",
+        url=f"https://etherscan.io/tx/{tx_hash}",
+        color=color,
+        timestamp=datetime.now(timezone.utc),
     )
-    if image_url:
-        embed.set_thumbnail(url=image_url)
-    banner_url = str(wallet_profile.get("banner_image_url") or "").strip()
-    if banner_url.startswith("http"):
-        embed.set_image(url=banner_url)
+    embed.set_author(name=f"{emoji}  {wallet_label}", icon_url=avatar_url)
 
     time_str = f"<t:{int(time.time())}:R>"
-
-    # ── Description ───────────────────────────────────────────────────────────
-    bulk_desc = f" ×**{bulk_qty}**" if bulk_qty else ""
-    if action_word == "TRANSFERRED" and price_eth == 0:
-        embed.description = f"**{wallet_label}** transferred **{col_name}**{bulk_desc}"
-    elif price_desc:
-        embed.description = f"**{wallet_label}** {action_word.lower()} **{col_name}**{bulk_desc} for {price_desc}"
-    else:
-        embed.description = f"**{wallet_label}** {action_word.lower()} **{col_name}**{bulk_desc}"
-
-    # ── Row 1: Trader · Collection · Action ───────────────────────────────────
     x_prof = wallet_database.get_x_url(wallet)
-    trader_val = f"[{wallet_label}](https://etherscan.io/address/{wallet})"
-    if x_prof:
-        trader_val += f"  ·  [𝕏]({x_prof})"
-    via = f"  via **{source}**" if source != "Contract" else ""
-    embed.add_field(name="👤 Trader", value=trader_val, inline=True)
-    embed.add_field(name="🖼 Collection", value=f"[{col_name}](https://opensea.io/assets/ethereum/{contract}/{token_id})", inline=True)
-    embed.add_field(name="⚡ Action", value=f"**{action_word.capitalize()}**{via}", inline=True)
 
-    # ── Row 2: Value · Time ────────────────────────────────────────────────────
+    wallet_block_lines = [f"**{wallet_label}**"]
+    if x_prof:
+        wallet_block_lines.append(f"[Trader 𝕏]({x_prof})")
+    wallet_block_lines.append(_embed_box(wallet_addr_short))
+    wallet_block_lines.append(f"[Etherscan](https://etherscan.io/address/{wallet})")
+    embed.add_field(name="👤 Wallet", value="\n".join(wallet_block_lines), inline=False)
+
+    collection_block_lines = [
+        f"[{col_name}](https://opensea.io/assets/ethereum/{contract}/{token_id})",
+        _embed_box(contract_short),
+    ]
+    embed.add_field(name="🖼 Collection", value="\n".join(collection_block_lines), inline=False)
+
+    via = f"\n· via **{source}**" if source != "Contract" else ""
     embed.add_field(name="💰 Value", value=value_str, inline=True)
     embed.add_field(name="🕒 Time", value=time_str, inline=True)
-    embed.add_field(name="\u200b", value="\u200b", inline=True)
+    embed.add_field(
+        name="⚡ Action",
+        value=f"**{action_word.capitalize()}**{via}",
+        inline=True,
+    )
 
-    # ── Bulk token IDs ────────────────────────────────────────────────────────
     if bulk_qty and all_token_ids:
         ids_preview = ", ".join(f"#{tid}" for tid in all_token_ids[:15])
         if len(all_token_ids) > 15:
             ids_preview += f"  +{len(all_token_ids) - 15} more"
-        embed.add_field(name=f"🛒 Token IDs  ×{bulk_qty}", value=ids_preview[:1024], inline=False)
+        embed.add_field(
+            name=f"🛒 Token IDs  ×{bulk_qty}",
+            value=_embed_box(ids_preview),
+            inline=False,
+        )
 
     # ── Wallet profile enrichment for premium tracking card ───────────────────
     profile_name = str(wallet_profile.get("name") or "").strip()
@@ -1392,9 +1469,9 @@ async def create_eth_nft_embed(
         links.append(f"[Website]({socials_dict['website']})")
     embed.add_field(name="🔗 Links", value="  ·  ".join(links), inline=False)
 
-    embed.set_footer(
-        text=f"{_BRAND_NAME} · ETH NFTs · {datetime.utcnow().strftime('%I:%M %p')} UTC",
-    )
+    embed.set_image(url=project_image_url)
+
+    embed.set_footer(text=f"{_BRAND_NAME} · ETH NFTs")
     content_tail = f" ×{bulk_qty}" if bulk_qty else ""
     return embed, f"**{wallet_label}** {action_word.lower()} **{col_name}**{content_tail}", None, files
 
