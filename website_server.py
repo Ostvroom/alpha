@@ -25,6 +25,7 @@ import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 import aiohttp
@@ -99,6 +100,7 @@ if _DEV_PREVIEW:
 DISCORD_OAUTH_CLIENT_ID = (os.getenv("DISCORD_OAUTH_CLIENT_ID") or "").strip()
 DISCORD_OAUTH_CLIENT_SECRET = (os.getenv("DISCORD_OAUTH_CLIENT_SECRET") or "").strip()
 DISCORD_OAUTH_REDIRECT_URI = (os.getenv("DISCORD_OAUTH_REDIRECT_URI") or "").strip()
+WEBSITE_PUBLIC_BASE_URL = (os.getenv("WEBSITE_PUBLIC_BASE_URL") or "").strip().rstrip("/")
 _DISCORD_STATE_COOKIE = "na_discord_state"
 HELIO_WEBHOOK_SHARED_TOKEN = (os.getenv("HELIO_WEBHOOK_SHARED_TOKEN") or "").strip()
 HELIO_AUTO_MONTHLY_ENABLED = str(os.getenv("HELIO_AUTO_MONTHLY_ENABLED", "1") or "1").strip().lower() in (
@@ -112,6 +114,10 @@ HELIO_MONTHLY_PAYLINK_IDS = {
     for s in str(os.getenv("HELIO_MONTHLY_PAYLINK_IDS", "") or "").split(",")
     if s.strip()
 }
+
+_canonical = urlsplit(WEBSITE_PUBLIC_BASE_URL) if WEBSITE_PUBLIC_BASE_URL else None
+_CANONICAL_SITE_SCHEME = ((_canonical.scheme if _canonical else "") or "https").strip().lower()
+_CANONICAL_SITE_HOST = ((_canonical.hostname if _canonical else "") or "").strip().lower()
 
 # ---------------------------------------------------------------------------
 # Account DB (Discord profile + points + task claims)
@@ -1014,6 +1020,34 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(_SecurityHeadersMiddleware)
 
+
+class _CanonicalHostMiddleware(BaseHTTPMiddleware):
+    """Redirect public traffic to WEBSITE_PUBLIC_BASE_URL host when configured."""
+    async def dispatch(self, request: StarletteRequest, call_next):  # type: ignore[override]
+        if not _CANONICAL_SITE_HOST:
+            return await call_next(request)
+        try:
+            host = str(getattr(request.url, "hostname", "") or "").strip().lower()
+        except Exception:
+            host = ""
+        # Never force canonical redirects for local development hosts.
+        if host in ("localhost", "127.0.0.1", "::1"):
+            return await call_next(request)
+        if host and host != _CANONICAL_SITE_HOST:
+            qs = str(getattr(request.url, "query", "") or "").strip()
+            target = urlunsplit((
+                _CANONICAL_SITE_SCHEME or "https",
+                _CANONICAL_SITE_HOST,
+                str(getattr(request.url, "path", "") or "/"),
+                qs,
+                "",
+            ))
+            return RedirectResponse(url=target, status_code=308)
+        return await call_next(request)
+
+
+app.add_middleware(_CanonicalHostMiddleware)
+
 # ---------------------------------------------------------------------------
 # Simple in-memory rate limiter (per IP) for brute-force-prone endpoints
 # ---------------------------------------------------------------------------
@@ -1623,12 +1657,20 @@ def _discord_redirect_uri(request: Request) -> str:
     # Prefer explicit config; else derive from request.
     if DISCORD_OAUTH_REDIRECT_URI:
         return DISCORD_OAUTH_REDIRECT_URI
-    # Best-effort based on current host.
-    try:
-        base = str(request.base_url).rstrip("/")
-    except Exception:
-        base = "http://127.0.0.1:8000"
+    base = _public_base_url(request)
     return base + "/api/access/discord/callback"
+
+
+def _public_base_url(request: Request) -> str:
+    """
+    Return the canonical public base URL when configured, otherwise request base URL.
+    """
+    if WEBSITE_PUBLIC_BASE_URL:
+        return WEBSITE_PUBLIC_BASE_URL
+    try:
+        return str(request.base_url).rstrip("/")
+    except Exception:
+        return "http://127.0.0.1:8000"
 
 
 def _is_https(request: Request) -> bool:
@@ -1876,7 +1918,7 @@ async def api_referral_me(request: Request):
     if uid <= 0:
         raise HTTPException(401, "Unauthorized")
     code = _sb_get_or_create_referral_code(uid)
-    base = str(request.base_url).rstrip("/")
+    base = _public_base_url(request)
     link = f"{base}/?ref={code}" if code else f"{base}/"
     st = _referral_stats(uid)
     requested = _referral_requested_amount_usd(uid)
