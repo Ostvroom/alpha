@@ -1474,7 +1474,9 @@ async def create_eth_nft_embed(
         links.append(f"[Website]({socials_dict['website']})")
     embed.add_field(name="🔗 Links", value="  ·  ".join(links), inline=False)
 
-    embed.set_image(url=project_image_url)
+    # Keep the card compact/horizontal in Discord: use collection art as thumbnail,
+    # not a large banner image.
+    embed.set_thumbnail(url=project_image_url)
 
     embed.set_footer(text=f"{_BRAND_NAME} · ETH NFTs")
     content_tail = f" ×{bulk_qty}" if bulk_qty else ""
