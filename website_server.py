@@ -1366,23 +1366,8 @@ def _verify_access_token(token: str) -> Optional[dict]:
 
 
 def _has_access(req: Request) -> bool:
-    # Local development fallback: allow preview without Discord OAuth cookie.
-    # Keeps production gated while unblocking local UI verification.
-    try:
-        host = str(getattr(req.url, "hostname", "") or "").strip().lower()
-    except Exception:
-        host = ""
-    local_bypass = str(os.getenv("WEBSITE_LOCAL_BYPASS", "0") or "0").strip().lower() in ("1", "true", "yes", "on")
-    if local_bypass and host in ("127.0.0.1", "localhost"):
-        return True
-
-    tok = req.cookies.get(ACCESS_COOKIE, "")
-    payload = _verify_access_token(tok) or {}
-    try:
-        uid = int(payload.get("uid") or 0)
-    except Exception:
-        uid = 0
-    return _is_whitelisted_user(uid) or _has_paid_website_access(uid)
+    # Website is now public.
+    return True
 
 
 def _current_user_id(req: Request) -> int:
@@ -1843,22 +1828,8 @@ async def api_access_discord_callback(request: Request, code: str = "", state: s
         pass
 
     tok = _make_access_token(user_id=user_id)
-    # Keep one-time account connection even when not whitelisted.
-    # Non-whitelisted users can still view account status and points tasks.
-    target = nxt if (is_whitelisted or has_paid_access) else "/?gate=not_whitelisted"
-    if (not (is_whitelisted or has_paid_access)) and ref_code_from_next:
-        from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-        split2 = urlsplit(target)
-        query_items2 = dict(parse_qsl(split2.query, keep_blank_values=True))
-        query_items2["ref"] = ref_code_from_next
-        target = urlunsplit((split2.scheme, split2.netloc, split2.path, urlencode(query_items2), split2.fragment))
-    if partner_access_guild and (is_whitelisted or has_paid_access):
-        from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-        split = urlsplit(target)
-        query_items = dict(parse_qsl(split.query, keep_blank_values=True))
-        query_items["partner_access"] = "1"
-        query_items["partner_guild"] = str(partner_access_guild)
-        target = urlunsplit((split.scheme, split.netloc, split.path, urlencode(query_items), split.fragment))
+    # Public website mode: always continue to requested destination after OAuth.
+    target = nxt
     res = RedirectResponse(url=target, status_code=302)
     res.set_cookie(
         key=ACCESS_COOKIE,
@@ -1894,7 +1865,7 @@ async def api_me(request: Request):
     return {
         **u,
         "is_whitelisted": bool(is_whitelisted),
-        "can_access_live_feed": bool(_DEV_PREVIEW or is_whitelisted or has_paid_access),
+        "can_access_live_feed": True,
         "is_premium": bool(is_premium),
         "engage_tweet_url": engage_tweet_url,
     }

@@ -674,24 +674,7 @@
           }
         } catch (e) {}
 
-        if (window.NA_NEEDS_GATE) { lockUi(); return; }
-        // Verify session server-side (401 = no valid session → lock UI).
-        try{
-          var r = await fetch("/api/me", {credentials:"include"});
-          if (!r.ok){
-            lockUi(); return;
-          }
-          var me = await r.json();
-          var canAccess = !!(me && (me.can_access_live_feed || me.is_whitelisted));
-          if (!canAccess){
-            lockUi();
-            var connectCard = document.getElementById("gateCardConnect");
-            var deniedCard  = document.getElementById("gateCardDenied");
-            if (connectCard) connectCard.style.display = "none";
-            if (deniedCard) deniedCard.style.display = "";
-            return;
-          }
-        } catch(e){ lockUi(); return; }
+        // Public mode: no whitelist / paid-access gate checks.
 
         // Trending "More" → top 50 modal
         (function(){

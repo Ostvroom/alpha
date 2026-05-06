@@ -96,10 +96,10 @@
   <div class="gate-wrap" id="gateWrap">
     <div class="gate-box">
       <div class="gate-eyebrow">Access Gate</div>
-      <div class="gate-title">Not Whitelisted</div>
-      <div class="gate-body">Your Discord account is not on the whitelist.<br/>Contact the team to request access.</div>
+      <div class="gate-title">Public Website</div>
+      <div class="gate-body">Website access is now public and free for everyone.</div>
       <div class="gate-btns">
-        <a class="gate-btn" href="/?m=collab">Request Early Access</a>
+        <a class="gate-btn" href="/projects">Open Projects Feed</a>
         <a class="gate-btn" href="https://x.com/Degensultan" target="_blank" rel="noopener noreferrer">Follow on X for updates</a>
         <a class="gate-btn" href="/">← Back to home</a>
       </div>
@@ -337,12 +337,6 @@
           return;
         }
         var me = await meR.json();
-        if (!me || !me.is_whitelisted){
-          var g = document.getElementById("gateWrap");
-          if (g) g.classList.add("on");
-          document.body.style.overflow = "hidden";
-          return;
-        }
         var display = (me.global_name||me.username||"Discord user").trim();
         setText("name", display);
         setText("uid", "Discord ID · " + (me.user_id||"—"));
@@ -353,17 +347,14 @@
         setText("loginCount", me.login_count || 0);
         setText("createdAt", fmtIso(me.created_at));
         setText("updatedAt", fmtIso(me.updated_at));
-        var prem = !!me.is_premium;
-        setText("tierPill", prem ? "Premium" : "Free");
+        setText("tierPill", "Free");
         var pb = document.getElementById("premBadge");
-        if (pb) pb.style.display = prem ? "inline-flex" : "none";
+        if (pb) pb.style.display = "none";
         var wlb = document.getElementById("wlBadge");
         if (wlb) {
-          var wl = !!me.is_whitelisted;
-          wlb.innerHTML = "<b>Live Feed</b> " + (wl ? "Whitelisted" : "Not whitelisted");
-          wlb.className = "badge " + (wl ? "g" : "");
+          wlb.innerHTML = "<b>Live Feed</b> Public";
+          wlb.className = "badge g";
         }
-        if (me.is_whitelisted) loadReferral();
         var av = document.getElementById("avatar");
         if(av){
           av.src = (me.avatar_url||"");

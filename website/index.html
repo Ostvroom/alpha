@@ -1159,7 +1159,7 @@
       </a>
       <div class="nav-links">
         <a href="#" id="navRoadmap" style="color:#7dffb0">Roadmap</a>
-        <a href="#" id="navCollab" style="color:#7dffb0">Early Access</a>
+        <a href="/projects" style="color:#7dffb0">Public Access</a>
         <a class="nav-cta" href="/projects" id="openFeedNav">OPEN LIVE FEED</a>
       </div>
     </div>
@@ -1210,7 +1210,7 @@
         </h1>
         <p class="hero-sub">
           Projects, token alerts, and daily finds — all in one place.
-          This is the Nerds Alpha website live feed (early access).
+          This is the Nerds Alpha website live feed (public access).
         </p>
         <div class="hero-btns">
           <a class="btn solid" href="/projects" id="openFeedBtn">Open Live Feed</a>
@@ -1255,7 +1255,7 @@
         <div class="how-card"><b>Wallet tracker (coming soon)</b><p>Track NFT mints, transfers, and token activity across ETH, SOL, and Base — with smart filters to cut noise.</p></div>
         <div class="how-card"><b>Mint overview (coming soon)</b><p>Live mint radar across ETH, Base, and Solana — monitor what’s minting now and what’s trending.</p></div>
       </div>
-      <div class="how-note">Free access: like + RT + reply to the daily tweets (daily winners get access).</div>
+      <div class="how-note">Public access: no subscription required.</div>
     </section>
   </section>
 </div>
@@ -1964,9 +1964,8 @@
 
     // If OAuth bounced back with an error or whitelist rejection, explain it.
     try {
-      applyReferralIfPresent();
       var gate = new URLSearchParams(window.location.search).get("gate") || "";
-      if (gate === "discord_error" || gate === "not_whitelisted") {
+      if (gate === "discord_error") {
         open();
         var dialog = document.querySelector("#tg-modal .tg-dialog");
         if (gate === "not_whitelisted" && dialog) {
