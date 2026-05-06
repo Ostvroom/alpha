@@ -1366,8 +1366,13 @@ def _verify_access_token(token: str) -> Optional[dict]:
 
 
 def _has_access(req: Request) -> bool:
-    # Website is now public.
-    return True
+    # X tweet-gate access: require a valid signed access cookie.
+    tok = req.cookies.get(ACCESS_COOKIE, "")
+    payload = _verify_access_token(tok) or {}
+    try:
+        return int(payload.get("uid") or 0) > 0
+    except Exception:
+        return False
 
 
 def _current_user_id(req: Request) -> int:
