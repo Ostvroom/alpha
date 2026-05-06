@@ -254,7 +254,10 @@ DISCORD_TOKEN_CHANNEL_ID = parse_channel_id("DISCORD_TOKEN_CHANNEL_ID")
 DISCORD_NFT_CHANNEL_ID = parse_channel_id("DISCORD_NFT_CHANNEL_ID", default=1486393083179569152)
 # Solana NFT wallet + live mint trackers removed — leave unset (0)
 DISCORD_SOL_NFT_CHANNEL_ID = parse_channel_id("DISCORD_SOL_NFT_CHANNEL_ID", default=0)
-DISCORD_MINTS_CHANNEL_ID = parse_channel_id("DISCORD_MINTS_CHANNEL_ID")
+# ETH active/trending mints + /active_mints target — override with DISCORD_MINTS_CHANNEL_ID; set to 0 to disable
+DISCORD_MINTS_CHANNEL_ID = parse_channel_id(
+    "DISCORD_MINTS_CHANNEL_ID", default=1486393112212541501
+)
 DISCORD_NEW_MINTS_CHANNEL_ID = parse_channel_id("DISCORD_NEW_MINTS_CHANNEL_ID")
 ENABLE_ETH_ERC20 = os.getenv("ENABLE_ETH_ERC20", "0") == "1"
 ENABLE_ETH_NFT = os.getenv("ENABLE_ETH_NFT", "1") == "1"
