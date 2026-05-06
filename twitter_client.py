@@ -351,8 +351,14 @@ class TwitterClient:
         session['client'].user_agent = old_ua
         session['proxy'] = new_proxy
         session['logged_in'] = False  # Force cookie reload on next ensure
-        username = session['account']['username'] if session.get('account') else 'default'
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] {reason_tag} for @{username}. Rotated proxy -> {new_proxy}")
+        try:
+            sid = self._sessions.index(session)
+        except ValueError:
+            sid = None
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] {reason_tag} for "
+            f"{self._session_debug_label(sid)}. Rotated proxy -> {new_proxy}"
+        )
         return True
 
     def get_current_username(self):
@@ -362,6 +368,26 @@ class TwitterClient:
         self._normalize_session_idx()
         session = self._sessions[self._current_session_idx]
         return session['account']['username'] if session.get('account') else 'default'
+
+    def _session_debug_label(self, idx: Optional[int] = None) -> str:
+        """Readable session label with slot, cookie file and proxy tail."""
+        if not self._sessions:
+            return "@default [no-sessions]"
+        if idx is None:
+            self._normalize_session_idx()
+            idx = self._current_session_idx
+        try:
+            s = self._sessions[int(idx)]
+        except Exception:
+            return "@default [invalid-session]"
+        uname = s['account']['username'] if s.get('account') else 'default'
+        cpath = str(s.get('cookie_path') or "")
+        cfile = os.path.basename(cpath) if cpath else "no-cookie-file"
+        proxy = str(s.get('proxy') or "")
+        proxy_tail = proxy.split("@")[-1] if "@" in proxy else proxy
+        slot = int(idx) + 1
+        total = len(self._sessions)
+        return f"@{uname} [slot {slot}/{total}] cookie={cfile} proxy={proxy_tail or 'none'}"
 
     def _rotate_session(self):
         """Rotate to the next non-rate-limited session, or full circle."""
@@ -374,7 +400,10 @@ class TwitterClient:
         while True:
             self._current_session_idx = (self._current_session_idx + 1) % len(self._sessions)
             if not self._sessions[self._current_session_idx]['rate_limited']:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Session Rotation: Switched to @{self.get_current_username()}")
+                print(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] Session Rotation: "
+                    f"Switched to {self._session_debug_label(self._current_session_idx)}"
+                )
                 return True
             if self._current_session_idx == original_idx:
                 return False
