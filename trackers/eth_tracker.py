@@ -1384,27 +1384,32 @@ async def create_eth_nft_embed(
     time_str = f"<t:{int(time.time())}:R>"
     x_prof = wallet_database.get_x_url(wallet)
 
-    wallet_block_lines = [f"**{wallet_label}**"]
+    wallet_links = [f"[Etherscan](https://etherscan.io/address/{wallet})"]
     if x_prof:
-        wallet_block_lines.append(f"[Trader 𝕏]({x_prof})")
-    wallet_block_lines.append(_embed_box(wallet_addr_short))
-    wallet_block_lines.append(f"[Etherscan](https://etherscan.io/address/{wallet})")
-    embed.add_field(name="👤 Wallet", value="\n".join(wallet_block_lines), inline=False)
+        wallet_links.append(f"[Trader 𝕏]({x_prof})")
+    wallet_block_lines = [
+        f"**{wallet_label}**",
+        _embed_box(wallet_addr_short),
+        " · ".join(wallet_links),
+    ]
+    embed.add_field(name="👤 Wallet", value="\n".join(wallet_block_lines), inline=True)
 
     collection_block_lines = [
         f"[{col_name}](https://opensea.io/assets/ethereum/{contract}/{token_id})",
         _embed_box(contract_short),
     ]
-    embed.add_field(name="🖼 Collection", value="\n".join(collection_block_lines), inline=False)
+    embed.add_field(name="🖼 Collection", value="\n".join(collection_block_lines), inline=True)
 
-    via = f"\n· via **{source}**" if source != "Contract" else ""
-    embed.add_field(name="💰 Value", value=value_str, inline=True)
-    embed.add_field(name="🕒 Time", value=time_str, inline=True)
+    via = f"via **{source}**" if source != "Contract" else "direct transfer"
     embed.add_field(
         name="⚡ Action",
-        value=f"**{action_word.capitalize()}**{via}",
+        value=f"**{action_word.capitalize()}**\n{via}",
         inline=True,
     )
+
+    embed.add_field(name="💰 Value", value=value_str, inline=True)
+    embed.add_field(name="🕒 Time", value=time_str, inline=True)
+    embed.add_field(name="🔎 TX", value=f"[Open TX](https://etherscan.io/tx/{tx_hash})", inline=True)
 
     if bulk_qty and all_token_ids:
         ids_preview = ", ".join(f"#{tid}" for tid in all_token_ids[:15])
