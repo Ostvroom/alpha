@@ -1339,9 +1339,14 @@ def _sign(data: bytes) -> str:
     return _b64url(hmac.new(_ACCESS_SECRET, data, hashlib.sha256).digest())
 
 
-def _make_access_token(*, user_id: int) -> str:
+def _make_access_token(*, user_id: int, source: str = "discord") -> str:
     now = int(time.time())
-    payload = {"uid": int(user_id), "iat": now, "exp": now + int(ACCESS_TOKEN_TTL_SECONDS)}
+    payload = {
+        "uid": int(user_id),
+        "src": str(source or "discord"),
+        "iat": now,
+        "exp": now + int(ACCESS_TOKEN_TTL_SECONDS),
+    }
     body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return _b64url(body) + "." + _sign(body)
 
@@ -1366,11 +1371,13 @@ def _verify_access_token(token: str) -> Optional[dict]:
 
 
 def _has_access(req: Request) -> bool:
-    # X tweet-gate access: require a valid signed access cookie.
+    # X tweet-gate access: require a valid signed cookie created by /api/access/tweet.
     tok = req.cookies.get(ACCESS_COOKIE, "")
     payload = _verify_access_token(tok) or {}
     try:
-        return int(payload.get("uid") or 0) > 0
+        uid_ok = int(payload.get("uid") or 0) > 0
+        src_ok = str(payload.get("src") or "").strip().lower() == "tweet"
+        return bool(uid_ok and src_ok)
     except Exception:
         return False
 
@@ -1832,7 +1839,7 @@ async def api_access_discord_callback(request: Request, code: str = "", state: s
     except Exception:
         pass
 
-    tok = _make_access_token(user_id=user_id)
+    tok = _make_access_token(user_id=user_id, source="discord")
     # Public website mode: always continue to requested destination after OAuth.
     target = nxt
     res = RedirectResponse(url=target, status_code=302)
@@ -1861,6 +1868,8 @@ async def api_me(request: Request):
     uid = int(payload.get("uid") or 0)
     if uid <= 0:
         raise HTTPException(401, "Unauthorized")
+    access_src = str(payload.get("src") or "").strip().lower()
+    can_feed = access_src == "tweet"
     u = _acct_get_user(uid) or {"user_id": uid, "username": "", "global_name": "", "avatar_url": "", "points": 0}
     is_whitelisted = _is_whitelisted_user(uid)
     has_paid_access = _has_paid_website_access(uid)
@@ -1870,7 +1879,7 @@ async def api_me(request: Request):
     return {
         **u,
         "is_whitelisted": bool(is_whitelisted),
-        "can_access_live_feed": True,
+        "can_access_live_feed": bool(can_feed),
         "is_premium": bool(is_premium),
         "engage_tweet_url": engage_tweet_url,
     }
@@ -5407,7 +5416,7 @@ async def api_access_redeem(request: Request, req: RedeemRequest):
     if not ok or not user_id:
         raise HTTPException(400, msg)
 
-    tok = _make_access_token(user_id=user_id)
+    tok = _make_access_token(user_id=user_id, source="redeem")
     res = JSONResponse({"success": True, "message": msg})
     # httpOnly so scripts can't steal; secure=True on HTTPS; SameSite=Lax for simple redirects
     res.set_cookie(
@@ -5594,7 +5603,7 @@ async def api_access_tweet(request: Request, body: TweetGateRequest):
         pass
 
     uid = int.from_bytes(hashlib.sha256(reply_url.encode("utf-8")).digest()[:4], "big", signed=False)
-    tok = _make_access_token(user_id=uid)
+    tok = _make_access_token(user_id=uid, source="tweet")
     res = JSONResponse({"success": True})
     res.set_cookie(
         key=ACCESS_COOKIE,
