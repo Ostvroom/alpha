@@ -1049,6 +1049,70 @@ class _CanonicalHostMiddleware(BaseHTTPMiddleware):
 app.add_middleware(_CanonicalHostMiddleware)
 
 # ---------------------------------------------------------------------------
+# API access firewall
+# - Block all /api/* routes unless caller has a valid tweet-gate session.
+# - Keep only the X verification endpoint public so users can obtain access.
+# ---------------------------------------------------------------------------
+_PUBLIC_API_PATHS = {
+    "/api/access/tweet",
+}
+
+
+def _configured_api_keys() -> list[str]:
+    """Comma-separated API keys from WEBSITE_API_KEYS env."""
+    raw = str(os.getenv("WEBSITE_API_KEYS", "") or "").strip()
+    if not raw:
+        return []
+    return [k.strip() for k in raw.split(",") if str(k).strip()]
+
+
+def _request_api_key(request: Request) -> str:
+    """Extract API key from X-API-Key or Bearer token."""
+    x_key = str(request.headers.get("x-api-key") or "").strip()
+    if x_key:
+        return x_key
+    auth = str(request.headers.get("authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return ""
+
+
+def _has_valid_api_key(request: Request) -> bool:
+    keys = _configured_api_keys()
+    if not keys:
+        return False
+    candidate = _request_api_key(request)
+    if not candidate:
+        return False
+    for k in keys:
+        try:
+            if hmac.compare_digest(candidate, k):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+class _ApiAccessFirewallMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = str(getattr(request.url, "path", "") or "")
+        if path.startswith("/api/") and path not in _PUBLIC_API_PATHS:
+            # Allow either:
+            # 1) browser session unlocked by tweet-gate cookie, or
+            # 2) server-to-server API key
+            allowed = _has_access(request) or _has_valid_api_key(request)
+            if not _DEV_PREVIEW and not allowed:
+                ip = _get_client_ip(request)
+                # Throttle repeated unauthorized probing.
+                if not _check_rate_limit(f"api_unauth:{ip}", max_calls=80, window_seconds=60):
+                    return JSONResponse({"detail": "Too many requests."}, status_code=429)
+                return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+        return await call_next(request)
+
+
+app.add_middleware(_ApiAccessFirewallMiddleware)
+
+# ---------------------------------------------------------------------------
 # Simple in-memory rate limiter (per IP) for brute-force-prone endpoints
 # ---------------------------------------------------------------------------
 import threading as _threading
