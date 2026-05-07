@@ -119,7 +119,7 @@ class TwitterClient:
                 'cf_quarantine_until_ts': 0.0,
                 'cookie_file_mtime': 0.0,
             })
-            proxy_msg = f" (Proxy: {current_proxy})" if current_proxy else ""
+            proxy_msg = f" (Proxy: {self._redact_proxy(current_proxy)})" if current_proxy else ""
             print(f"Primary session: cookies.json{proxy_msg}", flush=True)
         
         # Backup cookies (data/ or project root)
@@ -151,7 +151,7 @@ class TwitterClient:
                 'cf_quarantine_until_ts': 0.0,
                 'cookie_file_mtime': 0.0,
             })
-            print(f"   + Backup session: {backup_name} (Proxy: {current_proxy})")
+            print(f"   + Backup session: {backup_name} (Proxy: {self._redact_proxy(current_proxy)})")
         
         # Then add accounts from accounts.json as backup sessions
         if os.path.exists(self._accounts_path):
@@ -184,7 +184,7 @@ class TwitterClient:
                     })
                     has_cookies = os.path.exists(cookie_file)
                     cookie_msg = "(with cookies)" if has_cookies else "(new login)"
-                    print(f"   + Backup session: @{acc['username']} {cookie_msg} (Proxy: {current_proxy})")
+                    print(f"   + Backup session: @{acc['username']} {cookie_msg} (Proxy: {self._redact_proxy(current_proxy)})")
             except Exception as e:
                 print(f"WARN: Error loading accounts.json: {e}")
         

@@ -2,8 +2,11 @@ import base64
 import json
 import logging
 import os
+import random
+import re
 import sys
 import threading
+import time
 import warnings
 import sqlite3
 from pathlib import Path
@@ -203,14 +206,47 @@ def main():
     web_thread = threading.Thread(target=_start_website_server, daemon=True, name="website-server")
     web_thread.start()
 
-    bot = BlockBrainBot()
+    # Login can be temporarily blocked by Discord global limits (HTTP 429).
+    # Avoid crash-looping the process: back off and retry with jitter.
+    login_backoff = max(30.0, float(os.getenv("DISCORD_LOGIN_BACKOFF_SEC", "120") or 120))
+    login_backoff_max = max(login_backoff, float(os.getenv("DISCORD_LOGIN_BACKOFF_MAX_SEC", "900") or 900))
+    attempt = 0
 
-    try:
-        print("Starting Velcor3...", flush=True)
-        bot.run(config.DISCORD_TOKEN)
-    except Exception as e:
-        print(f"Fatal error running bot: {e}", flush=True)
-        sys.exit(1)
+    while True:
+        bot = BlockBrainBot()
+        attempt += 1
+        try:
+            print(f"Starting Velcor3... (attempt {attempt})", flush=True)
+            bot.run(config.DISCORD_TOKEN)
+            # Normal/clean shutdown: stop restarting.
+            break
+        except Exception as e:
+            msg = str(e or "")
+            low = msg.lower()
+            is_login_429 = "429" in low and "too many requests" in low
+            if not is_login_429:
+                print(f"Fatal error running bot: {e}", flush=True)
+                sys.exit(1)
+
+            # If retry_after appears in the exception string, honor it; else fallback to backoff.
+            retry_after = 0.0
+            m = re.search(r"retry[_ -]?after[^0-9]*([0-9]+(?:\\.[0-9]+)?)", low)
+            if m:
+                try:
+                    retry_after = float(m.group(1))
+                except Exception:
+                    retry_after = 0.0
+            wait = retry_after if retry_after > 0 else login_backoff
+            wait = min(login_backoff_max, max(10.0, wait))
+            jitter = random.uniform(0.1 * wait, 0.25 * wait)
+            total_wait = wait + jitter
+            print(
+                f"[Velcor3] Discord login is rate-limited (429). "
+                f"Backing off for {total_wait:.1f}s before retry.",
+                flush=True,
+            )
+            time.sleep(total_wait)
+            login_backoff = min(login_backoff_max, login_backoff * 1.5)
 
 
 if __name__ == "__main__":
