@@ -3,6 +3,8 @@ discord.py>=2.0
 twikit>=2.3.3
 # Replaces httpx transport with curl-impersonate to bypass Cloudflare JA3/TLS fingerprint blocks.
 httpx-curl-cffi>=0.1.5
+# Scweet v5 — actively maintained X scraper with native curl_cffi (replaces twikit for reads).
+Scweet>=5.3
 python-dotenv
 openai
 aiohttp

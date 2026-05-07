@@ -7,7 +7,7 @@ from twikit import Client
 import config
 from datetime import datetime, timezone, timedelta
 import time
-from typing import Optional
+from typing import Any, Optional
 
 # Auto-apply twikit reduce() patch on every startup (safe if already patched)
 try:
@@ -15,6 +15,158 @@ try:
     patch_twikit.apply_patch()
 except Exception:
     pass
+
+
+# ── Scweet compatibility wrappers ───────────────────────────────────────────
+
+class _ScweetUser:
+    """Mimics twikit.User so callers don't need changes."""
+
+    __slots__ = (
+        "_data",
+        "id",
+        "screen_name",
+        "name",
+        "description",
+        "followers_count",
+        "created_at",
+        "profile_image_url",
+        "profile_image_url_https",
+        "profile_banner_url",
+        "url",
+    )
+
+    def __init__(self, data: dict):
+        self._data = data
+        self.id = data.get("user_id") or data.get("id") or data.get("rest_id")
+        self.screen_name = (
+            data.get("username") or data.get("screen_name") or data.get("handle")
+        )
+        self.name = data.get("name") or data.get("display_name")
+        self.description = data.get("description") or data.get("bio")
+        self.followers_count = data.get("followers_count")
+        self.created_at = data.get("created_at")
+        self.profile_image_url = (
+            data.get("profile_image_url") or data.get("profile_image_url_https")
+        )
+        self.profile_image_url_https = self.profile_image_url
+        self.profile_banner_url = data.get("profile_banner_url")
+        self.url = data.get("url")
+
+    def __repr__(self):
+        return f"<_ScweetUser @{self.screen_name}>"
+
+
+class _ScweetTweet:
+    """Mimics twikit.Tweet so callers don't need changes."""
+
+    __slots__ = (
+        "_data",
+        "id",
+        "tweet_id",
+        "text",
+        "full_text",
+        "user",
+        "retweeted_tweet",
+        "retweeted_status",
+    )
+
+    def __init__(self, data: dict):
+        self._data = data
+        self.id = data.get("tweet_id") or data.get("id")
+        self.tweet_id = self.id
+        self.text = data.get("text") or data.get("full_text")
+        self.full_text = self.text
+
+        user_data = data.get("user")
+        if isinstance(user_data, dict):
+            self.user = _ScweetUser(
+                {
+                    "user_id": None,
+                    "username": user_data.get("screen_name"),
+                    "name": user_data.get("name"),
+                }
+            )
+        else:
+            self.user = None
+
+        self.retweeted_tweet = None
+        self.retweeted_status = None
+
+        raw = data.get("raw", {})
+        if isinstance(raw, dict):
+            legacy = raw.get("legacy", {}) or {}
+            rt_result = legacy.get("retweeted_status_result", {})
+            if isinstance(rt_result, dict) and rt_result:
+                self.retweeted_tweet = _build_retweet_tweet(rt_result)
+                self.retweeted_status = self.retweeted_tweet
+
+    def __repr__(self):
+        return f"<_ScweetTweet {self.id}>"
+
+
+def _build_retweet_tweet(rt_result: dict) -> Optional[_ScweetTweet]:
+    """Build a fake tweet object from a retweeted_status_result GraphQL node."""
+    if not isinstance(rt_result, dict):
+        return None
+    result = rt_result.get("result", {})
+    if not isinstance(result, dict):
+        return None
+    legacy = result.get("legacy", {}) or {}
+    core = result.get("core", {}) or {}
+    user_results = core.get("user_results", {}) or {}
+    user_result = user_results.get("result", {}) or {}
+    user_legacy = user_result.get("legacy", {}) or {}
+
+    user = _ScweetUser(
+        {
+            "user_id": user_result.get("rest_id"),
+            "username": user_legacy.get("screen_name"),
+            "name": user_legacy.get("name"),
+            "description": user_legacy.get("description"),
+            "followers_count": user_legacy.get("followers_count"),
+            "created_at": user_legacy.get("created_at"),
+            "profile_image_url": user_legacy.get("profile_image_url_https"),
+        }
+    )
+
+    tweet = _ScweetTweet(
+        {
+            "tweet_id": legacy.get("id_str"),
+            "text": legacy.get("full_text"),
+            "user": {
+                "screen_name": user_legacy.get("screen_name"),
+                "name": user_legacy.get("name"),
+            },
+            "raw": result,
+        }
+    )
+    tweet.user = user
+    return tweet
+
+
+def _scweet_error_to_str(exc: Exception) -> str:
+    """Convert a Scweet exception into a string that _mark_session_blocked understands."""
+    msg = str(exc) or f"{type(exc).__name__}"
+    # Scweet wraps HTTP status codes in diagnostics sometimes
+    diagnostics = getattr(exc, "diagnostics", None) or {}
+    status_code = diagnostics.get("status_code")
+    if status_code:
+        msg = f"status: {status_code}, message: {msg}"
+    elif isinstance(exc, Exception):
+        # Heuristic: look for status codes in the message
+        if "429" in msg:
+            msg = f"status: 429, message: {msg}"
+        elif "403" in msg:
+            msg = f"status: 403, message: {msg}"
+        elif "401" in msg:
+            msg = f"status: 401, message: {msg}"
+        elif "502" in msg:
+            msg = f"status: 502, message: {msg}"
+        elif "504" in msg:
+            msg = f"status: 504, message: {msg}"
+    return msg
+
 
 class TwitterClient:
     def __init__(self):
@@ -26,6 +178,7 @@ class TwitterClient:
         self._accounts_path = os.path.join(DATA_DIR, "accounts.json")
         self._cookies_dir = str(DATA_DIR)
         self._user_id_cache, self._user_id_neg = self._load_cache()
+        self._id_handle_cache: dict[str, str] = {}   # reverse lookup
         self.is_rate_limited = False
         self.cooldown_ends = None
         
@@ -118,6 +271,8 @@ class TwitterClient:
                 'cf_consecutive': 0,
                 'cf_quarantine_until_ts': 0.0,
                 'cookie_file_mtime': 0.0,
+                'scweet': None,
+                '_auth_token': None,
             })
             proxy_msg = f" (Proxy: {self._redact_proxy(current_proxy)})" if current_proxy else ""
             print(f"Primary session: cookies.json{proxy_msg}", flush=True)
@@ -150,6 +305,8 @@ class TwitterClient:
                 'cf_consecutive': 0,
                 'cf_quarantine_until_ts': 0.0,
                 'cookie_file_mtime': 0.0,
+                'scweet': None,
+                '_auth_token': None,
             })
             print(f"   + Backup session: {backup_name} (Proxy: {self._redact_proxy(current_proxy)})")
         
@@ -181,6 +338,8 @@ class TwitterClient:
                         'cf_consecutive': 0,
                         'cf_quarantine_until_ts': 0.0,
                         'cookie_file_mtime': 0.0,
+                        'scweet': None,
+                        '_auth_token': None,
                     })
                     has_cookies = os.path.exists(cookie_file)
                     cookie_msg = "(with cookies)" if has_cookies else "(new login)"
@@ -203,6 +362,63 @@ class TwitterClient:
                 flush=True,
             )
         self._normalize_session_idx()
+
+    # ── Scweet helpers ───────────────────────────────────────────────────────
+
+    def _extract_auth_token(self, cookie_path: str) -> Optional[str]:
+        """Extract auth_token from a browser-export cookie file."""
+        if not os.path.exists(cookie_path):
+            return None
+        try:
+            with open(cookie_path, "r", encoding="utf-8") as f:
+                cookies = json.load(f)
+            if isinstance(cookies, list):
+                for c in cookies:
+                    if isinstance(c, dict) and c.get("name") == "auth_token":
+                        return c.get("value")
+            elif isinstance(cookies, dict):
+                return cookies.get("auth_token")
+        except Exception:
+            pass
+        return None
+
+    def _ensure_scweet(self, session: dict) -> Optional[Any]:
+        """Lazy-init a Scweet instance for the given session."""
+        if session.get("scweet") is not None:
+            return session["scweet"]
+
+        auth_token = session.get("_auth_token")
+        if not auth_token:
+            auth_token = self._extract_auth_token(session.get("cookie_path", ""))
+            session["_auth_token"] = auth_token
+
+        if not auth_token:
+            return None
+
+        proxy = session.get("proxy")
+        # Unique DB per session to avoid SQLite conflicts
+        cookie_file = session.get("cookie_path", "default")
+        db_name = (
+            "scweet_state_"
+            + os.path.splitext(os.path.basename(cookie_file))[0]
+            + ".db"
+        )
+        db_path = os.path.join(self._cookies_dir, db_name)
+
+        try:
+            from Scweet import Scweet
+
+            scweet = Scweet(
+                auth_token=auth_token,
+                proxy=proxy,
+                db_path=db_path,
+                manifest_scrape_on_init=False,
+            )
+            session["scweet"] = scweet
+            return scweet
+        except Exception as e:
+            print(f"      WARN Failed to init Scweet for session: {e}")
+            return None
 
     def _normalize_session_idx(self):
         """Keep _current_session_idx in range (e.g. after deploy / pool changes)."""
@@ -381,6 +597,9 @@ class TwitterClient:
         session['client'].user_agent = old_ua
         session['proxy'] = new_proxy
         session['logged_in'] = False  # Force cookie reload on next ensure
+        # Also reset Scweet so it picks up the new proxy next init
+        session['scweet'] = None
+        session['_auth_token'] = None
         try:
             sid = self._sessions.index(session)
         except ValueError:
@@ -576,28 +795,46 @@ class TwitterClient:
             while attempts < 3: # Up to 3 attempts with different proxies
                 proxy_str = f" | Proxy: {self._redact_proxy(session.get('proxy'))}" if session.get('proxy') else ""
                 try:
-                    # Ensure logged in
+                    # Ensure logged in (twikit)
                     if not session['logged_in']:
                         success, err = await self._login(session)
                         if not success:
                             # If failed, treat as error and check for proxy rotation
                             raise Exception(err or "Login failed")
                     
-                    # Test connectivity/auth with a simple call
-                    try:
-                        await session['client'].get_user_by_screen_name('Twitter')
-                    except KeyError as ke:
-                        # twikit User parsing error (e.g. KeyError: 'urls') —
-                        # cookies ARE valid, the API responded, it's an in-memory
-                        # class mismatch. Count as healthy; will self-heal on restart.
-                        transport_name = type(getattr(session['client'], 'http', None)).__name__
-                        print(f"   OK Session @{username} cookies valid (twikit parse warn: {ke}){proxy_str} (transport: {transport_name})")
+                    # Test connectivity/auth with Scweet (preferred) or twikit fallback
+                    healthy = False
+                    scweet = self._ensure_scweet(session)
+                    if scweet is not None:
+                        try:
+                            profiles = await scweet.aget_user_info(["Twitter"])
+                            if profiles:
+                                healthy = True
+                                print(f"   OK Session @{username} is healthy (Scweet){proxy_str}")
+                            else:
+                                raise Exception("Scweet returned empty")
+                        except Exception as se_err:
+                            # Scweet failed, try twikit fallback
+                            err_msg = _scweet_error_to_str(se_err)
+                            if "403" in err_msg or "429" in err_msg:
+                                raise Exception(err_msg)
+                            # Non-auth error: try twikit
+                            pass
+                    
+                    if not healthy:
+                        try:
+                            await session['client'].get_user_by_screen_name('Twitter')
+                            healthy = True
+                            transport_name = type(getattr(session['client'], 'http', None)).__name__
+                            print(f"   OK Session @{username} is healthy (twikit fallback){proxy_str} (transport: {transport_name})")
+                        except KeyError as ke:
+                            transport_name = type(getattr(session['client'], 'http', None)).__name__
+                            print(f"   OK Session @{username} cookies valid (twikit parse warn: {ke}){proxy_str} (transport: {transport_name})")
+                            healthy = True
+
+                    if healthy:
                         valid_count += 1
                         break
-                    transport_name = type(getattr(session['client'], 'http', None)).__name__
-                    print(f"   OK Session @{username} is healthy{proxy_str} (transport: {transport_name})")
-                    valid_count += 1
-                    break # Success!
                     
                 except Exception as e:
                     err_msg = str(e)
@@ -646,6 +883,8 @@ class TwitterClient:
                         session['client'].user_agent = old_ua
                         session['proxy'] = new_proxy
                         session['logged_in'] = False
+                        session['scweet'] = None
+                        session['_auth_token'] = None
                         continue # Try again with new proxy
                     else:
                         # Permanent failure or out of retries
@@ -675,7 +914,7 @@ class TwitterClient:
                     "(brain scan / X search need cookies.json)."
                 )
                 print(f"   TIP Export cookies to: {os.path.join(self._cookies_dir, 'cookies.json')}")
-                # Not the same as “rate limited” — do not set global cooldown when there is no pool.
+                # Not the same as "rate limited" — do not set global cooldown when there is no pool.
                 self.is_rate_limited = False
                 self.cooldown_ends = None
                 return
@@ -859,6 +1098,10 @@ class TwitterClient:
                 print(f"[{timestamp}] ERROR Login failed for @{username}: {e}")
             return False, err_msg
 
+
+
+    # ── Scweet-powered read methods ──────────────────────────────────────────
+
     async def get_user_id(self, handle, _retry_depth=0):
         # Normalize handle
         handle = handle.lower()
@@ -870,93 +1113,164 @@ class TwitterClient:
         if until and time.time() < until:
             return None
 
-        if self.is_rate_limited: return None
-        
+        if self.is_rate_limited:
+            return None
+
         print(f"      📡 Looking up ID for @{handle}...")
         session = await self._ensure_session()
-        if not session: return None
-            
+        if not session:
+            return None
+
+        scweet = self._ensure_scweet(session)
+        if scweet is None:
+            # Fallback to twikit
+            return await self._get_user_id_twikit(handle, session, _retry_depth)
+
+        try:
+            await self._twikit_pace()
+            profiles = await scweet.aget_user_info([handle])
+            if profiles:
+                profile = profiles[0]
+                user_id = profile.get("user_id")
+                if user_id:
+                    self._reset_soft_429(session)
+                    self._user_id_cache[handle] = str(user_id)
+                    self._id_handle_cache[str(user_id)] = handle
+                    self._save_cache()
+                    return str(user_id)
+            return None
+        except Exception as e:
+            err_msg = _scweet_error_to_str(e)
+            if not err_msg:
+                err_msg = f"Empty {type(e).__name__}"
+
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504"]) or "Empty" in err_msg or "Timeout" in err_msg:
+                self._mark_session_blocked(err_msg)
+                if _retry_depth < 2:
+                    return await self.get_user_id(handle, _retry_depth=_retry_depth + 1)
+                return None
+            low = err_msg.lower()
+            if "does not exist" in low or "not found" in low or "no such user" in low:
+                self._user_id_neg[handle] = time.time() + (7 * 24 * 3600)
+                self._save_cache()
+            print(f"      ERROR Lookup error for {handle}: {err_msg}")
+            return None
+
+    async def _get_user_id_twikit(self, handle, session, _retry_depth=0):
+        """Twikit fallback for get_user_id."""
         try:
             await self._twikit_pace()
             user = await session['client'].get_user_by_screen_name(handle)
             if user:
                 self._reset_soft_429(session)
                 self._user_id_cache[handle] = user.id
+                self._id_handle_cache[str(user.id)] = handle
                 self._save_cache()
                 return user.id
             return None
         except Exception as e:
             err_msg = str(e)
-            if not err_msg:
-                err_msg = f"Empty {type(e).__name__}"
-
             if any(code in err_msg for code in ["429", "503", "403", "502", "504"]) or "Empty" in err_msg or "Timeout" in err_msg:
                 self._mark_session_blocked(err_msg)
-                if _retry_depth < 2:  # Max 2 retries to prevent infinite CF 403 loop
-                    return await self.get_user_id(handle, _retry_depth=_retry_depth + 1)
+                if _retry_depth < 2:
+                    return await self._get_user_id_twikit(handle, session, _retry_depth + 1)
                 return None
-            # For hard "does not exist" / 404-style errors, cache a cooldown to reduce spam.
-            low = err_msg.lower()
-            if "does not exist" in low or "not found" in low or "no such user" in low:
-                # 7 days
-                self._user_id_neg[handle] = time.time() + (7 * 24 * 3600)
-                self._save_cache()
             print(f"      ERROR Lookup error for {handle}: {err_msg}")
             return None
 
     async def get_new_following(self, user_id, _retry_depth=0):
-        if self.is_rate_limited: return [] 
-        session = await self._ensure_session()
-        if not session: return []
-            
-        try:
-            await self._twikit_pace()
-            following = await session['client'].get_user_following(user_id, count=20)
-            if not following: return []
-            
-            newly_followed_accounts = []
-            now = datetime.now(timezone.utc)
-            for user in following:
-                try:
-                    created_at = user.created_at
-                    if isinstance(created_at, str):
-                         created_at = datetime.strptime(created_at, "%a %b %d %H:%M:%S %z %Y")
-                    if (now - created_at).days <= config.SNIPER_MAX_AGE_DAYS:
-                        newly_followed_accounts.append(user)
-                except: continue
-            self._reset_soft_429(session)
-            return newly_followed_accounts
-        except Exception as e:
-            err_msg = str(e)
-            if not err_msg:
-                err_msg = f"Empty {type(e).__name__}"
-            
-            if any(code in err_msg for code in ["429", "503", "403", "502", "504"]) or "Empty" in err_msg or "Timeout" in err_msg:
-                self._mark_session_blocked(err_msg)
-                if _retry_depth < 2:
-                    return await self.get_new_following(user_id, _retry_depth=_retry_depth + 1)
-                return []
-            print(f"      ERROR Following error (ID: {user_id}): {err_msg}")
-            return []
+        """Deprecated wrapper — delegates to with_delta version."""
+        result, _ = await self.get_new_following_with_delta(user_id, "")
+        return result
 
     async def get_new_following_with_delta(self, user_id, hva_handle, _retry_depth=0):
         """Get new following with delta detection - only processes when count changes."""
         import database
-        if self.is_rate_limited: return [], 0 
-            
+
+        if self.is_rate_limited:
+            return [], 0
+
         session = await self._ensure_session()
-        if not session: return [], 0
-            
+        if not session:
+            return [], 0
+
+        scweet = self._ensure_scweet(session)
+        if scweet is None:
+            return await self._get_new_following_with_delta_twikit(user_id, hva_handle, _retry_depth)
+
+        handle = hva_handle or self._id_handle_cache.get(str(user_id))
+        if not handle:
+            print(f"      WARN Cannot fetch following without handle for user_id {user_id}")
+            return [], 0
+
+        try:
+            await self._twikit_pace()
+            profiles = await scweet.aget_following([handle], limit=20, raw_json=True)
+            if not profiles:
+                return [], 0
+
+            current_count = len(profiles)
+            last_count = database.get_hva_last_follows_count(hva_handle)
+            database.update_hva_follows_count(hva_handle, current_count)
+            delta = current_count - last_count if last_count > 0 else current_count
+
+            newly_followed_accounts = []
+            seen_ids = set()
+            now = datetime.utcfromtimestamp(datetime.now().timestamp()).replace(tzinfo=timezone.utc)
+            count_new = 0
+            for profile in profiles:
+                try:
+                    uid = profile.get("user_id")
+                    if uid is not None:
+                        uid_key = str(uid)
+                        if uid_key in seen_ids:
+                            continue
+                        seen_ids.add(uid_key)
+                    created_at_str = profile.get("created_at")
+                    created_at = None
+                    if isinstance(created_at_str, str):
+                        created_at = datetime.strptime(created_at_str, "%a %b %d %H:%M:%S %z %Y")
+                    if created_at and (now - created_at).days <= config.SNIPER_MAX_AGE_DAYS:
+                        newly_followed_accounts.append(_ScweetUser(profile))
+                        count_new += 1
+                except Exception:
+                    continue
+
+            print(f"      ✔ Found {current_count} follows ({count_new} Potential Projects, delta: {delta})")
+            self._reset_soft_429(session)
+            return newly_followed_accounts, delta
+        except Exception as e:
+            err_msg = _scweet_error_to_str(e)
+            if not err_msg:
+                err_msg = f"Empty {type(e).__name__}"
+
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg:
+                print(f"      Retrying due to {err_msg}...")
+                self._mark_session_blocked(err_msg)
+                if _retry_depth < 2:
+                    return await self.get_new_following_with_delta(user_id, hva_handle, _retry_depth=_retry_depth + 1)
+                return [], 0
+            print(f"      ERROR Following error (ID: {user_id}): {err_msg}")
+            return [], 0
+
+    async def _get_new_following_with_delta_twikit(self, user_id, hva_handle, _retry_depth=0):
+        """Twikit fallback for following."""
+        import database
+
+        session = await self._ensure_session()
+        if not session:
+            return [], 0
         try:
             await self._twikit_pace()
             following = await session['client'].get_user_following(user_id, count=20)
-            if not following: return [], 0
-            
+            if not following:
+                return [], 0
+
             current_count = len(following)
             last_count = database.get_hva_last_follows_count(hva_handle)
             database.update_hva_follows_count(hva_handle, current_count)
             delta = current_count - last_count if last_count > 0 else current_count
-            
+
             newly_followed_accounts = []
             seen_ids = set()
             now = datetime.utcfromtimestamp(datetime.now().timestamp()).replace(tzinfo=timezone.utc)
@@ -973,9 +1287,11 @@ class TwitterClient:
                     if isinstance(created_at, str):
                         created_at = datetime.strptime(created_at, "%a %b %d %H:%M:%S %z %Y")
                     if (now - created_at).days <= config.SNIPER_MAX_AGE_DAYS:
-                        newly_followed_accounts.append(user); count_new += 1
-                except: continue
-            
+                        newly_followed_accounts.append(user)
+                        count_new += 1
+                except Exception:
+                    continue
+
             print(f"      ✔ Found {current_count} follows ({count_new} Potential Projects, delta: {delta})")
             self._reset_soft_429(session)
             return newly_followed_accounts, delta
@@ -983,20 +1299,59 @@ class TwitterClient:
             err_msg = str(e)
             if not err_msg:
                 err_msg = f"Empty {type(e).__name__}"
-
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg:
                 print(f"      Retrying due to {err_msg}...")
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
-                    return await self.get_new_following_with_delta(user_id, hva_handle, _retry_depth=_retry_depth + 1)
+                    return await self._get_new_following_with_delta_twikit(user_id, hva_handle, _retry_depth + 1)
                 return [], 0
             print(f"      ERROR Following error (ID: {user_id}): {err_msg}")
             return [], 0
 
-    async def get_user_timeline(self, user_id, count=20, _retry_depth=0):
-        if self.is_rate_limited: return [] 
+    async def get_user_timeline(self, user_id, count=20, handle=None, _retry_depth=0):
+        if self.is_rate_limited:
+            return []
         session = await self._ensure_session()
-        if not session: return []
+        if not session:
+            return []
+
+        # Scweet needs a handle; resolve from cache or parameter
+        lookup_handle = handle or self._id_handle_cache.get(str(user_id))
+        if not lookup_handle:
+            # Try twikit fallback which works with IDs
+            return await self._get_user_timeline_twikit(user_id, count, _retry_depth)
+
+        scweet = self._ensure_scweet(session)
+        if scweet is None:
+            return await self._get_user_timeline_twikit(user_id, count, _retry_depth)
+
+        try:
+            await self._twikit_pace()
+            tweets = await scweet.aget_profile_tweets([lookup_handle], limit=count)
+            wrapped = [_ScweetTweet(t) for t in tweets]
+            print(f"      ✔ Fetched {len(wrapped)} timeline items")
+            self._reset_soft_429(session)
+            return wrapped
+        except Exception as e:
+            err_msg = _scweet_error_to_str(e)
+            if "'value'" in err_msg or "'entries'" in err_msg:
+                print(f"      ℹ️ Timeline: No tweets / empty graph (0 tweets, restricted, or API shape)")
+                return []
+            if not err_msg:
+                err_msg = f"Empty {type(e).__name__}"
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg:
+                self._mark_session_blocked(err_msg)
+                if _retry_depth < 2:
+                    return await self.get_user_timeline(user_id, count, handle=handle, _retry_depth=_retry_depth + 1)
+                return []
+            print(f"      ERROR Timeline error (ID: {user_id}): {err_msg}")
+            return []
+
+    async def _get_user_timeline_twikit(self, user_id, count=20, _retry_depth=0):
+        """Twikit fallback for timeline."""
+        session = await self._ensure_session()
+        if not session:
+            return []
         try:
             await self._twikit_pace()
             tweets = await session['client'].get_user_tweets(user_id, 'Tweets', count=count)
@@ -1008,22 +1363,55 @@ class TwitterClient:
             if "'value'" in err_msg or "'entries'" in err_msg:
                 print(f"      ℹ️ Timeline: No tweets / empty graph (0 tweets, restricted, or API shape)")
                 return []
-
             if not err_msg:
                 err_msg = f"Empty {type(e).__name__}"
-
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg:
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
-                    return await self.get_user_timeline(user_id, count, _retry_depth=_retry_depth + 1)
+                    return await self._get_user_timeline_twikit(user_id, count, _retry_depth + 1)
                 return []
             print(f"      ERROR Timeline error (ID: {user_id}): {err_msg}")
             return []
 
-    async def get_user_info(self, user_id, _retry_depth=0):
-        if self.is_rate_limited: return None
+    async def get_user_info(self, user_id, handle=None, _retry_depth=0):
+        if self.is_rate_limited:
+            return None
         session = await self._ensure_session()
-        if not session: return None
+        if not session:
+            return None
+
+        lookup_handle = handle or self._id_handle_cache.get(str(user_id))
+        if not lookup_handle:
+            return await self._get_user_info_twikit(user_id, _retry_depth)
+
+        scweet = self._ensure_scweet(session)
+        if scweet is None:
+            return await self._get_user_info_twikit(user_id, _retry_depth)
+
+        try:
+            await self._twikit_pace()
+            profiles = await scweet.aget_user_info([lookup_handle])
+            if profiles:
+                self._reset_soft_429(session)
+                return _ScweetUser(profiles[0])
+            return None
+        except Exception as e:
+            err_msg = _scweet_error_to_str(e)
+            if not err_msg:
+                err_msg = f"Empty {type(e).__name__}"
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg:
+                self._mark_session_blocked(err_msg)
+                if _retry_depth < 2:
+                    return await self.get_user_info(user_id, handle=handle, _retry_depth=_retry_depth + 1)
+                return None
+            print(f"      ERROR User info error (ID: {user_id}): {err_msg}")
+            return None
+
+    async def _get_user_info_twikit(self, user_id, _retry_depth=0):
+        """Twikit fallback for user info."""
+        session = await self._ensure_session()
+        if not session:
+            return None
         try:
             await self._twikit_pace()
             u = await session['client'].get_user_by_id(user_id)
@@ -1033,11 +1421,10 @@ class TwitterClient:
             err_msg = str(e)
             if not err_msg:
                 err_msg = f"Empty {type(e).__name__}"
-
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg:
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
-                    return await self.get_user_info(user_id, _retry_depth=_retry_depth + 1)
+                    return await self._get_user_info_twikit(user_id, _retry_depth + 1)
                 return None
             print(f"      ERROR User info error (ID: {user_id}): {err_msg}")
             return None
@@ -1053,6 +1440,40 @@ class TwitterClient:
         session = await self._ensure_session()
         if not session:
             return None
+
+        scweet = self._ensure_scweet(session)
+        if scweet is None:
+            return await self._get_user_by_handle_twikit(handle, _retry_depth)
+
+        try:
+            await self._twikit_pace()
+            profiles = await scweet.aget_user_info([handle])
+            if profiles:
+                self._reset_soft_429(session)
+                user = _ScweetUser(profiles[0])
+                # Cache the mapping
+                if user.id:
+                    self._user_id_cache[handle.lower()] = str(user.id)
+                    self._id_handle_cache[str(user.id)] = handle.lower()
+                    self._save_cache()
+                return user
+            return None
+        except Exception as e:
+            err_msg = _scweet_error_to_str(e)
+            if not err_msg:
+                err_msg = f"Empty {type(e).__name__}"
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Timeout" in err_msg:
+                self._mark_session_blocked(err_msg)
+                if _retry_depth < 2:
+                    return await self.get_user_by_handle(handle, _retry_depth=_retry_depth + 1)
+                return None
+            return None
+
+    async def _get_user_by_handle_twikit(self, handle: str, _retry_depth=0):
+        """Twikit fallback for get_user_by_handle."""
+        session = await self._ensure_session()
+        if not session:
+            return None
         try:
             await self._twikit_pace()
             user = await session["client"].get_user_by_screen_name(handle)
@@ -1063,18 +1484,14 @@ class TwitterClient:
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Timeout" in err_msg:
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
-                    return await self.get_user_by_handle(handle, _retry_depth=_retry_depth + 1)
+                    return await self._get_user_by_handle_twikit(handle, _retry_depth + 1)
                 return None
             return None
 
     async def search_recent_tweets(self, query: str, count: int = 15, _retry_depth: int = 0):
         """
-        Best-effort recent search using twikit client.
+        Best-effort recent search using Scweet.
         Returns a list of tweet objects (may be empty).
-
-        Notes:
-        - twikit API differs across versions; this method tries multiple call shapes.
-        - Uses the active rotating session/proxy/cookies logic.
         """
         if self.is_rate_limited:
             return []
@@ -1087,11 +1504,36 @@ class TwitterClient:
             return []
 
         count = max(1, min(50, int(count or 15)))
-        client = session["client"]
+
+        scweet = self._ensure_scweet(session)
+        if scweet is None:
+            return await self._search_recent_tweets_twikit(query, count, _retry_depth)
 
         try:
             await self._twikit_pace()
-            # Try common twikit shapes
+            tweets = await scweet.asearch(query, limit=count)
+            wrapped = [_ScweetTweet(t) for t in tweets]
+            self._reset_soft_429(session)
+            return wrapped
+        except Exception as e:
+            err_msg = _scweet_error_to_str(e)
+            if not err_msg:
+                err_msg = f"Empty {type(e).__name__}"
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Timeout" in err_msg:
+                self._mark_session_blocked(err_msg)
+                if _retry_depth < 2:
+                    return await self.search_recent_tweets(query, count=count, _retry_depth=_retry_depth + 1)
+                return []
+            return []
+
+    async def _search_recent_tweets_twikit(self, query: str, count: int = 15, _retry_depth: int = 0):
+        """Twikit fallback for search."""
+        session = await self._ensure_session()
+        if not session:
+            return []
+        try:
+            await self._twikit_pace()
+            client = session["client"]
             if hasattr(client, "search_tweet"):
                 try:
                     out = list(await client.search_tweet(query, product="Latest", count=count))
@@ -1111,14 +1553,14 @@ class TwitterClient:
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Timeout" in err_msg:
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
-                    return await self.search_recent_tweets(query, count=count, _retry_depth=_retry_depth + 1)
+                    return await self._search_recent_tweets_twikit(query, count, _retry_depth + 1)
                 return []
         return []
 
     async def get_x_profile_art(self, handle: str):
         """
         Return (profile_image_https, banner_https) for a handle.
-        Uses twikit when possible; falls back to unavatar.io for PFP only.
+        Uses Scweet when possible; falls back to unavatar.io for PFP only.
         """
         handle = (handle or "").strip().lstrip("@")
         if not handle:
@@ -1133,6 +1575,33 @@ class TwitterClient:
         if not session:
             return fallback_pfp, None
 
+        scweet = self._ensure_scweet(session)
+        if scweet is None:
+            return await self._get_x_profile_art_twikit(handle, session)
+
+        try:
+            await self._twikit_pace()
+            profiles = await scweet.aget_user_info([handle])
+            if not profiles:
+                return fallback_pfp, None
+
+            self._reset_soft_429(session)
+            profile = profiles[0]
+            pfp = profile.get("profile_image_url")
+            if pfp and "_normal" in str(pfp):
+                pfp = str(pfp).replace("_normal", "_400x400")
+
+            banner = profile.get("profile_banner_url")
+            return (pfp or fallback_pfp), banner
+        except Exception as e:
+            err_msg = _scweet_error_to_str(e)
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]):
+                self._mark_session_blocked(err_msg)
+            return fallback_pfp, None
+
+    async def _get_x_profile_art_twikit(self, handle: str, session):
+        """Twikit fallback for profile art."""
+        fallback_pfp = f"https://unavatar.io/twitter/{handle}"
         try:
             await self._twikit_pace()
             user = await session["client"].get_user_by_screen_name(handle)
@@ -1161,24 +1630,24 @@ class TwitterClient:
                 for code in ["429", "503", "403", "502", "504", "522"]
             ):
                 self._mark_session_blocked(err_msg)
-            # Suppress known twikit non-fatal warnings (fallback used)
             if "ClientTransaction" in err_msg and "attribute" in err_msg:
                 return fallback_pfp, None
             if "Multiple cookies exist" in err_msg:
                 return fallback_pfp, None
             if isinstance(e, KeyError):
-                # twikit User parsing error — API worked, just missing field
                 return fallback_pfp, None
             print(f"      WARN get_x_profile_art @{handle}: {err_msg[:120]}")
             return fallback_pfp, None
 
     async def create_tweet(self, text):
-        """Creates a new tweet using the primary session."""
-        if self.is_rate_limited: return False
+        """Creates a new tweet using the primary session (twikit)."""
+        if self.is_rate_limited:
+            return False
         
         # Always use the first session for posting (primary account)
         session = await self._ensure_session()
-        if not session: return False
+        if not session:
+            return False
         
         try:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] Posting to X...")
@@ -1192,15 +1661,49 @@ class TwitterClient:
                  self._mark_session_blocked(err_msg)
             return False
 
-    async def get_hva_followers(self, user_id):
+    async def get_hva_followers(self, user_id, handle=None):
         """Get list of HVAs from our list that follow this account."""
-        if self.is_rate_limited: return []
+        if self.is_rate_limited:
+            return []
         session = await self._ensure_session()
-        if not session: return []
-        
+        if not session:
+            return []
+
+        lookup_handle = handle or self._id_handle_cache.get(str(user_id))
+        if not lookup_handle:
+            return await self._get_hva_followers_twikit(user_id)
+
+        scweet = self._ensure_scweet(session)
+        if scweet is None:
+            return await self._get_hva_followers_twikit(user_id)
+
+        try:
+            profiles = await scweet.aget_followers([lookup_handle], limit=100, raw_json=True)
+            if not profiles:
+                return []
+
+            hva_set = set([h.lower() for h in config.HVA_LIST])
+            matching_hvas = []
+            for profile in profiles:
+                screen_name = (profile.get("username") or "").lower()
+                if screen_name in hva_set:
+                    matching_hvas.append(screen_name)
+            return matching_hvas
+        except Exception as e:
+            err_msg = _scweet_error_to_str(e)
+            if any(code in err_msg for code in ["429", "503", "403"]):
+                self._mark_session_blocked(err_msg)
+            return await self.get_hva_followers(user_id, handle=handle)
+
+    async def _get_hva_followers_twikit(self, user_id):
+        """Twikit fallback for HVA followers."""
+        session = await self._ensure_session()
+        if not session:
+            return []
         try:
             followers = await session['client'].get_user_followers(user_id, count=100)
-            if not followers: return []
+            if not followers:
+                return []
             
             hva_set = set([h.lower() for h in config.HVA_LIST])
             matching_hvas = []
@@ -1213,8 +1716,50 @@ class TwitterClient:
             err_msg = str(e)
             if any(code in err_msg for code in ["429", "503", "403"]):
                 self._mark_session_blocked(err_msg)
-                return await self.get_hva_followers(user_id)
-            return []
+            return await self._get_hva_followers_twikit(user_id)
+
+    async def get_first_followers(self, user_id, limit=1000, screen_name: str | None = None):
+        """Fetch followers (newest-first). Uses Scweet; falls back to twikit."""
+        if self.is_rate_limited:
+            return None
+        if not await self._ensure_session():
+            return None
+
+        lookup_handle = screen_name or self._id_handle_cache.get(str(user_id))
+        if not lookup_handle:
+            return await self._get_first_followers_twikit(user_id, limit, screen_name)
+
+        session = await self._ensure_session()
+        if not session:
+            return None
+
+        scweet = self._ensure_scweet(session)
+        if scweet is None:
+            return await self._get_first_followers_twikit(user_id, limit, screen_name)
+
+        try:
+            profiles = await scweet.aget_followers([lookup_handle], limit=limit, raw_json=True)
+            if not profiles:
+                return [], True
+            wrapped = [_ScweetUser(p) for p in profiles]
+            return wrapped, True
+        except Exception as e:
+            err_msg = _scweet_error_to_str(e)
+            print(f"      WARN get_first_followers Scweet error: {err_msg}")
+            return await self._get_first_followers_twikit(user_id, limit, screen_name)
+
+    async def _get_first_followers_twikit(self, user_id, limit=1000, screen_name: str | None = None):
+        """Twikit fallback for first followers (REST followers/list)."""
+        if self.is_rate_limited:
+            return None
+        if not await self._ensure_session():
+            return None
+
+        uid_s = (str(user_id).strip() if user_id is not None else "") or None
+        sn_s = (str(screen_name or "").strip().lstrip("@") if screen_name else "") or None
+        count_target = int(limit or 0) or 1000
+
+        return await self._get_followers_via_followers_list(uid_s, sn_s, count_target)
 
     @staticmethod
     async def _followers_list_paged_one_client(
@@ -1298,19 +1843,6 @@ class TwitterClient:
             )
         return [], True
 
-    async def get_first_followers(self, user_id, limit=1000, screen_name: str | None = None):
-        """Fetch followers (newest-first). Uses REST followers/list only; retries all sessions."""
-        if self.is_rate_limited:
-            return None
-        if not await self._ensure_session():
-            return None
-
-        uid_s = (str(user_id).strip() if user_id is not None else "") or None
-        sn_s = (str(screen_name).strip().lstrip("@") if screen_name else "") or None
-        count_target = int(limit or 0) or 1000
-
-        return await self._get_followers_via_followers_list(uid_s, sn_s, count_target)
-
     @staticmethod
     def _about_account_url() -> str:
         from twikit.constants import DOMAIN
@@ -1377,6 +1909,7 @@ class TwitterClient:
         """
         X "About this account" (GraphQL): username change count, last change time, region, etc.
         Does not include the list of old @handles (X does not return them here).
+        Uses twikit (custom GraphQL not supported by Scweet).
         """
         sn = (screen_name or "").strip().lstrip("@")
         if not sn:

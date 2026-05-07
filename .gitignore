@@ -18,3 +18,6 @@ daily_finds_digest_state.json
 kolfi_*_state.json
 kolfi_*_registry.json
 kolfi_*_watchlist.json
+backups/
+scweet_pkg/
+*.backup_*
