@@ -55,6 +55,8 @@ def apply_patch():
         print("    [PATCH] twikit not installed yet - skipping.")
         return
 
+    _apply_transport_patch()
+
     path = os.path.join(
         os.path.dirname(twikit.__file__),
         "x_client_transaction",
@@ -152,6 +154,120 @@ def apply_patch():
 
     # Always apply the in-memory monkey-patch on top.
     _apply_monkey_patch()
+
+
+# ── Layer 1b: curl_cffi transport patch ──────────────────────────────────────
+
+def _apply_transport_patch():
+    """
+    Patch twikit's HTTP layer to use httpx-curl-cffi's AsyncCurlTransport.
+    This fixes Cloudflare 403 blocks caused by JA3/TLS fingerprint detection
+    of plain httpx (Python/OpenSSL fingerprint vs real browser fingerprint).
+    """
+    try:
+        import twikit
+    except ImportError:
+        return
+
+    base = os.path.dirname(twikit.__file__)
+    patched_any = False
+
+    _OLD_INIT = "        self.http = AsyncClient(proxy=proxy, **kwargs)"
+    _NEW_INIT = (
+        "        try:\n"
+        "            from httpx_curl_cffi import AsyncCurlTransport, CurlOpt\n"
+        "            _twikit_proxy = proxy\n"
+        "            _twikit_kwargs = {k: v for k, v in kwargs.items() if k not in ('proxy', 'verify', 'http1', 'http2', 'limits', 'trust_env')}\n"
+        "            _twikit_transport = AsyncCurlTransport(\n"
+        "                impersonate='chrome',\n"
+        "                default_headers=True,\n"
+        "                proxy=_twikit_proxy,\n"
+        "                curl_options={CurlOpt.FRESH_CONNECT: True}\n"
+        "            )\n"
+        "            self.http = AsyncClient(transport=_twikit_transport, **_twikit_kwargs)\n"
+        "        except Exception:\n"
+        "            self.http = AsyncClient(proxy=proxy, **kwargs)\n"
+    )
+
+    for rel in ("client/client.py", "guest/client.py"):
+        path = os.path.join(base, rel)
+        if not os.path.isfile(path):
+            continue
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        if _OLD_INIT not in content:
+            continue
+        if "httpx_curl_cffi" in content:
+            # Already patched on disk
+            continue
+        content = content.replace(_OLD_INIT, _NEW_INIT, 1)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        _clear_pycache(path)
+        print(f"    [PATCH] twikit {rel} -> AsyncCurlTransport (curl_cffi TLS impersonation).")
+        patched_any = True
+
+    if not patched_any:
+        # If file patch didn't apply, rely on monkey-patch fallback
+        pass
+
+
+def _apply_transport_monkey_patch():
+    """
+    In-memory fallback: replace httpx.AsyncClient inside twikit modules with a
+    wrapper that injects AsyncCurlTransport.  This survives pycache issues and
+    works when the file-level patch can't be written (e.g. read-only installs).
+    """
+    try:
+        import httpx
+        from httpx_curl_cffi import AsyncCurlTransport, CurlOpt
+    except Exception:
+        # Dependency not installed — silently skip
+        return
+
+    _original_async_client = httpx.AsyncClient
+
+    class _TwikitAsyncClient(_original_async_client):
+        def __init__(self, *args, **kwargs):
+            proxy = kwargs.pop("proxy", None)
+            # Remove transport-level kwargs that conflict with custom transport
+            for key in ("verify", "http1", "http2", "limits", "trust_env"):
+                kwargs.pop(key, None)
+            try:
+                transport = AsyncCurlTransport(
+                    impersonate="chrome",
+                    default_headers=True,
+                    proxy=proxy,
+                    curl_options={CurlOpt.FRESH_CONNECT: True},
+                )
+                super().__init__(transport=transport, *args, **kwargs)
+            except Exception:
+                # Fallback to original behaviour on any error
+                kwargs["proxy"] = proxy
+                super().__init__(*args, **kwargs)
+
+    # Inject into twikit modules so their local AsyncClient reference uses our wrapper
+    try:
+        import twikit.client.client as _twikit_client_mod
+        if getattr(_twikit_client_mod.AsyncClient, "_is_curl_cffi_patched", False):
+            pass
+        else:
+            _twikit_client_mod.AsyncClient = _TwikitAsyncClient
+            _twikit_client_mod.AsyncClient._is_curl_cffi_patched = True
+            print("    [PATCH] twikit.client.client AsyncClient -> curl_cffi transport (memory).")
+    except Exception:
+        pass
+
+    try:
+        import twikit.guest.client as _twikit_guest_mod
+        if getattr(_twikit_guest_mod.AsyncClient, "_is_curl_cffi_patched", False):
+            pass
+        else:
+            _twikit_guest_mod.AsyncClient = _TwikitAsyncClient
+            _twikit_guest_mod.AsyncClient._is_curl_cffi_patched = True
+            print("    [PATCH] twikit.guest.client AsyncClient -> curl_cffi transport (memory).")
+    except Exception:
+        pass
 
 
 # ── Layer 2: in-memory monkey-patch ──────────────────────────────────────────
@@ -320,9 +436,12 @@ def _apply_monkey_patch():
     except Exception as e:
         print(f"    [PATCH] Could not patch Client._get_user_state: {e}")
 
+    # ── httpx-curl-cffi transport monkey-patch fallback ──────────────────────
+    _apply_transport_monkey_patch()
+
     print(
         "    [PATCH] In-memory monkey-patch applied "
-        "(get_indices, get_animation_key, init, _get_user_state, cookie dedupe)."
+        "(get_indices, get_animation_key, init, _get_user_state, cookie dedupe, curl_cffi transport)."
     )
 
     # ── patch User.__init__ ─────────────────────────────────────────────────

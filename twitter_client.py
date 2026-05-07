@@ -568,7 +568,7 @@ class TwitterClient:
             
             attempts = 0
             while attempts < 3: # Up to 3 attempts with different proxies
-                proxy_str = f" | Proxy: {session['proxy']}" if session.get('proxy') else ""
+                proxy_str = f" | Proxy: {self._redact_proxy(session.get('proxy'))}" if session.get('proxy') else ""
                 try:
                     # Ensure logged in
                     if not session['logged_in']:

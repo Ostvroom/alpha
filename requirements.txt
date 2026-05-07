@@ -1,6 +1,8 @@
 discord.py>=2.0
 # 2.3+ includes ClientTransaction fixes for X front-end changes ("Couldn't get KEY_BYTE indices").
 twikit>=2.3.3
+# Replaces httpx transport with curl-impersonate to bypass Cloudflare JA3/TLS fingerprint blocks.
+httpx-curl-cffi>=0.1.5
 python-dotenv
 openai
 aiohttp
