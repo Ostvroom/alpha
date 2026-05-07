@@ -1245,6 +1245,11 @@ class TwitterClient:
                 except Exception:
                     continue
 
+            # Populate reverse cache so process_discovery can use Scweet for these accounts
+            for user in newly_followed_accounts:
+                if user.id and user.screen_name:
+                    self._id_handle_cache[str(user.id)] = user.screen_name.lower()
+
             print(f"      ✔ Found {current_count} follows ({count_new} Potential Projects, delta: {delta})")
             self._reset_soft_429(session)
             return newly_followed_accounts, delta
@@ -1300,6 +1305,11 @@ class TwitterClient:
                         count_new += 1
                 except Exception:
                     continue
+
+            # Populate reverse cache so process_discovery can use Scweet for these accounts
+            for user in newly_followed_accounts:
+                if getattr(user, "id", None) and getattr(user, "screen_name", None):
+                    self._id_handle_cache[str(user.id)] = user.screen_name.lower()
 
             print(f"      ✔ Found {current_count} follows ({count_new} Potential Projects, delta: {delta})")
             self._reset_soft_429(session)
@@ -1526,6 +1536,10 @@ class TwitterClient:
             await self._twikit_pace()
             tweets = await scweet.asearch(query, limit=count)
             wrapped = [_ScweetTweet(t) for t in tweets]
+            # Cache tweet authors so downstream process_discovery can use Scweet
+            for t in wrapped:
+                if t.user and t.user.id and t.user.screen_name:
+                    self._id_handle_cache[str(t.user.id)] = t.user.screen_name.lower()
             self._reset_soft_429(session)
             return wrapped
         except Exception as e:
@@ -1759,6 +1773,10 @@ class TwitterClient:
             if not profiles:
                 return [], True
             wrapped = [_ScweetUser(p) for p in profiles]
+            # Cache followers so downstream lookups can use Scweet
+            for u in wrapped:
+                if u.id and u.screen_name:
+                    self._id_handle_cache[str(u.id)] = u.screen_name.lower()
             return wrapped, True
         except Exception as e:
             err_msg = _scweet_error_to_str(e)
