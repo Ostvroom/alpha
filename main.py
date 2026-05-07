@@ -7,6 +7,7 @@ import re
 import sys
 import threading
 import time
+import urllib.request
 import warnings
 import sqlite3
 from pathlib import Path
@@ -108,6 +109,49 @@ def _start_website_server() -> None:
         uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
     except Exception as e:
         print(f"[Velcor3] Website server failed to start: {e}", flush=True)
+
+
+def _probe_discord_login_window(token: str) -> tuple[bool, float, str]:
+    """
+    Lightweight check before starting discord.py:
+    - True => safe to attempt bot login
+    - False + wait seconds => hold off and retry later
+    """
+    req = urllib.request.Request(
+        "https://discord.com/api/v10/users/@me",
+        headers={
+            "Authorization": f"Bot {token}",
+            "User-Agent": "Velcor3/1.0 (+render)",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            code = int(getattr(resp, "status", 0) or 0)
+            if code == 200:
+                return True, 0.0, "ok"
+            return False, 120.0, f"HTTP {code}"
+    except urllib.error.HTTPError as he:  # type: ignore[attr-defined]
+        code = int(getattr(he, "code", 0) or 0)
+        body = ""
+        try:
+            raw = he.read()
+            body = raw.decode("utf-8", errors="ignore") if raw else ""
+        except Exception:
+            body = ""
+        if code == 401:
+            return False, -1.0, "Unauthorized bot token (401)"
+        if code == 429:
+            retry_after = 0.0
+            try:
+                data = json.loads(body or "{}")
+                retry_after = float(data.get("retry_after") or 0.0)
+            except Exception:
+                retry_after = 0.0
+            return False, max(30.0, retry_after), "Discord API 429"
+        return False, 120.0, f"Discord probe HTTP {code}"
+    except Exception as ex:
+        return False, 120.0, f"Discord probe error: {ex}"
 
 
 def _hard_reset_token_alerts_once() -> None:
@@ -213,8 +257,25 @@ def main():
     attempt = 0
 
     while True:
-        bot = BlockBrainBot()
         attempt += 1
+        ok_probe, probe_wait, probe_reason = _probe_discord_login_window(config.DISCORD_TOKEN)
+        if not ok_probe:
+            if probe_wait < 0:
+                print(f"Fatal error running bot: {probe_reason}", flush=True)
+                sys.exit(1)
+            probe_wait = min(login_backoff_max, max(15.0, probe_wait))
+            jitter = random.uniform(0.1 * probe_wait, 0.25 * probe_wait)
+            total_wait = probe_wait + jitter
+            print(
+                f"[Velcor3] Discord login probe blocked ({probe_reason}). "
+                f"Waiting {total_wait:.1f}s before starting discord.py login.",
+                flush=True,
+            )
+            time.sleep(total_wait)
+            login_backoff = min(login_backoff_max, max(login_backoff, probe_wait) * 1.25)
+            continue
+
+        bot = BlockBrainBot()
         try:
             print(f"Starting Velcor3... (attempt {attempt})", flush=True)
             bot.run(config.DISCORD_TOKEN)
