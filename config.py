@@ -286,7 +286,7 @@ BATCH_BREAK_SECONDS = max(30, min(900, _env_int("HVA_BATCH_BREAK_SECONDS", 120))
 
 # Twikit (cookie / web-style X traffic) — reduce 429 bursts and “all sessions blocked” cooldowns
 # Minimum pause before each Twikit call in the hot paths below (seconds).
-TWIKIT_REQUEST_GAP_SEC = max(0.0, min(20.0, _env_float("TWIKIT_REQUEST_GAP_SEC", 1.35)))
+TWIKIT_REQUEST_GAP_SEC = max(0.0, min(20.0, _env_float("TWIKIT_REQUEST_GAP_SEC", 4.0)))
 # Extra random jitter added to each call gap (seconds).
 TWIKIT_REQUEST_GAP_JITTER_SEC = max(0.0, min(10.0, _env_float("TWIKIT_REQUEST_GAP_JITTER_SEC", 0.75)))
 # Multiplier applied to request gap to lower burst pressure.

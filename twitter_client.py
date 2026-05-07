@@ -306,6 +306,10 @@ class TwitterClient:
 
         self._next_twikit_call_ts = max(time.monotonic(), self._next_twikit_call_ts) + gap + random.uniform(0, jitter)
 
+        # Proactive session rotation: spread load across all sessions so no single
+        # session bears the full brunt of a scan batch (critical with datacenter IPs).
+        self._rotate_session()
+
     @staticmethod
     def _reset_soft_429(session):
         if session is not None:
@@ -381,9 +385,11 @@ class TwitterClient:
             sid = self._sessions.index(session)
         except ValueError:
             sid = None
+        transport_name = type(getattr(session['client'], 'http', None)).__name__
         print(
             f"[{datetime.now().strftime('%H:%M:%S')}] {reason_tag} for "
-            f"{self._session_debug_label(sid)}. Rotated proxy -> {self._redact_proxy(new_proxy)}"
+            f"{self._session_debug_label(sid)}. Rotated proxy -> {self._redact_proxy(new_proxy)} "
+            f"(transport: {transport_name})"
         )
         return True
 
@@ -584,10 +590,12 @@ class TwitterClient:
                         # twikit User parsing error (e.g. KeyError: 'urls') —
                         # cookies ARE valid, the API responded, it's an in-memory
                         # class mismatch. Count as healthy; will self-heal on restart.
-                        print(f"   OK Session @{username} cookies valid (twikit parse warn: {ke}){proxy_str}")
+                        transport_name = type(getattr(session['client'], 'http', None)).__name__
+                        print(f"   OK Session @{username} cookies valid (twikit parse warn: {ke}){proxy_str} (transport: {transport_name})")
                         valid_count += 1
                         break
-                    print(f"   OK Session @{username} is healthy{proxy_str}")
+                    transport_name = type(getattr(session['client'], 'http', None)).__name__
+                    print(f"   OK Session @{username} is healthy{proxy_str} (transport: {transport_name})")
                     valid_count += 1
                     break # Success!
                     
