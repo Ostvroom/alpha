@@ -79,10 +79,20 @@ class _ScweetTweet:
         self.full_text = self.text
 
         user_data = data.get("user")
+        raw = data.get("raw", {})
+
+        # Extract user_id from raw GraphQL core if available
+        user_id = None
+        if isinstance(raw, dict):
+            core = raw.get("core", {}) or {}
+            user_results = core.get("user_results", {}) or {}
+            user_result = user_results.get("result", {}) or {}
+            user_id = user_result.get("rest_id")
+
         if isinstance(user_data, dict):
             self.user = _ScweetUser(
                 {
-                    "user_id": None,
+                    "user_id": user_id,
                     "username": user_data.get("screen_name"),
                     "name": user_data.get("name"),
                 }
@@ -93,7 +103,6 @@ class _ScweetTweet:
         self.retweeted_tweet = None
         self.retweeted_status = None
 
-        raw = data.get("raw", {})
         if isinstance(raw, dict):
             legacy = raw.get("legacy", {}) or {}
             rt_result = legacy.get("retweeted_status_result", {})
@@ -1311,6 +1320,8 @@ class TwitterClient:
     async def get_user_timeline(self, user_id, count=20, handle=None, _retry_depth=0):
         if self.is_rate_limited:
             return []
+        if not user_id:
+            return []
         session = await self._ensure_session()
         if not session:
             return []
@@ -1375,6 +1386,8 @@ class TwitterClient:
 
     async def get_user_info(self, user_id, handle=None, _retry_depth=0):
         if self.is_rate_limited:
+            return None
+        if not user_id:
             return None
         session = await self._ensure_session()
         if not session:
@@ -1665,6 +1678,8 @@ class TwitterClient:
         """Get list of HVAs from our list that follow this account."""
         if self.is_rate_limited:
             return []
+        if not user_id:
+            return []
         session = await self._ensure_session()
         if not session:
             return []
@@ -1721,6 +1736,8 @@ class TwitterClient:
     async def get_first_followers(self, user_id, limit=1000, screen_name: str | None = None):
         """Fetch followers (newest-first). Uses Scweet; falls back to twikit."""
         if self.is_rate_limited:
+            return None
+        if not user_id and not screen_name:
             return None
         if not await self._ensure_session():
             return None
