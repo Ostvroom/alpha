@@ -344,7 +344,9 @@ async def _run_daily_mints_post(
             if lf:
                 files.append(lf)
             emb, files = bot._with_brand_banner_fallback(emb, files)
-            if files:
+            if hasattr(bot, "safe_send"):
+                await bot.safe_send(target, embed=emb, files=files)
+            elif files:
                 await target.send(embed=emb, files=files)
             else:
                 await target.send(embed=emb)
@@ -373,10 +375,48 @@ class BlockBrainBot(commands.Bot):
         self._daily_mints_boot: bool = False
         self._invite_cache: Dict[int, Dict[str, int]] = {}
         self._telegram_calls_task: Optional[asyncio.Task] = None
+        self._discord_send_lock: asyncio.Lock = asyncio.Lock()
+        self._discord_global_pause_until: float = 0.0
         # Active channel caches (populated in on_ready)
         self.active_main_channels = []
         self.active_escalation_channels = []
         self._slash_tree_synced = False
+
+    async def safe_send(self, target, *, embed=None, content=None, view=None, files=None):
+        """Shared Discord sender with global 429 backoff handling."""
+        max_retries = 4
+        for attempt in range(max_retries):
+            now = time.time()
+            if float(self._discord_global_pause_until or 0.0) > now:
+                await asyncio.sleep(max(0.2, float(self._discord_global_pause_until) - now))
+            try:
+                kwargs = {}
+                if content is not None:
+                    kwargs["content"] = content
+                if embed is not None:
+                    kwargs["embed"] = embed
+                if view is not None:
+                    kwargs["view"] = view
+                if files:
+                    kwargs["files"] = files
+                return await target.send(**kwargs)
+            except discord.HTTPException as e:
+                if int(getattr(e, "status", 0) or 0) != 429:
+                    raise
+                retry_after = float(getattr(e, "retry_after", 0.0) or 0.0)
+                if retry_after <= 0:
+                    retry_after = min(30.0, 1.5 * (2 ** attempt))
+                async with self._discord_send_lock:
+                    self._discord_global_pause_until = max(
+                        float(self._discord_global_pause_until or 0.0),
+                        time.time() + retry_after + 0.25,
+                    )
+                print(
+                    f"{self._get_log_prefix()} [Discord] 429 rate limit hit; waiting {retry_after:.2f}s "
+                    f"(attempt {attempt + 1}/{max_retries})"
+                )
+                await asyncio.sleep(retry_after + 0.25)
+        raise RuntimeError("Discord send failed after repeated 429 responses")
 
     def _get_log_prefix(self):
         return f"[{datetime.now().strftime('%H:%M:%S')}]"
@@ -1333,7 +1373,7 @@ class BlockBrainBot(commands.Bot):
                 current_files.append(discord.File(BRAND_BANNER_PATH, filename=BRAND_BANNER_FILE))
                 
             try: 
-                await ch.send(embed=embed, files=current_files)
+                await self.safe_send(ch, embed=embed, files=current_files)
             except Exception as e: 
                 print(f"❌ Failed to send trending report: {e}")
 
@@ -1646,7 +1686,7 @@ class BlockBrainBot(commands.Bot):
                 new_ids: List[int] = []
                 for emb in embeds:
                     emb2, files = self._with_brand_banner_fallback(emb, [])
-                    sent = await ch.send(embed=emb2, files=files) if files else await ch.send(embed=emb2)
+                    sent = await self.safe_send(ch, embed=emb2, files=files)
                     new_ids.append(sent.id)
                 # Track max alerted_at we posted so we don't repost the same projects next run.
                 try:
@@ -2003,9 +2043,9 @@ class BlockBrainBot(commands.Bot):
                     files.append(lf)
                 embed, files = self._with_brand_banner_fallback(embed, files)
                 if files:
-                    await ct_ch.send(embed=embed, files=files)
+                    await self.safe_send(ct_ch, embed=embed, files=files)
                 else:
-                    await ct_ch.send(embed=embed)
+                    await self.safe_send(ct_ch, embed=embed)
 
                 print(f"      [CTWatcher] ✅ Posted: {domain}" + (f" → @{x_handle}" if x_handle else ""))
 
@@ -2480,10 +2520,10 @@ class BlockBrainBot(commands.Bot):
                         if isinstance(res, tuple):
                             files.append(res[1]) # The banner.jpg
                             emb0, files = self._with_brand_banner_fallback(res[0], files)
-                            await ch.send(embed=emb0, files=files)
+                            await self.safe_send(ch, embed=emb0, files=files)
                         else:
                             emb0, files = self._with_brand_banner_fallback(res, files)
-                            await ch.send(embed=emb0, files=files) if files else await ch.send(embed=emb0)
+                            await self.safe_send(ch, embed=emb0, files=files)
                         sent_any = True
                     except Exception as e:
                         print(f"      ❌ Failed to send Discord alert: {e}")
@@ -2594,10 +2634,10 @@ class BlockBrainBot(commands.Bot):
                                     if isinstance(res, tuple):
                                         files.append(res[1]) # The banner.jpg
                                         emb0, files = self._with_brand_banner_fallback(res[0], files)
-                                        await ch.send(embed=emb0, files=files)
+                                        await self.safe_send(ch, embed=emb0, files=files)
                                     else:
                                         emb0, files = self._with_brand_banner_fallback(res, files)
-                                        await ch.send(embed=emb0, files=files) if files else await ch.send(embed=emb0)
+                                        await self.safe_send(ch, embed=emb0, files=files)
                                     sent_any = True
                                     if _first_sent_ch is None:
                                         _first_sent_ch = ch
@@ -3136,7 +3176,7 @@ class WalletCommands(commands.Cog):
             for m in mints[:limit]:
                 embed = await build_active_mint_embed(m)
                 embed, files = self.bot._with_brand_banner_fallback(embed, [])
-                await target.send(embed=embed, files=files) if files else await target.send(embed=embed)
+                await self.safe_send(target, embed=embed, files=files)
                 sent += 1
                 await asyncio.sleep(0.5)
             

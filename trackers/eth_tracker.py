@@ -6,6 +6,7 @@ import json
 import os
 import re
 import time as time_module
+import discord
 from datetime import datetime, timezone
 from collections import defaultdict, deque
 from typing import Dict, List, Optional, Set, Any, Tuple
@@ -915,15 +916,7 @@ async def process_erc721_group(
             print(
                 f"\033[92m[ETH ALERT]\033[0m \033[1mERC721\033[0m ({label} x{n}) {action_type} for \033[96m{wallet}\033[0m: \033[90m{tx_hash}\033[0m"
             )
-            if files:
-                await ch.send(
-                    content=content,
-                    embed=embed,
-                    view=view,
-                    files=_fresh_discord_files(files),
-                )
-            else:
-                await ch.send(content=content, embed=embed, view=view)
+            await _safe_discord_send(ch, content=content, embed=embed, view=view, files=files)
             if feed_events is not None:
                 try:
                     thumb = ""
@@ -988,15 +981,7 @@ async def process_api_tx(tx, wallet, tx_type, client, session, token_channel_id,
                         print(f"\033[91m[ETH ERROR]\033[0m Channel {chan_id} not found / no access: {e}")
                         continue
                 print(f"\033[92m[ETH ALERT]\033[0m \033[1m{tx_type}\033[0m {action_type} for \033[96m{wallet}\033[0m: \033[90m{tx_hash}\033[0m")
-                if files:
-                    await ch.send(
-                        content=content,
-                        embed=embed,
-                        view=view,
-                        files=_fresh_discord_files(files),
-                    )
-                else:
-                    await ch.send(content=content, embed=embed, view=view)
+                await _safe_discord_send(ch, content=content, embed=embed, view=view, files=files)
                 
         else: # ERC20
             value_raw = int(tx["value"])
@@ -1020,15 +1005,11 @@ async def process_api_tx(tx, wallet, tx_type, client, session, token_channel_id,
                         print(f"\033[91m[ETH ERROR]\033[0m Channel {chan_id} not found / no access: {e}")
                         continue
                 print(f"\033[92m[ETH ALERT]\033[0m \033[1m{tx_type}\033[0m {action_type} for \033[96m{wallet}\033[0m: \033[90m{tx_hash}\033[0m")
-                if files:
-                    await ch.send(embed=embed, files=_fresh_discord_files(files))
-                else:
-                    await ch.send(embed=embed)
+                await _safe_discord_send(ch, embed=embed, files=files)
                 
     except Exception as e:
         print(f"\033[91m[ETH ERROR]\033[0m Failed alerting TX \033[90m{tx_hash}\033[0m: {e}")
 
-import discord
 import time
 
 
@@ -1047,6 +1028,48 @@ def _fresh_discord_files(files: Optional[List[discord.File]]) -> Optional[List[d
             except OSError:
                 continue
     return out or None
+
+
+_discord_send_lock = asyncio.Lock()
+_discord_global_pause_until = 0.0
+
+
+async def _safe_discord_send(ch, *, embed=None, content=None, view=None, files=None):
+    """Send with 429-aware retry and shared global pause."""
+    global _discord_global_pause_until
+    max_retries = 4
+    for attempt in range(max_retries):
+        now = time_module.time()
+        if _discord_global_pause_until > now:
+            await asyncio.sleep(max(0.2, _discord_global_pause_until - now))
+        try:
+            kwargs = {}
+            if content is not None:
+                kwargs["content"] = content
+            if embed is not None:
+                kwargs["embed"] = embed
+            if view is not None:
+                kwargs["view"] = view
+            if files:
+                kwargs["files"] = _fresh_discord_files(files)
+            return await ch.send(**kwargs)
+        except discord.HTTPException as e:
+            if int(getattr(e, "status", 0) or 0) != 429:
+                raise
+            retry_after = float(getattr(e, "retry_after", 0.0) or 0.0)
+            if retry_after <= 0:
+                retry_after = min(30.0, 1.5 * (2 ** attempt))
+            async with _discord_send_lock:
+                _discord_global_pause_until = max(
+                    float(_discord_global_pause_until or 0.0),
+                    time_module.time() + retry_after + 0.25,
+                )
+            print(
+                f"\033[93m[DISCORD]\033[0m 429 rate limit hit; waiting {retry_after:.2f}s "
+                f"(attempt {attempt + 1}/{max_retries})"
+            )
+            await asyncio.sleep(retry_after + 0.25)
+    raise RuntimeError("Discord send failed after repeated 429 responses")
 
 
 def _normalize_nft_media_url(url: Optional[str]) -> Optional[str]:

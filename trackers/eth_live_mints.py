@@ -642,7 +642,10 @@ async def check_live_eth_mints(client: Bot, channel_ids: str, radar_channel_ids:
                         embed = await build_radar_embed(m)
                         if radar_channels:
                             for target in radar_channels:
-                                await target.send(embed=embed)
+                                if hasattr(client, "safe_send"):
+                                    await client.safe_send(target, embed=embed)
+                                else:
+                                    await target.send(embed=embed)
                             mark_alerted(contract, "ethereum", tier=1, count=recent_mints)
                             print(f"[EthLiveMints] 🔵 RADAR alert for {contract} ({recent_mints} mints)")
                     except Exception as e:
@@ -664,7 +667,10 @@ async def check_live_eth_mints(client: Bot, channel_ids: str, radar_channel_ids:
                                 )
                         embed = await build_active_mint_embed(m)
                         for target in channels:
-                            await target.send(embed=embed)
+                            if hasattr(client, "safe_send"):
+                                await client.safe_send(target, embed=embed)
+                            else:
+                                await target.send(embed=embed)
                         mark_alerted(contract, "ethereum", tier=2, count=recent_mints)
                         print(f"[EthLiveMints] 🔥 TRENDING alert for {contract} ({recent_mints} mints)")
                     except Exception as e:

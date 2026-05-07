@@ -1262,7 +1262,9 @@ async def run_kolfi_feed_once(
             files: List[discord.File] = []
             if use_banner and banner_path and banner_filename:
                 files.append(discord.File(banner_path, filename=banner_filename))
-            if files:
+            if hasattr(client, "safe_send"):
+                await client.safe_send(ch, embed=embed, files=files)
+            elif files:
                 await ch.send(embed=embed, files=files)
             else:
                 await ch.send(embed=embed)
@@ -1588,7 +1590,10 @@ async def run_kolfi_leaderboard_once(
         if not ch:
             return False, f"Channel {channel_id} not found"
 
-        await ch.send(embed=embed)
+        if hasattr(client, "safe_send"):
+            await client.safe_send(ch, embed=embed)
+        else:
+            await ch.send(embed=embed)
         return True, None
 
 
@@ -1983,7 +1988,10 @@ async def run_kolfi_alert_watchlist_daily_once(
     if not isinstance(by_mint, dict) or not by_mint:
         embed = build_kolfi_alert_watchlist_embed([], brand_name=brand_name, embed_color=embed_color, top_n=top_n)
         ch = client.get_channel(channel_id) or await client.fetch_channel(channel_id)
-        await ch.send(embed=embed)
+        if hasattr(client, "safe_send"):
+            await client.safe_send(ch, embed=embed)
+        else:
+            await ch.send(embed=embed)
         return True, None
 
     # Keep only mints **we first alerted** in the last 24h (recap).
@@ -2123,7 +2131,10 @@ async def run_kolfi_alert_watchlist_daily_once(
     ch = client.get_channel(channel_id) or await client.fetch_channel(channel_id)
     if not ch:
         return False, f"Channel {channel_id} not found"
-    await ch.send(embed=embed)
+    if hasattr(client, "safe_send"):
+        await client.safe_send(ch, embed=embed)
+    else:
+        await ch.send(embed=embed)
     return True, None
 
 
@@ -2269,5 +2280,8 @@ async def run_kolfi_top_movers_daily_once(
     if not ch:
         return False, f"Channel {channel_id} not found"
 
-    await ch.send(embed=embed)
+    if hasattr(client, "safe_send"):
+        await client.safe_send(ch, embed=embed)
+    else:
+        await ch.send(embed=embed)
     return True, None

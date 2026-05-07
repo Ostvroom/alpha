@@ -609,7 +609,10 @@ async def run_telegram_calls_bridge(discord_client: discord.Client) -> None:
                         link=link,
                     )
                     emb = await _build_embed_for_call(http, call)
-                    await dst.send(embed=emb)
+                    if hasattr(client, "safe_send"):
+                        await client.safe_send(dst, embed=emb)
+                    else:
+                        await dst.send(embed=emb)
                     if feed_events is not None:
                         try:
                             thumb = ""

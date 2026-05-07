@@ -307,6 +307,8 @@ TWIKIT_CF_GLOBAL_COOLDOWN_SEC = max(15.0, min(3600.0, _env_float("TWIKIT_CF_GLOB
 # Extra random rest added AFTER the global CF cooldown ends, before the first new request.
 # Prevents the bot from bursting again immediately and re-triggering the streak.
 TWIKIT_CF_POST_COOLDOWN_JITTER_SEC = max(0.0, min(600.0, _env_float("TWIKIT_CF_POST_COOLDOWN_JITTER_SEC", 120.0)))
+# Keep CF-burned cookie sessions out of rotation for a while (seconds).
+TWIKIT_CF_SESSION_QUARANTINE_SEC = max(60.0, min(86400.0, _env_float("TWIKIT_CF_SESSION_QUARANTINE_SEC", 1800.0)))
 # When every session is hard-blocked, pause the whole Twikit pool (minutes) before retrying.
 TWIKIT_ALL_SESSIONS_COOLDOWN_MIN = max(5, min(180, _env_int("TWIKIT_ALL_SESSIONS_COOLDOWN_MIN", 45)))
 # AI quota handling (prevents noisy repeated OpenAI insufficient_quota errors)

@@ -7,6 +7,7 @@ from twikit import Client
 import config
 from datetime import datetime, timezone, timedelta
 import time
+from typing import Optional
 
 # Auto-apply twikit reduce() patch on every startup (safe if already patched)
 try:
@@ -56,6 +57,21 @@ class TwitterClient:
         self._cf403_last_ts = 0.0
         self._cf_hard_blocks_total = 0   # total CF403 hard-blocks across all sessions this run
         self._load_accounts()
+
+    @staticmethod
+    def _redact_proxy(proxy: str) -> str:
+        """Hide proxy credentials in logs while keeping host:port visible."""
+        p = str(proxy or "").strip()
+        if not p:
+            return "none"
+        if "@" not in p:
+            return p
+        try:
+            scheme, rest = (p.split("://", 1) + [""])[:2] if "://" in p else ("http", p)
+            host = rest.split("@")[-1]
+            return f"{scheme}://***@{host}"
+        except Exception:
+            return "***"
     
     def _load_accounts(self):
         """Load accounts from accounts.json and create client sessions."""
@@ -99,6 +115,8 @@ class TwitterClient:
                 'backoff_exp': 0,
                 'backoff_until_ts': 0.0,
                 'cf_hard_blocks': 0,
+                'cf_consecutive': 0,
+                'cf_quarantine_until_ts': 0.0,
                 'cookie_file_mtime': 0.0,
             })
             proxy_msg = f" (Proxy: {current_proxy})" if current_proxy else ""
@@ -129,6 +147,8 @@ class TwitterClient:
                 'backoff_exp': 0,
                 'backoff_until_ts': 0.0,
                 'cf_hard_blocks': 0,
+                'cf_consecutive': 0,
+                'cf_quarantine_until_ts': 0.0,
                 'cookie_file_mtime': 0.0,
             })
             print(f"   + Backup session: {backup_name} (Proxy: {current_proxy})")
@@ -158,6 +178,8 @@ class TwitterClient:
                         'backoff_exp': 0,
                         'backoff_until_ts': 0.0,
                         'cf_hard_blocks': 0,
+                        'cf_consecutive': 0,
+                        'cf_quarantine_until_ts': 0.0,
                         'cookie_file_mtime': 0.0,
                     })
                     has_cookies = os.path.exists(cookie_file)
@@ -203,7 +225,8 @@ class TwitterClient:
             session = self._sessions[self._current_session_idx]
             if not session['rate_limited']:
                 has_non_limited = True
-                if not self._is_session_backing_off(session):
+                in_cf_quarantine = float(session.get("cf_quarantine_until_ts", 0.0) or 0.0) > time.time()
+                if not self._is_session_backing_off(session) and not in_cf_quarantine:
                     return session
             # Try next session
             self._rotate_session()
@@ -237,6 +260,8 @@ class TwitterClient:
                     s['backoff_exp'] = 0
                     s['backoff_until_ts'] = 0.0
                     s['cf_hard_blocks'] = 0
+                    s['cf_consecutive'] = 0
+                    s['cf_quarantine_until_ts'] = 0.0
                     # Force cookie reload from disk — picks up any freshly dropped cookie file.
                     s['logged_in'] = False
                     # Check whether the cookie file on disk is still the same burned one.
@@ -289,6 +314,7 @@ class TwitterClient:
             session["backoff_exp"] = 0
             session["backoff_until_ts"] = 0.0
             session["proxy_fails"] = 0
+            session["cf_consecutive"] = 0
 
     def _is_session_backing_off(self, session):
         until_ts = float(session.get("backoff_until_ts", 0.0) or 0.0)
@@ -357,7 +383,7 @@ class TwitterClient:
             sid = None
         print(
             f"[{datetime.now().strftime('%H:%M:%S')}] {reason_tag} for "
-            f"{self._session_debug_label(sid)}. Rotated proxy -> {new_proxy}"
+            f"{self._session_debug_label(sid)}. Rotated proxy -> {self._redact_proxy(new_proxy)}"
         )
         return True
 
@@ -384,7 +410,7 @@ class TwitterClient:
         cpath = str(s.get('cookie_path') or "")
         cfile = os.path.basename(cpath) if cpath else "no-cookie-file"
         proxy = str(s.get('proxy') or "")
-        proxy_tail = proxy.split("@")[-1] if "@" in proxy else proxy
+        proxy_tail = self._redact_proxy(proxy)
         slot = int(idx) + 1
         total = len(self._sessions)
         return f"@{uname} [slot {slot}/{total}] cookie={cfile} proxy={proxy_tail or 'none'}"
@@ -465,6 +491,7 @@ class TwitterClient:
         if is_cf_403:
             soft403 = int(session.get("soft_403_count", 0) or 0) + 1
             session["soft_403_count"] = soft403
+            session["cf_consecutive"] = int(session.get("cf_consecutive", 0) or 0) + 1
             self._schedule_session_backoff(session, reason or "Cloudflare 403")
             self._register_cf403_and_maybe_global_cooldown()
             rotated_proxy = self._rotate_proxy_for_session(session, "Cloudflare 403 block")
@@ -487,6 +514,12 @@ class TwitterClient:
             session["soft_403_count"] = 0
             session["cf_hard_blocks"] = int(session.get("cf_hard_blocks", 0) or 0) + 1
             self._cf_hard_blocks_total += 1
+            # Quarantine burned cookie session to avoid immediate reuse thrashing.
+            qsec = float(getattr(config, "TWIKIT_CF_SESSION_QUARANTINE_SEC", 1800.0) or 1800.0)
+            session["cf_quarantine_until_ts"] = max(
+                float(session.get("cf_quarantine_until_ts", 0.0) or 0.0),
+                time.time() + max(60.0, qsec),
+            )
 
         session['rate_limited'] = True
         
@@ -1026,7 +1059,7 @@ class TwitterClient:
                 return None
             return None
 
-    async def search_recent_tweets(self, query: str, count: int = 15):
+    async def search_recent_tweets(self, query: str, count: int = 15, _retry_depth: int = 0):
         """
         Best-effort recent search using twikit client.
         Returns a list of tweet objects (may be empty).
@@ -1069,7 +1102,9 @@ class TwitterClient:
             err_msg = str(e) or f"Empty {type(e).__name__}"
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Timeout" in err_msg:
                 self._mark_session_blocked(err_msg)
-                return await self.search_recent_tweets(query, count=count)
+                if _retry_depth < 2:
+                    return await self.search_recent_tweets(query, count=count, _retry_depth=_retry_depth + 1)
+                return []
         return []
 
     async def get_x_profile_art(self, handle: str):

@@ -241,5 +241,8 @@ async def run_overview_once(
     if not ch:
         return False, f"Channel {channel_id} not found"
 
-    await ch.send(embed=embed)
+    if hasattr(client, "safe_send"):
+        await client.safe_send(ch, embed=embed)
+    else:
+        await ch.send(embed=embed)
     return True, None
