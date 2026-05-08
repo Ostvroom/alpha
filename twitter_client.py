@@ -17,6 +17,52 @@ except Exception:
     pass
 
 
+# ── Date parsing helpers ──────────────────────────────────────────────────
+
+def _parse_twitter_date(value):
+    """Parse Twitter created_at into a timezone-aware datetime.
+    Handles legacy Twitter format, ISO 8601, and datetime objects."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    # Legacy Twitter: Wed May 07 20:30:00 +0000 2025
+    formats = [
+        "%a %b %d %H:%M:%S %z %Y",
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%dT%H:%M:%S.%f%z",
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%dT%H:%M:%S.%fZ",
+        "%Y-%m-%d %H:%M:%S%z",
+        "%Y-%m-%d %H:%M:%S",
+    ]
+    for fmt in formats:
+        try:
+            if fmt.endswith("Z"):
+                parsed = datetime.strptime(value.replace("Z", "+0000"), fmt.replace("Z", "%z"))
+            else:
+                parsed = datetime.strptime(value, fmt)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed
+        except ValueError:
+            continue
+    # Try fromisoformat as last resort (Python 3.7+)
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    except Exception:
+        pass
+    return None
+
+
 # ── Scweet compatibility wrappers ───────────────────────────────────────────
 
 class _ScweetUser:
@@ -1235,14 +1281,15 @@ class TwitterClient:
                         if uid_key in seen_ids:
                             continue
                         seen_ids.add(uid_key)
-                    created_at_str = profile.get("created_at")
-                    created_at = None
-                    if isinstance(created_at_str, str):
-                        created_at = datetime.strptime(created_at_str, "%a %b %d %H:%M:%S %z %Y")
-                    if created_at and (now - created_at).days <= config.SNIPER_MAX_AGE_DAYS:
+                    created_at = _parse_twitter_date(profile.get("created_at"))
+                    if created_at is None:
+                        print(f"         ⚠️  Could not parse created_at for {profile.get('username') or profile.get('screen_name') or profile.get('user_id')}: {profile.get('created_at')!r}")
+                        continue
+                    if (now - created_at).days <= config.SNIPER_MAX_AGE_DAYS:
                         newly_followed_accounts.append(_ScweetUser(profile))
                         count_new += 1
-                except Exception:
+                except Exception as _exc:
+                    print(f"         ⚠️  Error processing follow profile: {_exc}")
                     continue
 
             # Populate reverse cache so process_discovery can use Scweet for these accounts
@@ -1297,13 +1344,15 @@ class TwitterClient:
                         if uid_key in seen_ids:
                             continue
                         seen_ids.add(uid_key)
-                    created_at = user.created_at
-                    if isinstance(created_at, str):
-                        created_at = datetime.strptime(created_at, "%a %b %d %H:%M:%S %z %Y")
+                    created_at = _parse_twitter_date(user.created_at)
+                    if created_at is None:
+                        print(f"         ⚠️  Could not parse created_at for {getattr(user, 'screen_name', getattr(user, 'name', getattr(user, 'id', '?')))}: {getattr(user, 'created_at', None)!r}")
+                        continue
                     if (now - created_at).days <= config.SNIPER_MAX_AGE_DAYS:
                         newly_followed_accounts.append(user)
                         count_new += 1
-                except Exception:
+                except Exception as _exc:
+                    print(f"         ⚠️  Error processing follow user: {_exc}")
                     continue
 
             # Populate reverse cache so process_discovery can use Scweet for these accounts
