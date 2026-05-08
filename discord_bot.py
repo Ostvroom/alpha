@@ -1189,12 +1189,27 @@ class BlockBrainBot(commands.Bot):
                     database.update_hva_scan_timestamp(hva_handle)
                     
                     try:
-                        hva_id = await self.twitter.get_user_id(hva_handle)
+                        try:
+                            hva_id = await asyncio.wait_for(
+                                self.twitter.get_user_id(hva_handle),
+                                timeout=30.0,
+                            )
+                        except asyncio.TimeoutError:
+                            print(f"      ⚠️ Timeout resolving ID for @{hva_handle}, skipping.")
+                            continue
                         if not hva_id:
                             print(f"      ⚠️ Skip @{hva_handle}: Could not resolve User ID.")
                             continue
 
-                        following, _ = await self.twitter.get_new_following_with_delta(hva_id, hva_handle)
+                        try:
+                            following, _ = await asyncio.wait_for(
+                                self.twitter.get_new_following_with_delta(hva_id, hva_handle),
+                                timeout=60.0,
+                            )
+                        except asyncio.TimeoutError:
+                            print(f"      ⚠️ Timeout fetching follows for @{hva_handle}, skipping.")
+                            following = []
+
                         if following:
                             unique_following = []
                             seen_follow_ids: Set[str] = set()
@@ -1216,7 +1231,15 @@ class BlockBrainBot(commands.Bot):
                         
                         await asyncio.sleep(random.uniform(8, 18))
 
-                        timeline = await self.twitter.get_user_timeline(hva_id, count=15)
+                        try:
+                            timeline = await asyncio.wait_for(
+                                self.twitter.get_user_timeline(hva_id, count=15),
+                                timeout=45.0,
+                            )
+                        except asyncio.TimeoutError:
+                            print(f"      ⚠️ Timeout fetching timeline for @{hva_handle}, skipping.")
+                            timeline = []
+
                         # Same account can appear on many RT rows — process once per HVA scan
                         seen_rt_user_ids: Set[str] = set()
                         # Mentions can repeat across tweets/threads — dedup per HVA scan
@@ -1254,7 +1277,14 @@ class BlockBrainBot(commands.Bot):
                                     if h in seen_mention_handles:
                                         continue
                                     seen_mention_handles.add(h)
-                                    user_obj = await self.twitter.get_user_by_handle(h)
+                                    try:
+                                        user_obj = await asyncio.wait_for(
+                                            self.twitter.get_user_by_handle(h),
+                                            timeout=20.0,
+                                        )
+                                    except asyncio.TimeoutError:
+                                        print(f"      ⚠️ Timeout resolving mention @{h}, skipping.")
+                                        continue
                                     if user_obj:
                                         await self.process_discovery(
                                             user_obj, hva_handle, "mention", self.active_main_channels
@@ -2166,10 +2196,17 @@ class BlockBrainBot(commands.Bot):
             if candidates_processed >= config.X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE:
                 break
 
-            tweets = await self.twitter.search_recent_tweets(
-                query=str(kw),
-                count=config.X_PROJECT_SEARCH_MAX_TWEETS_PER_KEYWORD,
-            )
+            try:
+                tweets = await asyncio.wait_for(
+                    self.twitter.search_recent_tweets(
+                        query=str(kw),
+                        count=config.X_PROJECT_SEARCH_MAX_TWEETS_PER_KEYWORD,
+                    ),
+                    timeout=45.0,
+                )
+            except asyncio.TimeoutError:
+                print(f"{pfx} [XSearch] Timeout searching keyword '{kw}', skipping.")
+                tweets = []
             if not tweets:
                 await asyncio.sleep(max(1.0, float(getattr(config, "TWIKIT_REQUEST_GAP_SEC", 1.35) or 1.0)))
                 continue
@@ -2216,7 +2253,14 @@ class BlockBrainBot(commands.Bot):
                         if not mh or mh in seen_handles_this_cycle:
                             continue
                         seen_handles_this_cycle.add(mh)
-                        u = await self.twitter.get_user_by_handle(mh)
+                        try:
+                            u = await asyncio.wait_for(
+                                self.twitter.get_user_by_handle(mh),
+                                timeout=20.0,
+                            )
+                        except asyncio.TimeoutError:
+                            print(f"{pfx} [XSearch] Timeout resolving @{mh}, skipping.")
+                            continue
                         if not u:
                             continue
                         try:
@@ -2266,7 +2310,13 @@ class BlockBrainBot(commands.Bot):
         if is_personal:
             for attempt in range(3):
                 try:
-                    timeline_tweets = await self.twitter.get_user_timeline(account.id, count=8)
+                    timeline_tweets = await asyncio.wait_for(
+                        self.twitter.get_user_timeline(account.id, count=8),
+                        timeout=30.0,
+                    )
+                except asyncio.TimeoutError:
+                    print(f"         ⚠️ Timeout fetching timeline for @{account.screen_name} (attempt {attempt + 1}/3)")
+                    timeline_tweets = []
                 except Exception:
                     timeline_tweets = []
                 parts = []
