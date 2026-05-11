@@ -318,6 +318,15 @@ AI_QUOTA_LOG_WINDOW_SEC = max(30, min(3600, _env_int("AI_QUOTA_LOG_WINDOW_SEC", 
 LOG_TWITTER_SESSION_ROTATION = _env_flag("LOG_TWITTER_SESSION_ROTATION", "0")
 LOG_TWITTER_SESSION_HEALTH = _env_flag("LOG_TWITTER_SESSION_HEALTH", "0")
 LOG_TWITTER_TIMELINE_FETCH = _env_flag("LOG_TWITTER_TIMELINE_FETCH", "0")
+# Proxy/backoff chatter (522, rotated proxy, WAIT 429, soft CF403) — off by default for cleaner logs.
+LOG_TWITTER_PROXY_BACKOFF = _env_flag("LOG_TWITTER_PROXY_BACKOFF", "0")
+# Wallet tracker: periodic "scan complete" and ETH/USD refresh (very chatty on Render).
+LOG_ETH_WALLET_HEARTBEAT = _env_flag("LOG_ETH_WALLET_HEARTBEAT", "0")
+LOG_ETH_USD_REFRESH = _env_flag("LOG_ETH_USD_REFRESH", "0")
+# Per-tx [PRICE] lines next to NFT alerts (set 0 to hide).
+LOG_ETH_TX_PRICE_LINES = _env_flag("LOG_ETH_TX_PRICE_LINES", "1")
+# Live mints poller: RPC switch + rate-limit backoff lines (alerts still print).
+LOG_ETH_LIVE_MINTS_RPC_NOISE = _env_flag("LOG_ETH_LIVE_MINTS_RPC_NOISE", "0")
 
 # X project-first discovery (keyword search → new accounts → discovery pipeline)
 ENABLE_X_PROJECT_SEARCH = _env_flag("ENABLE_X_PROJECT_SEARCH", "1")  # default ON

@@ -13,6 +13,8 @@ from web3.exceptions import ContractLogicError
 import aiohttp
 from discord.ext.commands import Bot
 
+import config
+
 from trackers.mint_sources import ActiveMint, fetch_waypoint_collection
 from trackers.active_mints_tracker import (
     build_active_mint_embed,
@@ -100,7 +102,8 @@ def _throttled_eth_mint_log(key: str, line: str, interval_sec: float = 50.0) -> 
             _eth_mint_log_throttle[key] = (last_t, n + 1)
             return
         if n > 1:
-            print(f"[EthLiveMints] … suppressed {n - 1} repeat(s): {key[:100]}")
+            if getattr(config, "LOG_ETH_LIVE_MINTS_RPC_NOISE", False):
+                print(f"[EthLiveMints] … suppressed {n - 1} repeat(s): {key[:100]}")
     _eth_mint_log_throttle[key] = (now, 1)
     print(line)
 
@@ -130,10 +133,11 @@ def _switch_rpc(reason: str = "") -> str:
     url = RPC_URLS[_rpc_idx]
     w3 = Web3(Web3.HTTPProvider(url))
     safe = _rpc_log_url(url)
-    if reason:
-        print(f"[EthLiveMints] Switched RPC -> {safe} ({reason})")
-    else:
-        print(f"[EthLiveMints] Switched RPC -> {safe}")
+    if getattr(config, "LOG_ETH_LIVE_MINTS_RPC_NOISE", False):
+        if reason:
+            print(f"[EthLiveMints] Switched RPC -> {safe} ({reason})")
+        else:
+            print(f"[EthLiveMints] Switched RPC -> {safe}")
     return url
 
 TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
@@ -686,19 +690,22 @@ async def check_live_eth_mints(client: Bot, channel_ids: str, radar_channel_ids:
             # Handle RPC rate limits / transient provider failures by rotating + backing off
             if "429" in err_lower or "too many requests" in err_lower or "rate limit" in err_lower:
                 _switch_rpc("rate limited")
-                print(f"[EthLiveMints] Rate limited. Backing off for {backoff_s}s.")
+                if getattr(config, "LOG_ETH_LIVE_MINTS_RPC_NOISE", False):
+                    print(f"[EthLiveMints] Rate limited. Backing off for {backoff_s}s.")
                 await asyncio.sleep(backoff_s)
                 backoff_s = min(backoff_s * 2, 120)
                 continue
             if "400" in err_lower or "bad request" in err_lower:
                 _switch_rpc("bad request")
-                print(f"[EthLiveMints] Bad request from RPC. Backing off for {backoff_s}s.")
+                if getattr(config, "LOG_ETH_LIVE_MINTS_RPC_NOISE", False):
+                    print(f"[EthLiveMints] Bad request from RPC. Backing off for {backoff_s}s.")
                 await asyncio.sleep(backoff_s)
                 backoff_s = min(backoff_s * 2, 60)
                 continue
             if "-32005" in err_lower or "limit exceeded" in err_lower or "cannot fulfill request" in err_lower or "-32046" in err_lower:
                 _switch_rpc("provider limit")
-                print(f"[EthLiveMints] Provider limit. Backing off for {backoff_s}s.")
+                if getattr(config, "LOG_ETH_LIVE_MINTS_RPC_NOISE", False):
+                    print(f"[EthLiveMints] Provider limit. Backing off for {backoff_s}s.")
                 await asyncio.sleep(backoff_s)
                 backoff_s = min(backoff_s * 2, 60)
                 continue

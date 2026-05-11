@@ -485,9 +485,11 @@ async def refresh_eth_usd_price(session: aiohttp.ClientSession):
                     ).get('price', 0)
                     if price > 0:
                         _cached_eth_usd = price
-                        print(f"\033[90m[PRICE]\033[0m ETH/USD updated: ${_cached_eth_usd:,.2f}")
+                        if getattr(config, "LOG_ETH_USD_REFRESH", False):
+                            print(f"\033[90m[PRICE]\033[0m ETH/USD updated: ${_cached_eth_usd:,.2f}")
         except Exception as e:
-            print(f"\033[93m[PRICE WARN]\033[0m ETH/USD refresh failed: {e}")
+            if getattr(config, "LOG_ETH_USD_REFRESH", False):
+                print(f"\033[93m[PRICE WARN]\033[0m ETH/USD refresh failed: {e}")
         await asyncio.sleep(price_refresh_s)
 
 # Discord only shows embed author icons for direct image URLs (PNG/JPG). SVG and some CDNs don't display.
@@ -844,7 +846,8 @@ async def check_eth_block(client, token_channel_id: int, nft_channel_id: int):
                 # Small gap between wallets (real pacing handled by global Etherscan limiter)
                 await asyncio.sleep(0.05)
                 
-            print(f"\033[94m[ETH]\033[0m Scan complete for \033[93m{len(batch)}\033[0m wallets. Waiting...")
+            if getattr(config, "LOG_ETH_WALLET_HEARTBEAT", False):
+                print(f"\033[94m[ETH]\033[0m Scan complete for \033[93m{len(batch)}\033[0m wallets. Waiting...")
             await asyncio.sleep(scan_interval_s)
 
 
@@ -1220,10 +1223,11 @@ async def create_eth_nft_embed(
         except:
             pass
     
-    if price_source != "none":
-        print(f"\033[92m[PRICE]\033[0m {price_eth:.4f} ETH via {price_source} for tx {tx_hash[:16]}...")
-    else:
-        print(f"\033[93m[PRICE]\033[0m Could not resolve price for tx {tx_hash[:16]}...")
+    if getattr(config, "LOG_ETH_TX_PRICE_LINES", True):
+        if price_source != "none":
+            print(f"\033[92m[PRICE]\033[0m {price_eth:.4f} ETH via {price_source} for tx {tx_hash[:16]}...")
+        else:
+            print(f"\033[93m[PRICE]\033[0m Could not resolve price for tx {tx_hash[:16]}...")
     
     # --- Smart label correction ---
     # If price is 0 and no marketplace was detected, this is likely a direct

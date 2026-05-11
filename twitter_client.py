@@ -267,6 +267,7 @@ class TwitterClient:
         self._log_session_rotation = bool(getattr(config, "LOG_TWITTER_SESSION_ROTATION", False))
         self._log_session_health = bool(getattr(config, "LOG_TWITTER_SESSION_HEALTH", False))
         self._log_timeline_fetch = bool(getattr(config, "LOG_TWITTER_TIMELINE_FETCH", False))
+        self._log_proxy_backoff = bool(getattr(config, "LOG_TWITTER_PROXY_BACKOFF", False))
         self._load_accounts()
 
     @staticmethod
@@ -295,7 +296,11 @@ class TwitterClient:
     def _timeline_log(self, message: str) -> None:
         if self._log_timeline_fetch:
             print(message)
-    
+
+    def _proxy_backoff_log(self, message: str) -> None:
+        if self._log_proxy_backoff:
+            print(message)
+
     def _load_accounts(self):
         """Load accounts from accounts.json and create client sessions."""
         def get_next_proxy():
@@ -646,7 +651,7 @@ class TwitterClient:
         wait = float(wait + jitter)
         session["backoff_until_ts"] = time.time() + wait
         username = session['account']['username'] if session.get('account') else 'default'
-        print(
+        self._proxy_backoff_log(
             f"[{datetime.now().strftime('%H:%M:%S')}] Backoff @{username}: wait {wait:.1f}s "
             f"(exp={session['backoff_exp']}, reason={reason[:80]})"
         )
@@ -674,7 +679,7 @@ class TwitterClient:
         except ValueError:
             sid = None
         transport_name = type(getattr(session['client'], 'http', None)).__name__
-        print(
+        self._proxy_backoff_log(
             f"[{datetime.now().strftime('%H:%M:%S')}] {reason_tag} for "
             f"{self._session_debug_label(sid)}. Rotated proxy -> {self._redact_proxy(new_proxy)} "
             f"(transport: {transport_name})"
@@ -771,7 +776,7 @@ class TwitterClient:
             self._schedule_session_backoff(session, reason or "429")
             cap = int(getattr(config, "TWIKIT_429_SOFT_PER_SESSION", 8) or 8)
             if soft < cap:
-                print(
+                self._proxy_backoff_log(
                     f"[{datetime.now().strftime('%H:%M:%S')}] WAIT 429 throttle ({soft}/{cap}) @{username} — "
                     "rotating session/proxy (soft backoff; not hard-blocking yet)."
                 )
@@ -791,14 +796,14 @@ class TwitterClient:
             rotated_proxy = self._rotate_proxy_for_session(session, "Cloudflare 403 block")
             cap403 = int(getattr(config, "TWIKIT_403_SOFT_PER_SESSION", 2) or 2)
             if rotated_proxy and soft403 < cap403:
-                print(
+                self._proxy_backoff_log(
                     f"[{datetime.now().strftime('%H:%M:%S')}] WAIT Cloudflare 403 ({soft403}/{cap403}) @{username} — "
                     "proxy rotated, soft block."
                 )
                 self._rotate_session()
                 return
             if not rotated_proxy and soft403 < cap403:
-                print(
+                self._proxy_backoff_log(
                     f"[{datetime.now().strftime('%H:%M:%S')}] WAIT Cloudflare 403 ({soft403}/{cap403}) @{username} — "
                     "soft block, no proxy left."
                 )
