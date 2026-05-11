@@ -264,6 +264,9 @@ class TwitterClient:
         self._session_lock = None  # will be asyncio.Lock once event loop is running
         self._cf403_last_ts = 0.0
         self._cf_hard_blocks_total = 0   # total CF403 hard-blocks across all sessions this run
+        self._log_session_rotation = bool(getattr(config, "LOG_TWITTER_SESSION_ROTATION", False))
+        self._log_session_health = bool(getattr(config, "LOG_TWITTER_SESSION_HEALTH", False))
+        self._log_timeline_fetch = bool(getattr(config, "LOG_TWITTER_TIMELINE_FETCH", False))
         self._load_accounts()
 
     @staticmethod
@@ -280,6 +283,18 @@ class TwitterClient:
             return f"{scheme}://***@{host}"
         except Exception:
             return "***"
+
+    def _health_log(self, message: str) -> None:
+        if self._log_session_health:
+            print(message)
+
+    def _rotation_log(self, message: str) -> None:
+        if self._log_session_rotation:
+            print(message)
+
+    def _timeline_log(self, message: str) -> None:
+        if self._log_timeline_fetch:
+            print(message)
     
     def _load_accounts(self):
         """Load accounts from accounts.json and create client sessions."""
@@ -330,7 +345,7 @@ class TwitterClient:
                 '_auth_token': None,
             })
             proxy_msg = f" (Proxy: {self._redact_proxy(current_proxy)})" if current_proxy else ""
-            print(f"Primary session: cookies.json{proxy_msg}", flush=True)
+            self._health_log(f"Primary session: cookies.json{proxy_msg}")
         
         # Backup cookies (data/ or project root)
         # Supports:
@@ -363,7 +378,7 @@ class TwitterClient:
                 'scweet': None,
                 '_auth_token': None,
             })
-            print(f"   + Backup session: {backup_name} (Proxy: {self._redact_proxy(current_proxy)})")
+            self._health_log(f"   + Backup session: {backup_name} (Proxy: {self._redact_proxy(current_proxy)})")
         
         # Then add accounts from accounts.json as backup sessions
         if os.path.exists(self._accounts_path):
@@ -398,7 +413,7 @@ class TwitterClient:
                     })
                     has_cookies = os.path.exists(cookie_file)
                     cookie_msg = "(with cookies)" if has_cookies else "(new login)"
-                    print(f"   + Backup session: @{acc['username']} {cookie_msg} (Proxy: {self._redact_proxy(current_proxy)})")
+                    self._health_log(f"   + Backup session: @{acc['username']} {cookie_msg} (Proxy: {self._redact_proxy(current_proxy)})")
             except Exception as e:
                 print(f"WARN: Error loading accounts.json: {e}")
         
@@ -412,9 +427,8 @@ class TwitterClient:
             )
             print("   TIP Or set TWIKIT_COOKIES_FILE=/absolute/path/to/cookies.json", flush=True)
         else:
-            print(
-                f"Total sessions available: {len(self._sessions)} | Proxies loaded: {len(self._all_proxies)}",
-                flush=True,
+            self._health_log(
+                f"Total sessions available: {len(self._sessions)} | Proxies loaded: {len(self._all_proxies)}"
             )
         self._normalize_session_idx()
 
@@ -706,7 +720,7 @@ class TwitterClient:
         while True:
             self._current_session_idx = (self._current_session_idx + 1) % len(self._sessions)
             if not self._sessions[self._current_session_idx]['rate_limited']:
-                print(
+                self._rotation_log(
                     f"[{datetime.now().strftime('%H:%M:%S')}] Session Rotation: "
                     f"Switched to {self._session_debug_label(self._current_session_idx)}"
                 )
@@ -841,7 +855,7 @@ class TwitterClient:
 
     async def verify_all_sessions(self):
         """Verify all sessions and proxies on startup."""
-        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Checking session health...", flush=True)
+        self._health_log(f"\n[{datetime.now().strftime('%H:%M:%S')}] Checking session health...")
         valid_count = 0
         for i, session in enumerate(self._sessions):
             username = session['account']['username'] if session['account'] else 'default'
@@ -865,7 +879,7 @@ class TwitterClient:
                             profiles = await scweet.aget_user_info(["Twitter"])
                             if profiles:
                                 healthy = True
-                                print(f"   OK Session @{username} is healthy (Scweet){proxy_str}")
+                                self._health_log(f"   OK Session @{username} is healthy (Scweet){proxy_str}")
                             else:
                                 raise Exception("Scweet returned empty")
                         except Exception as se_err:
@@ -881,10 +895,10 @@ class TwitterClient:
                             await session['client'].get_user_by_screen_name('Twitter')
                             healthy = True
                             transport_name = type(getattr(session['client'], 'http', None)).__name__
-                            print(f"   OK Session @{username} is healthy (twikit fallback){proxy_str} (transport: {transport_name})")
+                            self._health_log(f"   OK Session @{username} is healthy (twikit fallback){proxy_str} (transport: {transport_name})")
                         except KeyError as ke:
                             transport_name = type(getattr(session['client'], 'http', None)).__name__
-                            print(f"   OK Session @{username} cookies valid (twikit parse warn: {ke}){proxy_str} (transport: {transport_name})")
+                            self._health_log(f"   OK Session @{username} cookies valid (twikit parse warn: {ke}){proxy_str} (transport: {transport_name})")
                             healthy = True
 
                     if healthy:
@@ -979,7 +993,7 @@ class TwitterClient:
             self.cooldown_ends = datetime.now() + timedelta(minutes=cool_m)
             print(f"Bot will retry in ~{cool_m} minutes (at {self.cooldown_ends.strftime('%H:%M:%S')}).")
         else:
-            print(f"Startup check complete. {valid_count}/{len(self._sessions)} sessions ready.\n")
+            self._health_log(f"Startup check complete. {valid_count}/{len(self._sessions)} sessions ready.\n")
             # Reset current session to first valid one
             for i, s in enumerate(self._sessions):
                 if not s['rate_limited']:
@@ -1109,7 +1123,7 @@ class TwitterClient:
                     client.set_cookies(cookies_data)
                 
                 username = account['username'] if account else 'default'
-                print(f"OK Loaded cookies for @{username}")
+                self._health_log(f"OK Loaded cookies for @{username}")
                 session['logged_in'] = True
                 try:
                     session['cookie_file_mtime'] = os.path.getmtime(cookie_path)
@@ -1399,13 +1413,13 @@ class TwitterClient:
             await self._twikit_pace()
             tweets = await scweet.aget_profile_tweets([lookup_handle], limit=count)
             wrapped = [_ScweetTweet(t) for t in tweets]
-            print(f"      ✔ Fetched {len(wrapped)} timeline items")
+            self._timeline_log(f"      ✔ Fetched {len(wrapped)} timeline items")
             self._reset_soft_429(session)
             return wrapped
         except Exception as e:
             err_msg = _scweet_error_to_str(e)
             if "'value'" in err_msg or "'entries'" in err_msg:
-                print(f"      ℹ️ Timeline: No tweets / empty graph (0 tweets, restricted, or API shape)")
+                self._timeline_log("      ℹ️ Timeline: No tweets / empty graph (0 tweets, restricted, or API shape)")
                 return []
             if not err_msg:
                 err_msg = f"Empty {type(e).__name__}"
@@ -1425,13 +1439,13 @@ class TwitterClient:
         try:
             await self._twikit_pace()
             tweets = await session['client'].get_user_tweets(user_id, 'Tweets', count=count)
-            print(f"      ✔ Fetched {len(tweets)} timeline items")
+            self._timeline_log(f"      ✔ Fetched {len(tweets)} timeline items")
             self._reset_soft_429(session)
             return tweets
         except Exception as e:
             err_msg = str(e)
             if "'value'" in err_msg or "'entries'" in err_msg:
-                print(f"      ℹ️ Timeline: No tweets / empty graph (0 tweets, restricted, or API shape)")
+                self._timeline_log("      ℹ️ Timeline: No tweets / empty graph (0 tweets, restricted, or API shape)")
                 return []
             if not err_msg:
                 err_msg = f"Empty {type(e).__name__}"

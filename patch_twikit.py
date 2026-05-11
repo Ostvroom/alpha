@@ -23,6 +23,13 @@ import re
 import sys
 import shutil
 
+_PATCH_LOGS_ENABLED = os.getenv("TWIKIT_PATCH_LOGS", "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _patch_log(msg: str) -> None:
+    if _PATCH_LOGS_ENABLED:
+        print(msg)
+
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -267,7 +274,7 @@ def _apply_monkey_patch():
         except Exception as e:
             msg = str(e)
             if "KEY_BYTE" in msg or "reduce" in msg or "indices" in msg.lower():
-                print(f"    [PATCH] get_indices suppressed: {msg} → using (0, [])")
+                _patch_log(f"    [PATCH] get_indices suppressed: {msg} → using (0, [])")
                 return 0, []
             raise
 
@@ -290,7 +297,7 @@ def _apply_monkey_patch():
         except Exception as e:
             msg = str(e)
             # Swallow errors from empty index lists or empty animation frames
-            print(f"    [PATCH] get_animation_key suppressed: {msg} → using '0'")
+            _patch_log(f"    [PATCH] get_animation_key suppressed: {msg} → using '0'")
             return "0"
 
     _safe_get_animation_key._is_patched = True
@@ -320,7 +327,7 @@ def _apply_monkey_patch():
             # Prevent repeated init attempts (and repeated main.js fetches) on this instance
             if not getattr(self, "home_page_response", None):
                 self.home_page_response = True
-            print(f"    [PATCH] ClientTransaction.init recovered from: {msg}")
+            _patch_log(f"    [PATCH] ClientTransaction.init recovered from: {msg}")
 
     _safe_init._is_patched = True
     ClientTransaction.init = _safe_init

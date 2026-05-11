@@ -314,6 +314,10 @@ TWIKIT_ALL_SESSIONS_COOLDOWN_MIN = max(5, min(180, _env_int("TWIKIT_ALL_SESSIONS
 # AI quota handling (prevents noisy repeated OpenAI insufficient_quota errors)
 AI_QUOTA_COOLDOWN_MIN = max(5, min(180, _env_int("AI_QUOTA_COOLDOWN_MIN", 15)))
 AI_QUOTA_LOG_WINDOW_SEC = max(30, min(3600, _env_int("AI_QUOTA_LOG_WINDOW_SEC", 300)))
+# Log visibility controls (keep output focused on discovery/alerts).
+LOG_TWITTER_SESSION_ROTATION = _env_flag("LOG_TWITTER_SESSION_ROTATION", "0")
+LOG_TWITTER_SESSION_HEALTH = _env_flag("LOG_TWITTER_SESSION_HEALTH", "0")
+LOG_TWITTER_TIMELINE_FETCH = _env_flag("LOG_TWITTER_TIMELINE_FETCH", "0")
 
 # X project-first discovery (keyword search → new accounts → discovery pipeline)
 ENABLE_X_PROJECT_SEARCH = _env_flag("ENABLE_X_PROJECT_SEARCH", "1")  # default ON
