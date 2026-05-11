@@ -1533,7 +1533,13 @@ class TwitterClient:
             return None
 
         scweet = self._ensure_scweet(session)
-        if scweet is None:
+
+        # If Scweet's aget_user_info has been timing out repeatedly for this session,
+        # bypass it entirely and go straight to twikit (aget_profile_tweets still works).
+        _scweet_ui_fails = int(session.get("_scweet_user_info_timeouts", 0) or 0)
+        _scweet_ui_skip = int(getattr(config, "MENTION_SCWEET_BYPASS_AFTER_TIMEOUTS", 3) or 3)
+
+        if scweet is None or _scweet_ui_fails >= _scweet_ui_skip:
             return await self._get_user_by_handle_twikit(handle, _retry_depth)
 
         # Internal timeout: aget_user_info can hang indefinitely with curl_cffi
@@ -1548,6 +1554,7 @@ class TwitterClient:
             )
             if profiles:
                 self._reset_soft_429(session)
+                session["_scweet_user_info_timeouts"] = 0  # reset on success
                 user = _ScweetUser(profiles[0])
                 # Cache the mapping
                 if user.id:
@@ -1557,9 +1564,16 @@ class TwitterClient:
                 return user
             return None
         except asyncio.TimeoutError:
-            # Internal timeout hit — mark session so we rotate to a fresh proxy
+            # Track consecutive Scweet user_info timeouts for this session
+            session["_scweet_user_info_timeouts"] = _scweet_ui_fails + 1
+            if _scweet_ui_fails + 1 >= _scweet_ui_skip:
+                print(
+                    f"      ⚠️ Scweet aget_user_info timed out {_scweet_ui_fails + 1}x — "
+                    "switching to twikit for user lookups this session."
+                )
+            # Mark session blocked to rotate proxy, then fall through to twikit
             self._mark_session_blocked("ReadTimeout")
-            return None
+            return await self._get_user_by_handle_twikit(handle, _retry_depth)
         except Exception as e:
             err_msg = _scweet_error_to_str(e)
             if not err_msg:
