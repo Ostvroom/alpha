@@ -1244,6 +1244,10 @@ class BlockBrainBot(commands.Bot):
                         seen_rt_user_ids: Set[str] = set()
                         # Mentions can repeat across tweets/threads — dedup per HVA scan
                         seen_mention_handles: Set[str] = set()
+                        max_mentions_per_scan = int(getattr(config, "MENTION_RESOLVE_MAX_PER_HVA_SCAN", 12) or 12)
+                        mention_timeout_s = float(getattr(config, "MENTION_RESOLVE_TIMEOUT_SEC", 35.0) or 35.0)
+                        mention_retry_limit = max(0, int(getattr(config, "MENTION_RESOLVE_RETRIES", 1) or 1))
+                        mention_resolved_count = 0
                         for tweet in timeline:
                             await asyncio.sleep(0) # Yield for heartbeats
                             retweeted_user = None
@@ -1269,6 +1273,8 @@ class BlockBrainBot(commands.Bot):
                                 text = ""
                             if text:
                                 for m in re.findall(r"@([A-Za-z0-9_]{1,15})", text):
+                                    if mention_resolved_count >= max_mentions_per_scan:
+                                        break
                                     h = (m or "").strip().lower()
                                     if not h:
                                         continue
@@ -1277,15 +1283,25 @@ class BlockBrainBot(commands.Bot):
                                     if h in seen_mention_handles:
                                         continue
                                     seen_mention_handles.add(h)
-                                    try:
-                                        user_obj = await asyncio.wait_for(
-                                            self.twitter.get_user_by_handle(h),
-                                            timeout=20.0,
-                                        )
-                                    except asyncio.TimeoutError:
+                                    user_obj = None
+                                    timed_out = False
+                                    for attempt in range(mention_retry_limit + 1):
+                                        try:
+                                            user_obj = await asyncio.wait_for(
+                                                self.twitter.get_user_by_handle(h),
+                                                timeout=mention_timeout_s,
+                                            )
+                                            break
+                                        except asyncio.TimeoutError:
+                                            timed_out = True
+                                            if attempt < mention_retry_limit:
+                                                await asyncio.sleep(1.2 * (attempt + 1))
+                                                continue
+                                    if timed_out and not user_obj:
                                         print(f"      ⚠️ Timeout resolving mention @{h}, skipping.")
                                         continue
                                     if user_obj:
+                                        mention_resolved_count += 1
                                         await self.process_discovery(
                                             user_obj, hva_handle, "mention", self.active_main_channels
                                         )
@@ -2190,27 +2206,37 @@ class BlockBrainBot(commands.Bot):
         print(f"{pfx} [XSearch] Running project-first scan over {len(keywords)} keywords...")
 
         candidates_processed = 0
+        mention_timeouts_this_cycle = 0
         seen_handles_this_cycle: set[str] = set()
 
         for kw in keywords:
             if candidates_processed >= config.X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE:
                 break
 
-            try:
-                tweets = await asyncio.wait_for(
-                    self.twitter.search_recent_tweets(
-                        query=str(kw),
-                        count=config.X_PROJECT_SEARCH_MAX_TWEETS_PER_KEYWORD,
-                    ),
-                    timeout=45.0,
-                )
-            except asyncio.TimeoutError:
-                print(f"{pfx} [XSearch] Timeout searching keyword '{kw}', skipping.")
-                tweets = []
+            tweets = []
+            kw_timeout_s = float(getattr(config, "X_PROJECT_SEARCH_KEYWORD_TIMEOUT_SEC", 35.0) or 35.0)
+            kw_retry_limit = max(0, int(getattr(config, "X_PROJECT_SEARCH_KEYWORD_RETRIES", 1) or 1))
+            for attempt in range(kw_retry_limit + 1):
+                try:
+                    tweets = await asyncio.wait_for(
+                        self.twitter.search_recent_tweets(
+                            query=str(kw),
+                            count=config.X_PROJECT_SEARCH_MAX_TWEETS_PER_KEYWORD,
+                        ),
+                        timeout=kw_timeout_s,
+                    )
+                    break
+                except asyncio.TimeoutError:
+                    if attempt < kw_retry_limit:
+                        await asyncio.sleep(1.25 * (attempt + 1))
+                        continue
+                    print(f"{pfx} [XSearch] Timeout searching keyword '{kw}', skipping.")
+                    tweets = []
             if not tweets:
                 await asyncio.sleep(max(1.0, float(getattr(config, "TWIKIT_REQUEST_GAP_SEC", 1.35) or 1.0)))
                 continue
 
+            mention_resolves_this_keyword = 0
             for t in tweets:
                 if candidates_processed >= config.X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE:
                     break
@@ -2249,20 +2275,38 @@ class BlockBrainBot(commands.Bot):
                     for m in re.findall(r"@([A-Za-z0-9_]{1,15})", text):
                         if candidates_processed >= config.X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE:
                             break
+                        if mention_resolves_this_keyword >= int(getattr(config, "X_PROJECT_SEARCH_MAX_MENTION_RESOLVES_PER_KEYWORD", 4) or 4):
+                            break
+                        if mention_timeouts_this_cycle >= int(getattr(config, "X_PROJECT_SEARCH_MAX_MENTION_TIMEOUTS_PER_CYCLE", 12) or 12):
+                            print(f"{pfx} [XSearch] Mention timeout budget reached for this cycle; skipping remaining mention-resolves.")
+                            break
                         mh = (m or "").strip().lower()
                         if not mh or mh in seen_handles_this_cycle:
                             continue
                         seen_handles_this_cycle.add(mh)
-                        try:
-                            u = await asyncio.wait_for(
-                                self.twitter.get_user_by_handle(mh),
-                                timeout=20.0,
-                            )
-                        except asyncio.TimeoutError:
+                        mention_timeout_s = float(getattr(config, "MENTION_RESOLVE_TIMEOUT_SEC", 35.0) or 35.0)
+                        mention_retry_limit = max(0, int(getattr(config, "MENTION_RESOLVE_RETRIES", 1) or 1))
+                        u = None
+                        timed_out = False
+                        for attempt in range(mention_retry_limit + 1):
+                            try:
+                                u = await asyncio.wait_for(
+                                    self.twitter.get_user_by_handle(mh),
+                                    timeout=mention_timeout_s,
+                                )
+                                break
+                            except asyncio.TimeoutError:
+                                timed_out = True
+                                if attempt < mention_retry_limit:
+                                    await asyncio.sleep(1.0 * (attempt + 1))
+                                    continue
+                        if timed_out and not u:
+                            mention_timeouts_this_cycle += 1
                             print(f"{pfx} [XSearch] Timeout resolving @{mh}, skipping.")
                             continue
                         if not u:
                             continue
+                        mention_resolves_this_keyword += 1
                         try:
                             age = self.get_account_age_days(getattr(u, "created_at", None))
                         except Exception:
@@ -2393,11 +2437,21 @@ class BlockBrainBot(commands.Bot):
                         parts_gate.append(tx)
                 blob_gate = " ".join(parts_gate)
                 if blob_gate.strip() and not self.account_has_own_web3_signal(account, blob_gate):
+                    # Keep strict filtering for weak signals, but allow strong multi-HVA consensus.
+                    smarts = int(database.get_posted_smarts(account.id) or 0)
+                    this_follow_bonus = 1 if database.is_project_new(account.id) else 0
+                    smart_total = smarts + this_follow_bonus
+                    min_smarts_override = int(getattr(config, "STRICT_WEB3_SIGNAL_SMARTS_OVERRIDE", 2) or 2)
+                    if smart_total < max(1, min_smarts_override):
+                        print(
+                            f"         ❌ SKIP: bio shorter than {strict_len} chars and recent tweets "
+                            f"show no Web3/project terms (smart-follow signal too weak: {smart_total})"
+                        )
+                        return
                     print(
-                        f"         ❌ SKIP: bio shorter than {strict_len} chars and recent tweets "
-                        f"show no Web3/project terms (smart-follow signal alone is not enough)"
+                        f"         ⚠️ Strict Web3 gate bypassed by strong smart-follow consensus "
+                        f"({smart_total} >= {min_smarts_override})"
                     )
-                    return
 
         is_new_follow = database.save_follow(account.id, hva_handle, interaction_type)
         if not is_new:

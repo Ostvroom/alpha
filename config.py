@@ -322,6 +322,11 @@ X_PROJECT_SEARCH_KEYWORDS_LIMIT = max(5, min(200, _env_int("X_PROJECT_SEARCH_KEY
 # Safety caps per cycle (prevents spam + rate-limit issues)
 X_PROJECT_SEARCH_MAX_TWEETS_PER_KEYWORD = max(3, min(30, _env_int("X_PROJECT_SEARCH_MAX_TWEETS_PER_KEYWORD", 8)))
 X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE = max(5, min(80, _env_int("X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE", 25)))
+X_PROJECT_SEARCH_KEYWORD_TIMEOUT_SEC = max(10.0, min(90.0, _env_float("X_PROJECT_SEARCH_KEYWORD_TIMEOUT_SEC", 35.0)))
+X_PROJECT_SEARCH_KEYWORD_RETRIES = max(0, min(4, _env_int("X_PROJECT_SEARCH_KEYWORD_RETRIES", 1)))
+# Mention resolving is the most timeout-prone step; cap it hard to keep scans healthy.
+X_PROJECT_SEARCH_MAX_MENTION_RESOLVES_PER_KEYWORD = max(1, min(30, _env_int("X_PROJECT_SEARCH_MAX_MENTION_RESOLVES_PER_KEYWORD", 4)))
+X_PROJECT_SEARCH_MAX_MENTION_TIMEOUTS_PER_CYCLE = max(2, min(100, _env_int("X_PROJECT_SEARCH_MAX_MENTION_TIMEOUTS_PER_CYCLE", 12)))
 
 
 def _parse_time_hhmm(val: str, default: str = "00:00"):
