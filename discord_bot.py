@@ -1144,7 +1144,17 @@ class BlockBrainBot(commands.Bot):
             priority_list = database.get_hva_priority_list()
             total_batches = (len(priority_list) + config.BATCH_SIZE - 1) // config.BATCH_SIZE
             print(f"      ✔ Scanning {len(priority_list)} hunters across {total_batches} batches.")
-            
+
+            # Skip @mention resolution for any handle we already classify as an HVA (avoids wasted lookups).
+            hva_mention_skip: Set[str] = {
+                (row[0] or "").strip().lower()
+                for row in database.get_all_hvas()
+                if row and row[0]
+            }
+            for _h in getattr(config, "HVA_LIST", None) or []:
+                if isinstance(_h, str) and _h.strip():
+                    hva_mention_skip.add(_h.strip().lower())
+
             if not priority_list:
                 print(f"      ⚠️ No HVAs found in priority list. Check config.HVA_LIST or database.")
             
@@ -1279,6 +1289,8 @@ class BlockBrainBot(commands.Bot):
                                     if not h:
                                         continue
                                     if h == hva_handle.lower():
+                                        continue
+                                    if h in hva_mention_skip:
                                         continue
                                     if h in seen_mention_handles:
                                         continue
