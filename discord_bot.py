@@ -1187,6 +1187,8 @@ class BlockBrainBot(commands.Bot):
                 
                 batch = priority_list[batch_num*config.BATCH_SIZE : (batch_num+1)*config.BATCH_SIZE]
                 print(f"\n{self._get_log_prefix()} 📦 [BATCH {batch_num + 1}/{total_batches}] Checking {len(batch)} {BRAND_NAME} hunters...")
+                mention_timeouts_this_batch = 0
+                _max_mention_timeouts_per_batch = int(getattr(config, "MENTION_RESOLVE_MAX_TIMEOUTS_PER_BATCH", 6) or 6)
                 
                 for hva_handle in batch:
                     await asyncio.sleep(0) # Yield for heartbeats
@@ -1255,8 +1257,8 @@ class BlockBrainBot(commands.Bot):
                         # Mentions can repeat across tweets/threads — dedup per HVA scan
                         seen_mention_handles: Set[str] = set()
                         max_mentions_per_scan = int(getattr(config, "MENTION_RESOLVE_MAX_PER_HVA_SCAN", 12) or 12)
-                        mention_timeout_s = float(getattr(config, "MENTION_RESOLVE_TIMEOUT_SEC", 35.0) or 35.0)
-                        mention_retry_limit = max(0, int(getattr(config, "MENTION_RESOLVE_RETRIES", 1) or 1))
+                        mention_timeout_s = float(getattr(config, "MENTION_RESOLVE_TIMEOUT_SEC", 12.0) or 12.0)
+                        mention_retry_limit = max(0, int(getattr(config, "MENTION_RESOLVE_RETRIES", 0) or 0))
                         mention_resolved_count = 0
                         for tweet in timeline:
                             await asyncio.sleep(0) # Yield for heartbeats
@@ -1285,6 +1287,8 @@ class BlockBrainBot(commands.Bot):
                                 for m in re.findall(r"@([A-Za-z0-9_]{1,15})", text):
                                     if mention_resolved_count >= max_mentions_per_scan:
                                         break
+                                    if mention_timeouts_this_batch >= _max_mention_timeouts_per_batch:
+                                        break  # Network/session degraded — skip remaining mentions this batch
                                     h = (m or "").strip().lower()
                                     if not h:
                                         continue
@@ -1310,7 +1314,10 @@ class BlockBrainBot(commands.Bot):
                                                 await asyncio.sleep(1.2 * (attempt + 1))
                                                 continue
                                     if timed_out and not user_obj:
-                                        print(f"      ⚠️ Timeout resolving mention @{h}, skipping.")
+                                        mention_timeouts_this_batch += 1
+                                        # Rotate session/proxy so the next mention doesn't hang on the same bad connection
+                                        self.twitter._mark_session_blocked("ReadTimeout")
+                                        print(f"      ⚠️ Timeout resolving mention @{h}, skipping. ({mention_timeouts_this_batch}/{_max_mention_timeouts_per_batch} budget)")
                                         continue
                                     if user_obj:
                                         mention_resolved_count += 1

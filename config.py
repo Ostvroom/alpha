@@ -341,6 +341,17 @@ X_PROJECT_SEARCH_KEYWORD_RETRIES = max(0, min(4, _env_int("X_PROJECT_SEARCH_KEYW
 X_PROJECT_SEARCH_MAX_MENTION_RESOLVES_PER_KEYWORD = max(1, min(30, _env_int("X_PROJECT_SEARCH_MAX_MENTION_RESOLVES_PER_KEYWORD", 4)))
 X_PROJECT_SEARCH_MAX_MENTION_TIMEOUTS_PER_CYCLE = max(2, min(100, _env_int("X_PROJECT_SEARCH_MAX_MENTION_TIMEOUTS_PER_CYCLE", 12)))
 
+# HVA scan @mention resolution — tune these to reduce timeout waste
+# Hard timeout (seconds) per mention resolve. Lower = less wasted time per bad proxy.
+MENTION_RESOLVE_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("MENTION_RESOLVE_TIMEOUT_SEC", 12.0)))
+# Retry attempts after a timeout (0 = no retry; retrying with a bad session just doubles the wait).
+MENTION_RESOLVE_RETRIES = max(0, min(3, _env_int("MENTION_RESOLVE_RETRIES", 0)))
+# Max @mentions to resolve per HVA scan (caps total lookups; each lookup costs ~12s if it times out).
+MENTION_RESOLVE_MAX_PER_HVA_SCAN = max(1, min(30, _env_int("MENTION_RESOLVE_MAX_PER_HVA_SCAN", 12)))
+# After this many timeouts in a batch, stop attempting more @mention lookups for that batch.
+# Prevents a degraded proxy from burning minutes on every HVA in the batch.
+MENTION_RESOLVE_MAX_TIMEOUTS_PER_BATCH = max(1, min(50, _env_int("MENTION_RESOLVE_MAX_TIMEOUTS_PER_BATCH", 6)))
+
 
 def _parse_time_hhmm(val: str, default: str = "00:00"):
     from datetime import datetime

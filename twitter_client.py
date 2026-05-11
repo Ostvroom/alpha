@@ -1536,9 +1536,16 @@ class TwitterClient:
         if scweet is None:
             return await self._get_user_by_handle_twikit(handle, _retry_depth)
 
+        # Internal timeout: aget_user_info can hang indefinitely with curl_cffi
+        # (curl doesn't honour asyncio cancellation). Apply a hard cap here so
+        # the caller's outer asyncio.wait_for doesn't have to do all the work.
+        _inner_timeout = max(8.0, float(getattr(config, "MENTION_RESOLVE_TIMEOUT_SEC", 12.0) or 12.0) - 2.0)
         try:
             await self._twikit_pace()
-            profiles = await scweet.aget_user_info([handle])
+            profiles = await asyncio.wait_for(
+                scweet.aget_user_info([handle]),
+                timeout=_inner_timeout,
+            )
             if profiles:
                 self._reset_soft_429(session)
                 user = _ScweetUser(profiles[0])
@@ -1548,6 +1555,10 @@ class TwitterClient:
                     self._id_handle_cache[str(user.id)] = handle.lower()
                     self._save_cache()
                 return user
+            return None
+        except asyncio.TimeoutError:
+            # Internal timeout hit — mark session so we rotate to a fresh proxy
+            self._mark_session_blocked("ReadTimeout")
             return None
         except Exception as e:
             err_msg = _scweet_error_to_str(e)
