@@ -601,8 +601,7 @@ class VelcorFeatures(commands.Cog):
         # Activity tracking
         try:
             update_user_activity(guild_id, message.author.id)
-            # Debug: uncomment if needed
-            # print(f"[{timestamp}] [VelcorFeatures] Tracked message from {message.author.name} in guild {guild_id}")
+            print(f"[{timestamp}] [VelcorFeatures] Tracked msg from {message.author.name} (guild={guild_id})")
         except Exception as e:
             print(f"[{timestamp}] [VelcorFeatures] ERROR tracking activity: {e}")
             import traceback
