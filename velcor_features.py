@@ -540,11 +540,18 @@ class VelcorFeatures(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         print("[VelcorFeatures] Cog loaded — settings and database ready.")
+        # Debug: confirm listeners are registered
+        listeners = getattr(self.bot, '_listeners', {})
+        msg_listeners = listeners.get('message', [])
+        member_listeners = listeners.get('member_join', [])
+        print(f"[VelcorFeatures] Registered listeners: message={len(msg_listeners)}, member_join={len(member_listeners)}")
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
+        print(f"[VelcorFeatures] on_member_join fired for {member.name} (guild={member.guild.id})")
         guild = member.guild
         # --- Auto-role ---
+        print(f"[VelcorFeatures] Checking auto-role: AUTO_ROLE_ID={AUTO_ROLE_ID}, roles_count={len(member.roles)}")
         if AUTO_ROLE_ID and len(member.roles) == 1:
             role = guild.get_role(AUTO_ROLE_ID)
             if role:
@@ -557,6 +564,8 @@ class VelcorFeatures(commands.Cog):
                     print(f"[VelcorFeatures] Error assigning role: {e}")
             else:
                 print(f"[VelcorFeatures] Role {AUTO_ROLE_ID} not found in {guild.name}")
+        else:
+            print(f"[VelcorFeatures] Skipped auto-role: AUTO_ROLE_ID={AUTO_ROLE_ID}, roles={len(member.roles)}")
 
         # --- Welcome message ---
         if WELCOME_CHANNEL_ID:
@@ -590,13 +599,16 @@ class VelcorFeatures(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
+        timestamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        print(f"[{timestamp}] [VelcorFeatures] on_message fired: author={message.author.name}, bot={message.author.bot}, guild={getattr(message.guild, 'id', None)}")
         if message.author.bot:
+            print(f"[{timestamp}] [VelcorFeatures] Ignored: bot message")
             return
         if not message.guild:
+            print(f"[{timestamp}] [VelcorFeatures] Ignored: DM")
             return
 
         guild_id = message.guild.id
-        timestamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
 
         # Activity tracking
         try:
@@ -696,6 +708,16 @@ class VelcorFeatures(commands.Cog):
     @commands.command(name="vping", help="Test Velcor features responsiveness")
     async def vping(self, ctx):
         await ctx.send(f"🏓 Velcor Pong! Latency: {round(self.bot.latency * 1000)}ms")
+
+    @commands.command(name="test_welcome", help="Manually trigger welcome + auto-role for a user (Admin only)")
+    @commands.has_permissions(administrator=True)
+    async def test_welcome(self, ctx, member: discord.Member = None):
+        if member is None:
+            member = ctx.author
+        await ctx.send(f"🧪 Testing welcome + auto-role for {member.mention}...")
+        # Manually fire the on_member_join logic
+        await self.on_member_join(member)
+        await ctx.send("✅ Test complete. Check bot logs for details.")
 
     @commands.command(name="setup", help="Protect current channel from links (Admin only)")
     @commands.has_permissions(administrator=True)
