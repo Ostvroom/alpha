@@ -571,9 +571,15 @@ class VelcorFeatures(commands.Cog):
                 if member.avatar:
                     embed.set_thumbnail(url=member.avatar.url)
                 file = None
-                if WELCOME_BANNER_PATH and os.path.exists(WELCOME_BANNER_PATH):
-                    file = discord.File(WELCOME_BANNER_PATH, filename="banner.jpg")
-                    embed.set_image(url="attachment://banner.jpg")
+                banner_set = False
+                if WELCOME_BANNER_PATH:
+                    if WELCOME_BANNER_PATH.startswith(("http://", "https://")):
+                        embed.set_image(url=WELCOME_BANNER_PATH)
+                        banner_set = True
+                    elif os.path.exists(WELCOME_BANNER_PATH):
+                        file = discord.File(WELCOME_BANNER_PATH, filename="banner.jpg")
+                        embed.set_image(url="attachment://banner.jpg")
+                        banner_set = True
                 try:
                     if file:
                         await welcome_channel.send(file=file, embed=embed)
