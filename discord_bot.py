@@ -48,6 +48,7 @@ from server_panels import (
 )
 import guild_license
 from guild_alerts_commands import GuildLicenseCommands
+from velcor_features import VelcorFeatures
 
 BRAND_NAME = "Velcor3"
 
@@ -479,6 +480,7 @@ class BlockBrainBot(commands.Bot):
         await self.add_cog(WalletCommands(self))
         await self.add_cog(PanelCommands(self))
         await self.add_cog(GuildLicenseCommands(self))
+        await self.add_cog(VelcorFeatures(self))
         await payment_commands.setup(self)
         self.add_view(VerificationView())
         self.add_view(CryptoPaymentView())

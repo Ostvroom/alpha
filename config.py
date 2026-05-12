@@ -7,6 +7,12 @@ load_dotenv(override=True)
 # Extra startup / scan logging (Render-friendly). Set VELCOR3_VERBOSE_LOGS=1 for more detail.
 VELCOR3_VERBOSE_LOGS = os.getenv("VELCOR3_VERBOSE_LOGS", "0").strip().lower() in ("1", "true", "yes", "on")
 
+# VelcorFeatures (community / moderation) config
+VELCOR_AUTO_ROLE_ID = int(os.getenv("VELCOR_AUTO_ROLE_ID", "0") or 0)
+VELCOR_WELCOME_CHANNEL_ID = int(os.getenv("VELCOR_WELCOME_CHANNEL_ID", "0") or 0)
+VELCOR_AUTO_REACT_CHANNEL_ID = int(os.getenv("VELCOR_AUTO_REACT_CHANNEL_ID", "0") or 0)
+VELCOR_WELCOME_BANNER_PATH = os.getenv("VELCOR_WELCOME_BANNER_PATH", "")
+
 # Discord Configuration
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID")  # Optional: For guild-specific commands
