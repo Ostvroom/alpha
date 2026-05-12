@@ -599,7 +599,14 @@ class VelcorFeatures(commands.Cog):
         timestamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
 
         # Activity tracking
-        update_user_activity(guild_id, message.author.id)
+        try:
+            update_user_activity(guild_id, message.author.id)
+            # Debug: uncomment if needed
+            # print(f"[{timestamp}] [VelcorFeatures] Tracked message from {message.author.name} in guild {guild_id}")
+        except Exception as e:
+            print(f"[{timestamp}] [VelcorFeatures] ERROR tracking activity: {e}")
+            import traceback
+            traceback.print_exc()
 
         # Auto-reactions
         if AUTO_REACT_CHANNEL_ID and message.channel.id == AUTO_REACT_CHANNEL_ID:
