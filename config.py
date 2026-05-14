@@ -13,6 +13,35 @@ VELCOR_WELCOME_CHANNEL_ID = int(os.getenv("VELCOR_WELCOME_CHANNEL_ID", "0") or 0
 VELCOR_AUTO_REACT_CHANNEL_ID = int(os.getenv("VELCOR_AUTO_REACT_CHANNEL_ID", "0") or 0)
 VELCOR_WELCOME_BANNER_PATH = os.getenv("VELCOR_WELCOME_BANNER_PATH", "")
 
+# Claim-roles panel (`!velcor3 pingroles`, `!velcor3 post_claim_roles`, `/claim_roles_panel`)
+def _env_or_default(key: str, default: str) -> str:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    s = raw.strip()
+    return s if s else default
+
+
+CLAIM_ROLES_EMBED_TITLE = _env_or_default("CLAIM_ROLES_EMBED_TITLE", "Claim roles")
+CLAIM_ROLES_EMBED_DESCRIPTION = _env_or_default(
+    "CLAIM_ROLES_EMBED_DESCRIPTION",
+    "Click a button below to toggle a self-assignable role.",
+)
+
+
+def _env_optional_url(key: str) -> str:
+    """Non-empty stripped URL from env, or empty string if unset/blank."""
+    raw = os.getenv(key)
+    if raw is None:
+        return ""
+    return raw.strip()
+
+
+# Large image (embed "Image" / set_image). Must be https URL Discord can fetch.
+CLAIM_ROLES_EMBED_IMAGE_URL = _env_optional_url("CLAIM_ROLES_EMBED_IMAGE_URL")
+# Small top-right thumbnail (optional).
+CLAIM_ROLES_EMBED_THUMBNAIL_URL = _env_optional_url("CLAIM_ROLES_EMBED_THUMBNAIL_URL")
+
 # Discord Configuration
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID")  # Optional: For guild-specific commands

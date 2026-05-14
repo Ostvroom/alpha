@@ -45,10 +45,11 @@ from server_panels import (
     CryptoPaymentView,
     post_verification_to_channel,
     post_crypto_to_channel,
+    post_claim_roles_to_channel,
 )
 import guild_license
 from guild_alerts_commands import GuildLicenseCommands
-from velcor_features import VelcorFeatures
+from velcor_features import VelcorFeatures, PingRolesView
 
 BRAND_NAME = "Velcor3"
 
@@ -484,6 +485,9 @@ class BlockBrainBot(commands.Bot):
         await payment_commands.setup(self)
         self.add_view(VerificationView())
         self.add_view(CryptoPaymentView())
+        _claim_roles_view = PingRolesView()
+        if _claim_roles_view.children:
+            self.add_view(_claim_roles_view)
         self.monitor_twitter.start()
         self.trending_report.start()
         self.daily_x_trending_task.start()
@@ -2974,6 +2978,7 @@ class BrainCommands(commands.Cog):
             "`!velcor3 ping`": "Test bot responsiveness.",
             "`!velcor3 post_verification`": "Post verification panel (Manage Server).",
             "`!velcor3 post_payment`": "Post crypto payment panel (Manage Server).",
+            "`!velcor3 post_claim_roles`": "Post claim-roles (self-assign) panel (Manage Server).",
             "`/verification_panel`": "Post verification UI (slash).",
             "`/crypto_payment_panel`": "Post crypto payment UI (slash).",
             "`/alerts`": "Multi-server: `activate` (license key) → `setup` (create channels) → feeds.",
@@ -3003,6 +3008,13 @@ class BrainCommands(commands.Cog):
         """Post the crypto payment embed + buttons in this channel."""
         await post_crypto_to_channel(ctx.channel)
         await ctx.send("✅ Crypto payment panel posted.", delete_after=15)
+
+    @commands.command(name="post_claim_roles")
+    @commands.has_permissions(manage_guild=True)
+    async def post_claim_roles_cmd(self, ctx):
+        """Post the claim-roles (self-assign) embed + buttons in this channel."""
+        await post_claim_roles_to_channel(ctx.channel)
+        await ctx.send("✅ Claim-roles panel posted.", delete_after=15)
 
     @commands.command(name="add_hva")
     async def add_hva_cmd(self, ctx, handle: str):

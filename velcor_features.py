@@ -508,17 +508,57 @@ class DynamicPingRoleButton(discord.ui.Button):
 
 
 class PingRolesView(discord.ui.View):
-    def __init__(self):
+    """
+    Self-assignable ("claim") role buttons. custom_id pattern: pingrole_{role_id}.
+
+    guild_id=None: load every configured row (for bot.add_view persistence after restart).
+    guild_id set: only that server's roles (for posting a panel in that guild).
+    """
+
+    def __init__(self, guild_id: int | None = None):
         super().__init__(timeout=None)
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT role_id, label, emoji FROM ping_roles")
+            if guild_id is None:
+                cursor.execute("SELECT role_id, label, emoji FROM ping_roles")
+            else:
+                cursor.execute(
+                    "SELECT role_id, label, emoji FROM ping_roles WHERE guild_id = ?",
+                    (guild_id,),
+                )
             for role_id, label, emoji in cursor.fetchall():
                 self.add_item(DynamicPingRoleButton(role_id, label, emoji))
             conn.close()
         except Exception as e:
             print(f"[VelcorFeatures] Error loading ping roles: {e}")
+
+
+def build_claim_roles_embed(*, for_empty_config: bool = False) -> discord.Embed:
+    """Embed for claim-roles panel; title/description from config; optional image/thumbnail URLs."""
+    if for_empty_config:
+        description = (
+            "No claim-role buttons are configured for this server yet.\n"
+            "Staff: use **`!velcor3 addpingrole @Role emoji label`** (administrator) to add buttons, then run **`!velcor3 post_claim_roles`** again."
+        )
+    else:
+        description = getattr(
+            config,
+            "CLAIM_ROLES_EMBED_DESCRIPTION",
+            "Click a button below to toggle a self-assignable role.",
+        )
+    embed = discord.Embed(
+        title=getattr(config, "CLAIM_ROLES_EMBED_TITLE", "Claim roles"),
+        description=description,
+        color=discord.Color.blue(),
+    )
+    image_url = getattr(config, "CLAIM_ROLES_EMBED_IMAGE_URL", "") or ""
+    if image_url:
+        embed.set_image(url=image_url)
+    thumb_url = getattr(config, "CLAIM_ROLES_EMBED_THUMBNAIL_URL", "") or ""
+    if thumb_url:
+        embed.set_thumbnail(url=thumb_url)
+    return embed
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -898,9 +938,10 @@ class VelcorFeatures(commands.Cog):
         roles = [
             "`!velcor3 batchrole @Role <ids>` — Batch assign role",
             "`!velcor3 role_roleless @Role` — Assign to roleless",
-            "`!velcor3 addpingrole @Role emoji label` — Add ping role button",
-            "`!velcor3 removepingrole @Role` — Remove ping role button",
-            "`!velcor3 pingroles` — Show ping roles panel",
+            "`!velcor3 addpingrole @Role emoji label` — Add claim-role button",
+            "`!velcor3 removepingrole @Role` — Remove claim-role button",
+            "`!velcor3 pingroles` — Post claim-roles panel (here)",
+            "`!velcor3 post_claim_roles` — Post claim-roles panel (Manage Server)",
         ]
         embed.add_field(name="🛡️ General", value="\n".join(general), inline=False)
         embed.add_field(name="📈 Stats", value="\n".join(stats), inline=False)
@@ -1396,7 +1437,7 @@ class VelcorFeatures(commands.Cog):
 
     # ── Ping Roles ─────────────────────────────────────────────────────────
 
-    @commands.command(name="addpingrole", help="Add a ping role button (Admin only)")
+    @commands.command(name="addpingrole", help="Add a claim-role (self-assign) button (Admin only)")
     @commands.has_permissions(administrator=True)
     async def addpingrole(self, ctx, role: discord.Role, emoji: str, *, label: str):
         conn = get_db_connection()
@@ -1409,7 +1450,7 @@ class VelcorFeatures(commands.Cog):
         conn.close()
         await ctx.send(f"✅ Added ping role **{label}** → {role.mention}")
 
-    @commands.command(name="removepingrole", help="Remove a ping role button (Admin only)")
+    @commands.command(name="removepingrole", help="Remove a claim-role button (Admin only)")
     @commands.has_permissions(administrator=True)
     async def removepingrole(self, ctx, role: discord.Role):
         conn = get_db_connection()
@@ -1419,14 +1460,10 @@ class VelcorFeatures(commands.Cog):
         conn.close()
         await ctx.send(f"✅ Removed ping role for {role.mention}")
 
-    @commands.command(name="pingroles", help="Show the ping roles panel")
+    @commands.command(name="pingroles", help="Post the claim-roles (self-assign) panel in this channel")
     async def pingroles(self, ctx):
-        view = PingRolesView()
-        embed = discord.Embed(
-            title="🎭 Self-Assignable Roles",
-            description="Click a button below to toggle a role!",
-            color=discord.Color.blue(),
-        )
+        view = PingRolesView(guild_id=ctx.guild.id)
+        embed = build_claim_roles_embed(for_empty_config=False)
         await ctx.send(embed=embed, view=view)
 
     # ── DM Sender (owner-only) ─────────────────────────────────────────────

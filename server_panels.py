@@ -348,6 +348,18 @@ async def post_crypto_to_channel(channel: discord.TextChannel) -> None:
     await channel.send(embed=embed, view=CryptoPaymentView())
 
 
+async def post_claim_roles_to_channel(channel: discord.TextChannel) -> None:
+    """Send self-assignable role buttons for this guild (configured via addpingrole)."""
+    from velcor_features import PingRolesView, build_claim_roles_embed
+
+    guild = channel.guild
+    if guild is None:
+        raise ValueError("post_claim_roles_to_channel requires a guild text channel")
+    view = PingRolesView(guild_id=guild.id)
+    embed = build_claim_roles_embed(for_empty_config=not view.children)
+    await channel.send(embed=embed, view=view)
+
+
 def _needs_manage_guild(interaction: Interaction) -> bool:
     if not interaction.guild:
         return False
@@ -404,3 +416,27 @@ class PanelCommands(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         await post_crypto_to_channel(ch)
         await interaction.followup.send(f"Posted crypto payment panel in {ch.mention}.", ephemeral=True)
+
+    @app_commands.command(
+        name="claim_roles_panel",
+        description="Post the self-assignable (claim) roles panel (Manage Server)",
+    )
+    @app_commands.describe(channel="Where to post (default: this channel)")
+    async def claim_roles_panel(
+        self,
+        interaction: Interaction,
+        channel: Optional[discord.TextChannel] = None,
+    ):
+        if not _needs_manage_guild(interaction):
+            await interaction.response.send_message(
+                "You need **Manage Server** to post this panel.",
+                ephemeral=True,
+            )
+            return
+        ch = channel or interaction.channel
+        if not isinstance(ch, discord.TextChannel):
+            await interaction.response.send_message("Use this in a text channel.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        await post_claim_roles_to_channel(ch)
+        await interaction.followup.send(f"Posted claim-roles panel in {ch.mention}.", ephemeral=True)
