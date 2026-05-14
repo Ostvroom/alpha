@@ -30,11 +30,22 @@ CLAIM_ROLES_EMBED_DESCRIPTION = _env_or_default(
 
 
 def _env_optional_url(key: str) -> str:
-    """Non-empty stripped URL from env, or empty string if unset/blank."""
+    """
+    Optional embed image URL from env. Empty if unset, blank, or placeholder (e.g. '0').
+    Must start with http:// or https:// so Discord can load it.
+    """
     raw = os.getenv(key)
     if raw is None:
         return ""
-    return raw.strip()
+    s = raw.strip()
+    if not s:
+        return ""
+    low = s.lower()
+    if low in ("0", "false", "none", "null", "off", "no", "-", "n/a", "na", "(none)"):
+        return ""
+    if not (s.startswith("https://") or s.startswith("http://")):
+        return ""
+    return s
 
 
 # Large image (embed "Image" / set_image). Must be https URL Discord can fetch.
