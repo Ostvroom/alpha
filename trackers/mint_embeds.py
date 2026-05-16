@@ -2,7 +2,19 @@ import discord
 from typing import List, Dict, Any
 from datetime import datetime, timezone
 
-from brand_assets import apply_hot_mint_branding, apply_live_mint_branding
+from brand_assets import (
+    apply_hot_mint_branding,
+    apply_live_mint_branding,
+    brand_logo_embed_icon,
+    brand_name,
+)
+from trackers.mint_wallet_intel import (
+    format_smart_buys_line,
+    format_trader_line,
+    resolve_embed_color,
+    COLOR_SMART_MINT,
+    COLOR_HOT_SMART,
+)
 
 
 def _eth_value(value: Any) -> str:
@@ -107,25 +119,33 @@ def build_live_mint_embeds(collections: List[Dict]) -> List[discord.Embed]:
 
         url = opensea_url or etherscan_url or "https://opensea.io"
 
-        # Color logic
+        # Color logic (tracked smart-wallet mint overrides default palette)
         try:
             cost_val = float(col.get("mint_cost", 0) or col.get("trade_price", 0) or 0)
             gas_val = float(col.get("gas_fee", 0) or 0)
-            if cost_val == 0:
+            if col.get("is_smart_wallet_event"):
+                color = resolve_embed_color(col, COLOR_SMART_MINT)
+            elif cost_val == 0:
                 color = 0x2ECC71
             elif gas_val > 0.01:
                 color = 0x9B59B6
             else:
                 color = 0xE74C3C
-        except:
-            color = 0xE74C3C
+        except Exception:
+            color = COLOR_SMART_MINT if col.get("is_smart_wallet_event") else 0xE74C3C
 
         # Build description
         lines = []
+        trader_line = format_trader_line(col)
+        if trader_line:
+            lines.append(trader_line)
+            lines.append("")
         meta_parts = []
         if block_num:
             meta_parts.append(f"⬛ `{block_num}`")
-        if to_addr and len(to_addr) >= 42:
+        if col.get("tracked_trader"):
+            meta_parts.append(f"👤 **{col['tracked_trader']}**")
+        elif to_addr and len(to_addr) >= 42:
             meta_parts.append(f"👤 `{to_addr[:6]}...{to_addr[-4:]}`")
         if time_ago != "Just now":
             meta_parts.append(f"🕒 {time_ago}")
@@ -159,6 +179,9 @@ def build_live_mint_embeds(collections: List[Dict]) -> List[discord.Embed]:
             timestamp=datetime.now(timezone.utc)
         )
         apply_live_mint_branding(embed)
+        if col.get("is_smart_wallet_event") and col.get("tracked_trader"):
+            icon = brand_logo_embed_icon() or None
+            embed.set_author(name=f"🧠 {brand_name()} · Smart Wallet Mint", icon_url=icon)
 
         links = []
         # Mint link priority: website → OpenSea collection → Etherscan contract
@@ -348,6 +371,14 @@ def build_hot_mint_embed(mint: Dict, count: int, window_seconds: int) -> discord
 
     # Build description — same structure as live mints
     lines = []
+    trader_line = format_trader_line(mint)
+    if trader_line:
+        lines.append(trader_line)
+        lines.append("")
+    buys_line = format_smart_buys_line(mint.get("smart_wallet_buys") or [])
+    if buys_line:
+        lines.append(buys_line)
+        lines.append("")
     lines.append(f"🔥 **{count}** mints in the last **{window_min}m** — trending!")
     lines.append("")
 
@@ -369,14 +400,20 @@ def build_hot_mint_embed(mint: Dict, count: int, window_seconds: int) -> discord
 
     description = "\n".join(lines).strip()
 
+    default_hot = 0xFF4500
+    if mint.get("is_smart_wallet_event"):
+        default_hot = COLOR_HOT_SMART
     embed = discord.Embed(
         title=f"🔥  {name}",
         url=url,
         description=description,
-        color=0xFF4500,
+        color=resolve_embed_color(mint, default_hot),
         timestamp=datetime.now(timezone.utc)
     )
     apply_hot_mint_branding(embed)
+    if mint.get("is_smart_wallet_event"):
+        icon = brand_logo_embed_icon() or None
+        embed.set_author(name=f"🧠 {brand_name()} · Smart Wallet · Hot Mint", icon_url=icon)
 
     links = []
     if social_links.get("website"):

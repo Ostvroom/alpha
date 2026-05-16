@@ -21,6 +21,13 @@ from trackers.eth_ws_mint_listener import SPAM_CONTRACTS, SPAM_NAME_PATTERNS, Et
 from trackers.mint_contract_enricher import MintContractEnricher
 from trackers.mint_embeds import build_hot_mint_embed, build_live_mint_embeds
 from trackers.mint_social_fetcher import MintSocialFetcher
+from trackers.mint_wallet_intel import (
+    attach_hot_mint_wallet_intel,
+    enrich_mint_with_wallet_intel,
+    get_tracked_wallet_map,
+    prune_contract_activity,
+    record_tracked_buy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +48,7 @@ class NftscanLiveFeed:
         self._spam_contract_expiry: Dict[str, datetime] = {}
         self._muted_contracts: Set[str] = set()
         self._contract_mint_count: Dict[str, int] = {}
+        self._contract_wallet_activity: Dict[str, List[Dict]] = {}
         self._task: Optional[asyncio.Task] = None
         self._running = False
         ensure_dirs()
@@ -157,7 +165,8 @@ class NftscanLiveFeed:
         self._running = True
         self.enricher = MintContractEnricher()
         self.social_fetcher = MintSocialFetcher()
-        self.listener = EthMintListener(max_queue=200)
+        tracked = set(get_tracked_wallet_map().keys())
+        self.listener = EthMintListener(max_queue=200, tracked_addresses=tracked)
         await self.listener.start()
         self._task = asyncio.create_task(self._loop())
         live = config.LIVE_MINT_CHANNEL_ID
@@ -195,10 +204,23 @@ class NftscanLiveFeed:
                 logger.warning("Live mint tick: %s", e)
             await asyncio.sleep(interval)
 
+    def _sync_tracked_addresses(self) -> None:
+        if self.listener:
+            self.listener.update_tracked_addresses(set(get_tracked_wallet_map().keys()))
+
     async def _tick(self) -> None:
         if not self.listener:
             return
+        intel_on = getattr(config, "ENABLE_MINT_SMART_WALLET_INTEL", True)
+        if intel_on:
+            self._sync_tracked_addresses()
         raw_mints = await self.listener.flush_recent_mints(50)
+        if intel_on:
+            tracked_buys = await self.listener.flush_recent_tracked_activity(50)
+            wallets = get_tracked_wallet_map()
+            for ev in tracked_buys:
+                record_tracked_buy(self._contract_wallet_activity, ev, wallets)
+            prune_contract_activity(self._contract_wallet_activity, config.HOT_MINT_WINDOW)
 
         for m in raw_mints:
             contract = m.get("contract_address", "").lower()
@@ -260,6 +282,8 @@ class NftscanLiveFeed:
                 contract = m.get("contract_address", "").lower()
                 if contract and contract in self._contract_mint_count:
                     m["total_supply"] = self._contract_mint_count[contract]
+            if intel_on:
+                enrich_mint_with_wallet_intel(m)
 
         if new_mints and config.LIVE_MINT_CHANNEL_ID:
             embeds = build_live_mint_embeds(new_mints)
@@ -307,6 +331,10 @@ class NftscanLiveFeed:
             mint = hot["mint"]
             if mint.get("total_supply") is None and hot["contract"] in self._contract_mint_count:
                 mint["total_supply"] = self._contract_mint_count[hot["contract"]]
+            if intel_on:
+                attach_hot_mint_wallet_intel(
+                    mint, self._contract_wallet_activity, config.HOT_MINT_WINDOW
+                )
             embed = build_hot_mint_embed(mint, hot["count"], config.HOT_MINT_WINDOW)
             await self._send_embeds(ch, [embed])
 

@@ -77,10 +77,11 @@ for _addr in _WHALE_ENV.split(","):
 
 
 class EthMintListener:
-    def __init__(self, whale_addresses: set = None, max_queue: int = 100):
+    def __init__(self, whale_addresses: set = None, tracked_addresses: set = None, max_queue: int = 100):
         self.max_queue = max_queue
         self.mints: List[Dict] = []
         self.whales: List[Dict] = []  # whale activity queue
+        self.tracked_activity: List[Dict] = []  # tracked-wallet buys (for mint feed intel)
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()
@@ -88,6 +89,7 @@ class EthMintListener:
 
         # Whale tracking
         self.whale_addresses: set = whale_addresses or set()
+        self.tracked_addresses: set = {a.lower() for a in (tracked_addresses or set()) if a}
 
         # Transaction-level aggregation for bulk whale detection
         self._tx_buffer: Dict[str, Dict] = {}  # tx_hash -> aggregated event
@@ -155,6 +157,20 @@ class EthMintListener:
         """Refresh the known whale list at runtime."""
         self.whale_addresses = addresses
         logger.info(f"Updated whale addresses: {len(addresses)} wallets")
+
+    def update_tracked_addresses(self, addresses: set):
+        """Refresh tracked wallet list for live/hot mint intel."""
+        self.tracked_addresses = {a.lower() for a in addresses if a}
+        logger.debug("Updated tracked addresses for mint intel: %s", len(self.tracked_addresses))
+
+    def _is_tracked(self, addr: str) -> bool:
+        return bool(addr and addr.lower() in self.tracked_addresses)
+
+    async def flush_recent_tracked_activity(self, limit: int = 50) -> List[Dict]:
+        async with self._lock:
+            items = list(self.tracked_activity[-limit:])
+            self.tracked_activity = self.tracked_activity[:-limit] if len(self.tracked_activity) > limit else []
+            return items
 
     # ──────────────────────────────────────────────────────────────────────────
     # Transaction buffer cleanup
@@ -312,6 +328,18 @@ class EthMintListener:
                     "gas_fee": 0,
                     "mint_cost": 0,
                 })
+            elif self._is_tracked(to_addr):
+                await self._enqueue_tracked_buy({
+                    "type": "wallet_buy",
+                    "contract_address": contract,
+                    "token_id": str(token_id),
+                    "amount": 1,
+                    "from": from_addr,
+                    "to": to_addr,
+                    "tx_hash": tx_hash,
+                    "block_number": int(log.get("blockNumber", "0x0"), 16),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
 
             # Wallet tracker: track mints, buys, and sells for known wallets
             if WALLET_TRACKER_ENABLED:
@@ -365,6 +393,20 @@ class EthMintListener:
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "gas_fee": 0,
                     "mint_cost": 0,
+                })
+            elif self._is_tracked(to_addr) and len(data) >= 130:
+                token_id = int(data[2:66], 16)
+                value = int(data[66:130], 16)
+                await self._enqueue_tracked_buy({
+                    "type": "wallet_buy",
+                    "contract_address": contract,
+                    "token_id": str(token_id),
+                    "amount": value,
+                    "from": from_addr,
+                    "to": to_addr,
+                    "tx_hash": tx_hash,
+                    "block_number": int(log.get("blockNumber", "0x0"), 16),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                 })
 
             tid = str(int(data[2:66], 16)) if len(data) >= 130 else "?"
@@ -453,6 +495,20 @@ class EthMintListener:
             if len(self.mints) > self.max_queue:
                 self.mints.pop(0)
         logger.debug(f"Mint detected: {item['contract_address']} #{item['token_id']}")
+
+    async def _enqueue_tracked_buy(self, item: Dict):
+        if not self.tracked_addresses:
+            return
+        async with self._lock:
+            self.tracked_activity.append(item)
+            if len(self.tracked_activity) > self.max_queue:
+                self.tracked_activity.pop(0)
+        logger.debug(
+            "Tracked wallet buy: %s -> %s #%s",
+            item.get("to", "")[:10],
+            item.get("contract_address", "")[:10],
+            item.get("token_id"),
+        )
 
     def _check_contract_cooldown(self, contract: str) -> bool:
         """Return True if contract is on cooldown and should be skipped."""

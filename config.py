@@ -308,6 +308,8 @@ HOT_MINT_CHANNEL_ID = parse_channel_id(
     "HOT_MINT_CHANNEL_ID", default=1505178039460560997
 )
 ENABLE_NFTSCAN_LIVE_MINTS = _env_flag("ENABLE_NFTSCAN_LIVE_MINTS", "1")
+# Highlight tracked-wallet mints/buys on live + hot mint embeds (merged with wallet tracker)
+ENABLE_MINT_SMART_WALLET_INTEL = _env_flag("ENABLE_MINT_SMART_WALLET_INTEL", "1")
 # Legacy getLogs poller (trackers/eth_live_mints.py) — off when nftscan feed is on
 ENABLE_ETH_LIVE_MINTS_POLLER = _env_flag("ENABLE_ETH_LIVE_MINTS_POLLER", "0")
 SUPPRESS_UNNAMED = _env_flag("SUPPRESS_UNNAMED", "0")
