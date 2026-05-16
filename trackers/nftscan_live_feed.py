@@ -17,7 +17,7 @@ import config
 from app_paths import DATA_DIR, ensure_dirs
 from brand_assets import collect_embed_attachment_files
 from trackers.collection_image import COLLECTION_FALLBACK_FILENAME, ensure_black_collection_fallback_path
-from trackers.eth_ws_mint_listener import SPAM_NAME_PATTERNS, EthMintListener
+from trackers.eth_ws_mint_listener import SPAM_CONTRACTS, SPAM_NAME_PATTERNS, EthMintListener
 from trackers.mint_contract_enricher import MintContractEnricher
 from trackers.mint_embeds import build_hot_mint_embed, build_live_mint_embeds
 from trackers.mint_social_fetcher import MintSocialFetcher
@@ -25,6 +25,7 @@ from trackers.mint_social_fetcher import MintSocialFetcher
 logger = logging.getLogger(__name__)
 
 MUTED_FILE = os.path.join(DATA_DIR, "muted_mint_contracts.json")
+BANNED_FILE = os.path.join(DATA_DIR, "banned_mint_contracts.json")
 
 
 class NftscanLiveFeed:
@@ -44,6 +45,7 @@ class NftscanLiveFeed:
         self._running = False
         ensure_dirs()
         self._load_muted()
+        self._load_banned()
 
     def _load_muted(self) -> None:
         if os.path.exists(MUTED_FILE):
@@ -52,6 +54,102 @@ class NftscanLiveFeed:
                     self._muted_contracts = set(json.load(f))
             except Exception:
                 self._muted_contracts = set()
+
+    def _save_muted(self) -> None:
+        try:
+            with open(MUTED_FILE, "w", encoding="utf-8") as f:
+                json.dump(sorted(self._muted_contracts), f, indent=2)
+        except Exception as e:
+            logger.warning("Failed to save muted contracts: %s", e)
+
+    def mute_contract(self, address: str) -> None:
+        addr = address.lower()
+        self._muted_contracts.add(addr)
+        self._mint_tracker.pop(addr, None)
+        self._hot_alert_cooldown.pop(addr, None)
+        self._save_muted()
+
+    def unmute_contract(self, address: str) -> None:
+        self._muted_contracts.discard(address.lower())
+        self._save_muted()
+
+    def ban_contract(self, address: str, hours: int = 48) -> None:
+        from trackers.eth_ws_mint_listener import SPAM_CONTRACTS
+
+        addr = address.lower()
+        SPAM_CONTRACTS.add(addr)
+        self._spam_contracts.add(addr)
+        self._spam_contract_expiry[addr] = datetime.now(timezone.utc) + timedelta(hours=hours)
+        self._save_banned()
+
+    def unban_contract(self, address: str) -> None:
+        from trackers.eth_ws_mint_listener import SPAM_CONTRACTS
+
+        addr = address.lower()
+        SPAM_CONTRACTS.discard(addr)
+        self._spam_contracts.discard(addr)
+        self._spam_contract_expiry.pop(addr, None)
+        self._save_banned()
+
+    def _save_banned(self) -> None:
+        try:
+            payload = {
+                "contracts": sorted(self._spam_contracts),
+                "expiry": {
+                    k: v.isoformat()
+                    for k, v in self._spam_contract_expiry.items()
+                },
+            }
+            with open(BANNED_FILE, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+        except Exception as e:
+            logger.warning("Failed to save banned contracts: %s", e)
+
+    def _load_banned(self) -> None:
+        from trackers.eth_ws_mint_listener import SPAM_CONTRACTS
+
+        if not os.path.exists(BANNED_FILE):
+            return
+        try:
+            with open(BANNED_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            now = datetime.now(timezone.utc)
+            for addr in data.get("contracts", []):
+                a = str(addr).lower()
+                if a:
+                    self._spam_contracts.add(a)
+                    SPAM_CONTRACTS.add(a)
+            for addr, exp_s in (data.get("expiry") or {}).items():
+                try:
+                    exp = datetime.fromisoformat(exp_s)
+                    if exp.tzinfo is None:
+                        exp = exp.replace(tzinfo=timezone.utc)
+                    if exp > now:
+                        self._spam_contract_expiry[addr.lower()] = exp
+                    else:
+                        self._spam_contracts.discard(addr.lower())
+                        SPAM_CONTRACTS.discard(addr.lower())
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def active_hot_trackers(self) -> List[tuple]:
+        """Contracts with mint activity in the hot-mint window: (address, count)."""
+        now = datetime.now(timezone.utc)
+        window = timedelta(seconds=config.HOT_MINT_WINDOW)
+        active: List[tuple] = []
+        for contract, times in list(self._mint_tracker.items()):
+            if contract in self._muted_contracts:
+                continue
+            valid = [t for t in times if now - t <= window]
+            if valid:
+                self._mint_tracker[contract] = valid
+                active.append((contract, len(valid)))
+            else:
+                self._mint_tracker.pop(contract, None)
+        active.sort(key=lambda x: x[1], reverse=True)
+        return active
 
     async def start(self) -> None:
         if self._running:
@@ -128,7 +226,7 @@ class NftscanLiveFeed:
             name = m.get("contract_name", "")
             if contract in self._muted_contracts:
                 continue
-            if contract in self._spam_contracts:
+            if contract in SPAM_CONTRACTS or contract in self._spam_contracts:
                 continue
             if self._is_spam_name(name):
                 self._spam_contracts.add(contract)
@@ -315,6 +413,23 @@ class NftscanLiveFeed:
 
 
 _feed: Optional[NftscanLiveFeed] = None
+
+
+def get_nftscan_live_feed() -> Optional[NftscanLiveFeed]:
+    return _feed
+
+
+def normalize_eth_contract(address: str) -> Optional[str]:
+    addr = (address or "").strip().lower()
+    if not addr.startswith("0x"):
+        addr = "0x" + addr
+    if len(addr) != 42:
+        return None
+    try:
+        int(addr[2:], 16)
+    except ValueError:
+        return None
+    return addr
 
 
 async def start_nftscan_live_feed(bot: discord.Client) -> NftscanLiveFeed:

@@ -439,6 +439,9 @@ class BlockBrainBot(commands.Bot):
         await self.add_cog(PanelCommands(self))
         await self.add_cog(GuildLicenseCommands(self))
         await self.add_cog(VelcorFeatures(self))
+        from trackers.mint_feed_commands import setup as setup_mint_feed_commands
+
+        await setup_mint_feed_commands(self)
         await payment_commands.setup(self)
         self.add_view(VerificationView())
         self.add_view(CryptoPaymentView())
