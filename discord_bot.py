@@ -574,25 +574,57 @@ class BlockBrainBot(commands.Bot):
                     f"wallet tracker skipped (check DISCORD_NFT_CHANNEL_ID and bot permissions: View Channel, Send Messages, Embed Links)."
                 )
 
-        # Start Live Mints trackers — verify channel exists before launching
-        mints_id = config.DISCORD_MINTS_CHANNEL_ID
-        radar_id = config.DISCORD_NEW_MINTS_CHANNEL_ID
-        if mints_id:
-            try:
-                _mints_ch = self.get_channel(mints_id) or await self.fetch_channel(mints_id)
-            except Exception:
-                _mints_ch = None
-            if _mints_ch:
-                from trackers.eth_live_mints import check_live_eth_mints
+        # Live + hot mints (nftscan-style WebSocket feed or legacy getLogs poller)
+        if getattr(config, "ENABLE_NFTSCAN_LIVE_MINTS", True):
+            live_id = getattr(config, "LIVE_MINT_CHANNEL_ID", 0) or 0
+            hot_id = getattr(config, "HOT_MINT_CHANNEL_ID", 0) or 0
+            if live_id or hot_id:
+                try:
+                    _live_ch = (
+                        self.get_channel(live_id) or await self.fetch_channel(live_id)
+                        if live_id
+                        else None
+                    )
+                except Exception:
+                    _live_ch = None
+                try:
+                    _hot_ch = (
+                        self.get_channel(hot_id) or await self.fetch_channel(hot_id)
+                        if hot_id
+                        else None
+                    )
+                except Exception:
+                    _hot_ch = None
+                if (live_id and _live_ch) or (hot_id and _hot_ch):
+                    from trackers.nftscan_live_feed import start_nftscan_live_feed
 
-                self.loop.create_task(check_live_eth_mints(self, mints_id, radar_id))
-                print(f"    [LiveMints] Started (ETH) → #{getattr(_mints_ch, 'name', mints_id)}")
-            else:
-                print(
-                    f"    [LiveMints] DISCORD_MINTS_CHANNEL_ID={mints_id} not found / no access — "
-                    f"ETH live mints not started. Fix the ID or invite the bot with View Channel. "
-                    f"Set DISCORD_MINTS_CHANNEL_ID=0 to silence."
-                )
+                    self.loop.create_task(start_nftscan_live_feed(self))
+                    print(
+                        f"    [LiveMints] NFTScan-style feed → live #{getattr(_live_ch, 'name', live_id)} "
+                        f"| hot #{getattr(_hot_ch, 'name', hot_id)}"
+                    )
+                else:
+                    print(
+                        f"    [LiveMints] LIVE_MINT_CHANNEL_ID={live_id} / HOT_MINT_CHANNEL_ID={hot_id} "
+                        f"not found or no access — mint feed not started."
+                    )
+        elif getattr(config, "ENABLE_ETH_LIVE_MINTS_POLLER", False):
+            mints_id = config.DISCORD_MINTS_CHANNEL_ID
+            radar_id = config.DISCORD_NEW_MINTS_CHANNEL_ID
+            if mints_id:
+                try:
+                    _mints_ch = self.get_channel(mints_id) or await self.fetch_channel(mints_id)
+                except Exception:
+                    _mints_ch = None
+                if _mints_ch:
+                    from trackers.eth_live_mints import check_live_eth_mints
+
+                    self.loop.create_task(check_live_eth_mints(self, mints_id, radar_id))
+                    print(f"    [LiveMints] Legacy poller → #{getattr(_mints_ch, 'name', mints_id)}")
+                else:
+                    print(
+                        f"    [LiveMints] DISCORD_MINTS_CHANNEL_ID={mints_id} not found / no access."
+                    )
 
     async def rebuild_channel_caches(self) -> None:
         """Reload .env channel IDs plus licensed multi-tenant destinations from guild_licenses.db."""

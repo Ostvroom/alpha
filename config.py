@@ -300,13 +300,40 @@ DISCORD_TOKEN_CHANNEL_ID = parse_channel_id("DISCORD_TOKEN_CHANNEL_ID")
 DISCORD_NFT_CHANNEL_ID = parse_channel_id("DISCORD_NFT_CHANNEL_ID", default=1486393083179569152)
 # Solana NFT wallet + live mint trackers removed — leave unset (0)
 DISCORD_SOL_NFT_CHANNEL_ID = parse_channel_id("DISCORD_SOL_NFT_CHANNEL_ID", default=0)
-# ETH active/trending mints + /active_mints target — override with DISCORD_MINTS_CHANNEL_ID; set to 0 to disable
-DISCORD_MINTS_CHANNEL_ID = parse_channel_id(
-    "DISCORD_MINTS_CHANNEL_ID", default=1486393112212541501
+# ETH live + hot mints (nftscan-style WebSocket feed) — Velcor3 server channels
+LIVE_MINT_CHANNEL_ID = parse_channel_id(
+    "LIVE_MINT_CHANNEL_ID", default=1505177985026756628
 )
-DISCORD_NEW_MINTS_CHANNEL_ID = parse_channel_id("DISCORD_NEW_MINTS_CHANNEL_ID")
+HOT_MINT_CHANNEL_ID = parse_channel_id(
+    "HOT_MINT_CHANNEL_ID", default=1505178039460560997
+)
+ENABLE_NFTSCAN_LIVE_MINTS = _env_flag("ENABLE_NFTSCAN_LIVE_MINTS", "1")
+# Legacy getLogs poller (trackers/eth_live_mints.py) — off when nftscan feed is on
+ENABLE_ETH_LIVE_MINTS_POLLER = _env_flag("ENABLE_ETH_LIVE_MINTS_POLLER", "0")
+SUPPRESS_UNNAMED = _env_flag("SUPPRESS_UNNAMED", "0")
+# ETH active/trending mints + /active_mints — aliases hot/live when unset
+DISCORD_MINTS_CHANNEL_ID = parse_channel_id(
+    "DISCORD_MINTS_CHANNEL_ID", default=HOT_MINT_CHANNEL_ID or 1505178039460560997
+)
+DISCORD_NEW_MINTS_CHANNEL_ID = parse_channel_id(
+    "DISCORD_NEW_MINTS_CHANNEL_ID", default=LIVE_MINT_CHANNEL_ID or 1505177985026756628
+)
 ENABLE_ETH_ERC20 = os.getenv("ENABLE_ETH_ERC20", "0") == "1"
 ENABLE_ETH_NFT = os.getenv("ENABLE_ETH_NFT", "1") == "1"
+
+# Premium wallet-tracker embed (trackers/wallet_tracker_embed.py)
+WALLET_TRACKER_LUXURY_MODE = _env_flag("WALLET_TRACKER_LUXURY_MODE", "1")
+WALLET_TRACKER_SHOW_FLOOR = _env_flag("WALLET_TRACKER_SHOW_FLOOR", "1")
+WALLET_TRACKER_SHOW_RARITY = _env_flag("WALLET_TRACKER_SHOW_RARITY", "0")
+WALLET_TRACKER_SHOW_WALLET_CLASS = _env_flag("WALLET_TRACKER_SHOW_WALLET_CLASS", "1")
+WALLET_TRACKER_SHOW_WALLET_SCORE = _env_flag("WALLET_TRACKER_SHOW_WALLET_SCORE", "1")
+WALLET_TRACKER_SHOW_ALPHA_SIGNAL = _env_flag("WALLET_TRACKER_SHOW_ALPHA_SIGNAL", "1")
+try:
+    WALLET_TRACKER_HIGH_VALUE_USD = float(os.getenv("WALLET_TRACKER_HIGH_VALUE_USD", "500") or "500")
+except ValueError:
+    WALLET_TRACKER_HIGH_VALUE_USD = 500.0
+# Collection thumbnails: wsrv.nl square crop (free). Set 0 to use raw image URLs.
+WALLET_TRACKER_IMAGE_PROXY = _env_flag("WALLET_TRACKER_IMAGE_PROXY", "1")
 
 # --- Verification & crypto payment panels (/verification_panel, /crypto_payment_panel) ---
 def _env_int(name: str, default: int = 0) -> int:
@@ -317,6 +344,12 @@ def _env_int(name: str, default: int = 0) -> int:
         return int(v)
     except ValueError:
         return default
+
+
+LIVE_MINT_INTERVAL = max(15, _env_int("LIVE_MINT_INTERVAL", 60))
+HOT_MINT_THRESHOLD = max(2, _env_int("HOT_MINT_THRESHOLD", 10))
+HOT_MINT_WINDOW = max(60, _env_int("HOT_MINT_WINDOW", 300))
+HOT_MINT_COOLDOWN = max(60, _env_int("HOT_MINT_COOLDOWN", 600))
 
 
 def _env_float(name: str, default: float) -> float:
