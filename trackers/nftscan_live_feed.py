@@ -15,6 +15,7 @@ import discord
 
 import config
 from app_paths import DATA_DIR, ensure_dirs
+from brand_assets import collect_embed_attachment_files
 from trackers.collection_image import COLLECTION_FALLBACK_FILENAME, ensure_black_collection_fallback_path
 from trackers.eth_ws_mint_listener import SPAM_NAME_PATTERNS, EthMintListener
 from trackers.mint_contract_enricher import MintContractEnricher
@@ -269,10 +270,16 @@ class NftscanLiveFeed:
                 e.to_dict().get("thumbnail", {}).get("url") == f"attachment://{fallback_name}"
                 for e in chunk
             )
-            kwargs: Dict = {}
+            files: List[discord.File] = []
             if needs_fallback:
                 path = ensure_black_collection_fallback_path()
-                kwargs["files"] = [discord.File(str(path), filename=fallback_name)]
+                files.append(discord.File(str(path), filename=fallback_name))
+            for bf in collect_embed_attachment_files(chunk):
+                if not any(getattr(f, "filename", None) == bf.filename for f in files):
+                    files.append(bf)
+            kwargs: Dict = {}
+            if files:
+                kwargs["files"] = files
             try:
                 await channel.send(embeds=chunk, **kwargs)
             except discord.HTTPException as e:

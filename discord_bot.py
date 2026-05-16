@@ -102,52 +102,9 @@ _WEB3_OWN_SIGNAL_SHORT = frozenset(
 )
 
 
-def _resolve_brand_assets():
-    """Logo + banner for embeds: prefer project-root `banner.jpg`, then `v/banner.*`."""
-    root = os.path.dirname(os.path.abspath(__file__))
-    logo_path, logo_file = None, None
-    for name in (
-        "velcor3_logo.png",
-        "velcor3_logo.jpg",
-        "alpha_logo.png",
-        "alpha_logo.jpg",
-        "logo.png",
-        "block_brain_logo.png",
-    ):
-        p = os.path.join(root, name)
-        if os.path.isfile(p):
-            logo_path = p
-            logo_file = "logo." + name.rsplit(".", 1)[-1].lower()
-            break
-    banner_path, banner_file = None, None
-    vdir = os.path.join(root, "v")
-    # Hard preference: project root `banner.jpg` (what the user edits).
-    p_root_banner = os.path.join(root, "banner.jpg")
-    if os.path.isfile(p_root_banner):
-        banner_path = p_root_banner
-        banner_file = "banner.jpg"
-    else:
-        for name in (
-            "banner.png",
-            "banner.jpg",
-            "banner.jpeg",
-            "velcor3_banner.png",
-            "velcor3_banner.jpg",
-            "alpha_banner.jpg",
-            "alpha_banner.png",
-        ):
-            for base in (vdir, root):
-                p = os.path.join(base, name)
-                if os.path.isfile(p):
-                    banner_path = p
-                    banner_file = "banner." + name.rsplit(".", 1)[-1].lower()
-                    break
-            if banner_path:
-                break
-    return logo_path, logo_file, banner_path, banner_file
+from brand_assets import resolve_brand_assets
 
-
-BRAND_LOGO_PATH, BRAND_LOGO_FILE, BRAND_BANNER_PATH, BRAND_BANNER_FILE = _resolve_brand_assets()
+BRAND_LOGO_PATH, BRAND_LOGO_FILE, BRAND_BANNER_PATH, BRAND_BANNER_FILE = resolve_brand_assets()
 
 from app_paths import DATA_DIR, ensure_dirs
 

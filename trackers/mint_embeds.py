@@ -2,6 +2,8 @@ import discord
 from typing import List, Dict, Any
 from datetime import datetime, timezone
 
+from brand_assets import apply_hot_mint_branding, apply_live_mint_branding
+
 
 def _eth_value(value: Any) -> str:
     try:
@@ -156,10 +158,7 @@ def build_live_mint_embeds(collections: List[Dict]) -> List[discord.Embed]:
             color=color,
             timestamp=datetime.now(timezone.utc)
         )
-        embed.set_author(
-            name="⚡  Live Mint",
-            icon_url="https://www.nftscan.com/favicon.png"
-        )
+        apply_live_mint_branding(embed)
 
         links = []
         # Mint link priority: website → OpenSea collection → Etherscan contract
@@ -177,7 +176,6 @@ def build_live_mint_embeds(collections: List[Dict]) -> List[discord.Embed]:
             links.append(f"[Twitter]({social_links['twitter']})")
         if social_links.get("discord"):
             links.append(f"[Discord]({social_links['discord']})")
-        links.append("[Made by sultan](https://x.com/Degensultan)")
 
         if links:
             embed.add_field(name="", value=" · ".join(links), inline=False)
@@ -186,7 +184,6 @@ def build_live_mint_embeds(collections: List[Dict]) -> List[discord.Embed]:
 
         thumb = _square_thumbnail(image_url) or f"attachment://{COLLECTION_FALLBACK_FILENAME}"
         embed.set_thumbnail(url=thumb)
-        embed.set_footer(text="On-chain mint")
         embeds.append(embed)
 
     return embeds
@@ -379,10 +376,7 @@ def build_hot_mint_embed(mint: Dict, count: int, window_seconds: int) -> discord
         color=0xFF4500,
         timestamp=datetime.now(timezone.utc)
     )
-    embed.set_author(
-        name="🔥  Hot Mint Alert",
-        icon_url="https://www.nftscan.com/favicon.png"
-    )
+    apply_hot_mint_branding(embed)
 
     links = []
     if social_links.get("website"):
@@ -399,7 +393,6 @@ def build_hot_mint_embed(mint: Dict, count: int, window_seconds: int) -> discord
         links.append(f"[Twitter]({social_links['twitter']})")
     if social_links.get("discord"):
         links.append(f"[Discord]({social_links['discord']})")
-    links.append("[Made by sultan](https://x.com/Degensultan)")
 
     if links:
         embed.add_field(name="", value=" · ".join(links), inline=False)
@@ -408,5 +401,4 @@ def build_hot_mint_embed(mint: Dict, count: int, window_seconds: int) -> discord
 
     thumb = _square_thumbnail(image_url) or f"attachment://{COLLECTION_FALLBACK_FILENAME}"
     embed.set_thumbnail(url=thumb)
-    embed.set_footer(text="Hot Mint Detection · Ethereum")
     return embed
