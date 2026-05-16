@@ -1098,6 +1098,134 @@ def _embed_box(text: str, *, max_len: int = 988) -> str:
     return f"```{t}```"
 
 
+# Wallet-tracker NFT card palette (buy / sell / neutral)
+_WT_COLOR_BUY = 0x3DDC97
+_WT_COLOR_SELL = 0xED4245
+_WT_COLOR_NEUTRAL = 0x4E5058
+
+
+def _format_eth_amount(amt: float) -> str:
+    if amt <= 0:
+        return "0"
+    if amt >= 1:
+        s = f"{amt:,.4f}"
+    elif amt >= 0.0001:
+        s = f"{amt:.4f}"
+    else:
+        s = f"{amt:.6f}"
+    return s.rstrip("0").rstrip(".")
+
+
+def _wallet_tracker_action_label(action_word: str) -> str:
+    return {
+        "BOUGHT": "Buy",
+        "SOLD": "Sell",
+        "MINTED": "Mint",
+        "CLAIMED": "Claim",
+        "TRANSFERRED": "Transfer",
+    }.get(action_word, action_word.title())
+
+
+def _wallet_tracker_action_past(action_word: str) -> str:
+    return {
+        "BOUGHT": "bought",
+        "SOLD": "sold",
+        "MINTED": "minted",
+        "CLAIMED": "claimed",
+        "TRANSFERRED": "transferred",
+    }.get(action_word, action_word.lower())
+
+
+def _wallet_tracker_price_compact(
+    display_eth: float,
+    price_source: str,
+    *,
+    is_floor: bool,
+    action_word: str,
+    source: str,
+    floor_eth: float,
+    usd_rate: float,
+) -> str:
+    """Single-line price for inline row (matches legacy Value field)."""
+    detail = _wallet_tracker_price_field(
+        display_eth,
+        price_source,
+        is_floor=is_floor,
+        bulk_qty=None,
+        action_word=action_word,
+        source=source,
+        floor_eth=floor_eth,
+        usd_rate=usd_rate,
+    )
+    if "\n" not in detail:
+        return detail
+    lines = detail.split("\n")
+    main = lines[0]
+    usd_line = next((ln for ln in lines[1:] if ln.startswith("≈")), "")
+    if usd_line:
+        usd_bit = usd_line.replace("≈ ", "").replace(" USD", "")
+        return f"{main} ({usd_bit})"
+    return main
+
+
+def _wallet_tracker_price_field(
+    display_eth: float,
+    price_source: str,
+    *,
+    is_floor: bool,
+    bulk_qty: Optional[int],
+    action_word: str,
+    source: str,
+    floor_eth: float,
+    usd_rate: float,
+) -> str:
+    if price_source == "weth_logs":
+        sym = "WETH"
+    else:
+        sym = "ETH"
+
+    if display_eth <= 0 and source == "Mint" and floor_eth == 0:
+        return "**FREE**"
+    if display_eth <= 0 and action_word == "TRANSFERRED":
+        return "—"
+
+    if display_eth <= 0 and source == "Mint" and floor_eth > 0:
+        amt = _format_eth_amount(floor_eth)
+        lines = [f"**FREE**", f"floor ~{amt} ETH"]
+        if usd_rate > 0:
+            lines.append(f"≈ ${floor_eth * usd_rate:,.0f} USD")
+        return "\n".join(lines)
+
+    if display_eth <= 0:
+        return "—"
+
+    amt = _format_eth_amount(display_eth)
+    prefix = "~" if is_floor else ""
+    lines = [f"{prefix}**{amt} {sym}**"]
+    if usd_rate > 0:
+        lines.append(f"≈ ${display_eth * usd_rate:,.0f} USD")
+    if is_floor and bulk_qty:
+        lines.append(f"_(floor × {bulk_qty})_")
+    elif is_floor:
+        lines.append("_(floor est.)_")
+    return "\n".join(lines)
+
+
+def _wallet_tracker_token_ids_field(
+    token_id: int,
+    all_token_ids: Optional[List[int]],
+    bulk_qty: Optional[int],
+) -> str:
+    if all_token_ids:
+        shown = all_token_ids[:24]
+        parts = [f"**#{tid}**" for tid in shown]
+        line = " · ".join(parts)
+        if len(all_token_ids) > 24:
+            line += f"\n+{len(all_token_ids) - 24} more"
+        return line
+    return f"**#{token_id}**"
+
+
 async def create_eth_nft_embed(
     action_type,
     wallet,
@@ -1122,20 +1250,20 @@ async def create_eth_nft_embed(
         wallet_label = f"{wallet[:6]}...{wallet[-4:]}"
         
     action_word = "TRANSFERRED"
-    color = Color(_EMBED_NEUTRAL)
+    color = Color(_WT_COLOR_NEUTRAL)
     emoji = "🔄"
     
     if from_addr.lower() == "0x0000000000000000000000000000000000000000":
         action_word = "MINTED"
-        color = Color.green()
+        color = Color(_WT_COLOR_BUY)
         emoji = "🟢"
     elif action_type == "Sent":
         action_word = "SOLD"
-        color = Color.red()
+        color = Color(_WT_COLOR_SELL)
         emoji = "🔴"
     elif action_type == "Received":
         action_word = "BOUGHT"
-        color = Color.green()
+        color = Color(_WT_COLOR_BUY)
         emoji = "🟢"
         
     bulk_qty = bulk_quantity if bulk_quantity and bulk_quantity > 1 else None
@@ -1234,7 +1362,7 @@ async def create_eth_nft_embed(
     # transfer (not a sale/purchase). Downgrade SOLD/BOUGHT -> TRANSFERRED.
     if price_eth == 0 and source == "Contract" and action_word in ("SOLD", "BOUGHT"):
         action_word = "TRANSFERRED"
-        color = Color(_EMBED_NEUTRAL)
+        color = Color(_WT_COLOR_NEUTRAL)
         emoji = "🔄"
     # If Alchemy confirmed a marketplace sale, upgrade source label
     if price_source == "alchemy" and source == "Contract":
@@ -1358,8 +1486,6 @@ async def create_eth_nft_embed(
     if wallet_profile.get("profile_image_url") and not pfp_local:
         avatar_url = wallet_profile.get("profile_image_url")
 
-    bulk_suffix = f" ×{bulk_qty}" if bulk_qty else ""
-
     # ── Price resolution ─────────────────────────────────────────────────────
     display_eth = price_eth
     is_floor = False
@@ -1370,144 +1496,74 @@ async def create_eth_nft_embed(
         else:
             display_eth = floor_eth
             is_floor = True
-    usd_str = f"  (${display_eth * _cached_eth_usd:,.0f})" if display_eth > 0 and _cached_eth_usd > 0 else ""
+    # ── Minimal wallet-tracker card (action in author; no address/contract blocks) ─
+    action_label = _wallet_tracker_action_label(action_word)
 
-    if price_eth == 0 and source == "Mint" and floor_eth == 0:
-        value_str = "FREE 🆓"
-    elif price_eth == 0 and source == "Mint" and floor_eth > 0:
-        value_str = f"FREE 🆓  ·  floor **{floor_eth:,.4f} ETH**{usd_str}"
-    elif is_floor and bulk_qty:
-        value_str = f"~**{display_eth:,.4f} ETH**{usd_str}  *(floor × {bulk_qty})*"
-    elif is_floor:
-        value_str = f"~**{display_eth:,.4f} ETH**{usd_str}  *(floor)*"
-    elif price_eth == 0 and action_word == "TRANSFERRED":
-        value_str = "—"
-    elif bulk_qty and price_eth > 0:
-        value_str = f"**{display_eth:,.4f} ETH**{usd_str}  *(×{bulk_qty} total)*"
-    else:
-        value_str = f"**{display_eth:,.4f} ETH**{usd_str}"
-
-    # ── Embed (boxed sections + large collection image — Penni-style layout) ──
-    _title_action = {
-        "BOUGHT": "bought",
-        "SOLD": "sold",
-        "MINTED": "minted",
-        "CLAIMED": "claimed",
-        "TRANSFERRED": "transferred",
-    }
-    headline_verb = _title_action.get(action_word, action_word.lower())
-
-    wallet_addr_short = f"{wallet[:6]}...{wallet[-4:]}"
-    contract_short = f"{contract[:6]}...{contract[-4:]}"
-
+    opensea_asset_url = f"https://opensea.io/assets/ethereum/{contract}/{token_id}"
+    tx_url = f"https://etherscan.io/tx/{tx_hash}"
+    wallet_url = f"https://etherscan.io/address/{wallet}"
+    contract_url = f"https://etherscan.io/address/{contract}"
     embed = discord.Embed(
-        title=f"{wallet_label} {headline_verb} {col_name}{bulk_suffix}",
-        url=f"https://etherscan.io/tx/{tx_hash}",
+        url=opensea_asset_url,
         color=color,
         timestamp=datetime.now(timezone.utc),
     )
-    embed.set_author(name=f"{emoji}  {wallet_label}", icon_url=avatar_url)
+    embed.set_author(name=action_label, icon_url=avatar_url, url=wallet_url)
 
-    time_str = f"<t:{int(time.time())}:R>"
-    x_prof = wallet_database.get_x_url(wallet)
+    qty = bulk_qty if bulk_qty else 1
+    price_compact = _wallet_tracker_price_compact(
+        display_eth,
+        price_source,
+        is_floor=is_floor,
+        action_word=action_word,
+        source=source,
+        floor_eth=floor_eth,
+        usd_rate=_cached_eth_usd,
+    )
+    if bulk_qty and price_eth > 0:
+        price_compact += f"\n_(×{bulk_qty} total)_"
 
-    wallet_links = [f"[Etherscan](https://etherscan.io/address/{wallet})"]
-    if x_prof:
-        wallet_links.append(f"[Trader 𝕏]({x_prof})")
-    wallet_block_lines = [
-        f"**{wallet_label}**",
-        _embed_box(wallet_addr_short),
-        " · ".join(wallet_links),
-    ]
-    embed.add_field(name="👤 Wallet", value="\n".join(wallet_block_lines), inline=True)
-
-    collection_block_lines = [
-        f"[{col_name}](https://opensea.io/assets/ethereum/{contract}/{token_id})",
-        _embed_box(contract_short),
-    ]
-    embed.add_field(name="🖼 Collection", value="\n".join(collection_block_lines), inline=True)
-
-    via = f"via **{source}**" if source != "Contract" else "direct transfer"
+    embed.add_field(name="💰 Value", value=price_compact, inline=True)
     embed.add_field(
-        name="⚡ Action",
-        value=f"**{action_word.capitalize()}**\n{via}",
+        name="🖼️ Amount",
+        value=f"**{qty}** NFT{'s' if qty != 1 else ''}",
         inline=True,
     )
+    embed.add_field(name="🕒 Time", value=f"<t:{int(time.time())}:R>", inline=True)
 
-    embed.add_field(name="💰 Value", value=value_str, inline=True)
-    embed.add_field(name="🕒 Time", value=time_str, inline=True)
-    embed.add_field(name="🔎 TX", value=f"[Open TX](https://etherscan.io/tx/{tx_hash})", inline=True)
+    ids_value = _wallet_tracker_token_ids_field(token_id, all_token_ids, bulk_qty)
+    embed.add_field(name="🔢 Token IDs", value=ids_value, inline=False)
 
-    if bulk_qty and all_token_ids:
-        ids_preview = ", ".join(f"#{tid}" for tid in all_token_ids[:15])
-        if len(all_token_ids) > 15:
-            ids_preview += f"  +{len(all_token_ids) - 15} more"
-        embed.add_field(
-            name=f"🛒 Token IDs  ×{bulk_qty}",
-            value=_embed_box(ids_preview),
-            inline=False,
-        )
-
-    # ── Wallet profile enrichment for premium tracking card ───────────────────
-    profile_name = str(wallet_profile.get("name") or "").strip()
-    profile_bio = str(wallet_profile.get("bio") or "").strip()
-    profile_value = float(wallet_profile.get("portfolio_usd") or 0.0)
-    nft_pct = float(wallet_profile.get("nft_percent") or 0.0)
-    token_pct = float(wallet_profile.get("token_percent") or 0.0)
-    verified_badge = " ✅" if wallet_profile.get("is_verified") else ""
-    joined_raw = str(wallet_profile.get("joined") or "").strip()
-    joined_txt = "n/a"
-    if joined_raw:
-        try:
-            joined_txt = datetime.fromisoformat(joined_raw.replace("Z", "+00:00")).strftime("%b %Y")
-        except Exception:
-            joined_txt = joined_raw[:10]
-
-    identity_bits = []
-    if profile_name and profile_name.lower() != wallet_label.lower():
-        identity_bits.append(f"**{profile_name}**{verified_badge}")
-    if joined_txt != "n/a":
-        identity_bits.append(f"since {joined_txt}")
-    if profile_value > 0:
-        identity_bits.append(f"portfolio **${profile_value:,.0f}**")
-    if nft_pct > 0 or token_pct > 0:
-        identity_bits.append(f"mix NFT {nft_pct:.0f}% · Token {token_pct:.0f}%")
-    if identity_bits:
-        embed.add_field(name="💎 Wallet Profile", value="  ·  ".join(identity_bits)[:1024], inline=False)
-    if profile_bio:
-        embed.add_field(name="📝 Bio", value=profile_bio[:1024], inline=False)
-
-    # ── Socials & Links ───────────────────────────────────────────────────────
-    socials_dict = {}
+    socials_dict: Dict[str, Any] = {}
     if enable_socials:
         socials_dict = await fetch_eth_nft_socials(contract, session)
 
-    opensea_url = f"https://opensea.io/assets/ethereum/{contract}/{token_id}"
-    tx_url = f"https://etherscan.io/tx/{tx_hash}"
-    contract_url = f"https://etherscan.io/address/{contract}"
-    links = [f"[OpenSea]({opensea_url})", f"[Wallet](https://etherscan.io/address/{wallet})"]
-    opensea_profile_url = str(wallet_profile.get("opensea_url") or "").strip()
-    if opensea_profile_url.startswith("http"):
-        links.append(f"[Profile]({opensea_profile_url})")
-    _x_prof = wallet_database.get_x_url(wallet)
-    if _x_prof:
-        links.append(f"[Trader 𝕏]({_x_prof})")
-    links += [f"[TX]({tx_url})", f"[Contract]({contract_url})"]
+    x_prof = wallet_database.get_x_url(wallet)
+    link_parts = [
+        f"[OpenSea]({opensea_asset_url})",
+        f"[Wallet]({wallet_url})",
+    ]
+    if x_prof:
+        link_parts.append(f"[Trader 𝕏]({x_prof})")
+    link_parts += [
+        f"[TX]({tx_url})",
+        f"[Contract]({contract_url})",
+    ]
     if socials_dict.get("twitter"):
-        links.append(f"[Collection 𝕏]({socials_dict['twitter']})")
+        link_parts.append(f"[Collection 𝕏]({socials_dict['twitter']})")
     if socials_dict.get("discord"):
-        links.append(f"[Discord]({socials_dict['discord']})")
+        link_parts.append(f"[Discord]({socials_dict['discord']})")
     if socials_dict.get("website"):
-        links.append(f"[Website]({socials_dict['website']})")
-    embed.add_field(name="🔗 Links", value="  ·  ".join(links), inline=False)
+        link_parts.append(f"[Website]({socials_dict['website']})")
+    embed.add_field(name="🔗 Links", value=" · ".join(link_parts)[:1024], inline=False)
 
-    # Keep the card compact/horizontal in Discord: use collection art as thumbnail,
-    # not a large banner image.
-    embed.set_thumbnail(url=project_image_url)
+    thumb_url = _normalize_nft_media_url(image_url) or project_image_url
+    if thumb_url:
+        embed.set_thumbnail(url=thumb_url)
 
-    embed.set_footer(text=f"{_BRAND_NAME} · ETH NFTs")
-    content_tail = f" ×{bulk_qty}" if bulk_qty else ""
-    return embed, f"**{wallet_label}** {action_word.lower()} **{col_name}**{content_tail}", None, files
+    embed.set_footer(text=f"{_BRAND_NAME} · Wallet Tracker")
+
+    return embed, None, None, files
 
 async def create_eth_embed(action: str, wallet: str, contract: str, amount: float, session: aiohttp.ClientSession, tx_hash: str, is_nft: bool = False, token_id: int = None) -> Embed:
     """Create ETH Embed with Logo and Socials"""

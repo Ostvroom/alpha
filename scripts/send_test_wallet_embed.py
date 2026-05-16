@@ -22,10 +22,16 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from pathlib import Path
+
+# Allow `from trackers import ...` when run as: python scripts/send_test_wallet_embed.py
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 from dotenv import load_dotenv
 
-load_dotenv(override=True)
+load_dotenv(_ROOT / ".env", override=True)
 
 
 async def _run(channel_id: int) -> None:
@@ -36,9 +42,9 @@ async def _run(channel_id: int) -> None:
 
     eth_tracker.connect_web3()
 
-    token = (os.getenv("DISCORD_BOT_TOKEN") or "").strip()
+    token = (os.getenv("DISCORD_TOKEN") or os.getenv("DISCORD_BOT_TOKEN") or "").strip()
     if not token:
-        raise SystemExit("Set DISCORD_BOT_TOKEN in .env")
+        raise SystemExit("Set DISCORD_TOKEN (or DISCORD_BOT_TOKEN) in .env")
 
     wallet = (os.getenv("TEST_WALLET") or "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").strip()
     contract = (os.getenv("TEST_CONTRACT") or "0xBC4CA0Eda7647A8Ab7c2061c2E118A18a936f13D").strip()
@@ -56,7 +62,8 @@ async def _run(channel_id: int) -> None:
     intents = discord.Intents.default()
     client = discord.Client(intents=intents)
 
-    async with aiohttp.ClientSession() as session:
+    connector = aiohttp.TCPConnector(force_close=True)
+    async with aiohttp.ClientSession(connector=connector) as session:
         embed, content, view, files = await eth_tracker.create_eth_nft_embed(
             action_type="Received",
             wallet=wallet,
@@ -87,7 +94,10 @@ async def _run(channel_id: int) -> None:
         finally:
             await client.close()
 
-    await client.start(token)
+    try:
+        await client.start(token)
+    except KeyboardInterrupt:
+        await client.close()
 
 
 def main() -> None:
