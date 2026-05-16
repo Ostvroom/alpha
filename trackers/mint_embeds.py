@@ -439,3 +439,80 @@ def build_hot_mint_embed(mint: Dict, count: int, window_seconds: int) -> discord
     thumb = _square_thumbnail(image_url) or f"attachment://{COLLECTION_FALLBACK_FILENAME}"
     embed.set_thumbnail(url=thumb)
     return embed
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# X ALPHA MINT ALERT (dedicated channel — enriched, does not replace live/hot)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+COLOR_MINT_X_ALPHA = 0x1D9BF0
+
+
+def build_mint_x_alpha_embed(mint: Dict, alert_type: str = "live") -> discord.Embed:
+    """
+    Full mint card + X/HVA alpha block for MINT_X_ALPHA_CHANNEL_ID only.
+    alert_type: 'live' | 'hot'
+    """
+    if alert_type == "hot":
+        count = int(mint.get("hot_mint_count") or 0)
+        window = int(mint.get("hot_mint_window") or 300)
+        base = build_hot_mint_embed(mint, count, window)
+    else:
+        built = build_live_mint_embeds([mint])
+        base = built[0] if built else discord.Embed(title="Mint", color=COLOR_MINT_X_ALPHA)
+
+    score = int(mint.get("x_alpha_score") or 0)
+    handle = (mint.get("x_alpha_handle") or "").strip().lstrip("@")
+    h24 = int(mint.get("x_alpha_hvas_24h") or 0)
+    h7 = int(mint.get("x_alpha_hvas_7d") or 0)
+    unique = int(mint.get("x_alpha_unique_hvas") or 0)
+    ai_a = int(mint.get("x_alpha_ai") or 0)
+
+    alpha_lines = [
+        f"📡 **Mint Alpha Score · {score}/100**",
+    ]
+    if handle:
+        alpha_lines.append(f"🐦 [@{handle}](https://x.com/{handle})")
+    if h24 or h7 or unique:
+        alpha_lines.append(
+            f"👁 **HVA signal ·** {h24} active (24h) · {h7} (7d) · {unique} unique"
+        )
+    if ai_a:
+        alpha_lines.append(f"🧠 **AI alpha ·** {ai_a}/100")
+
+    activity = mint.get("x_alpha_activity_lines") or []
+    if activity:
+        alpha_lines.append("")
+        alpha_lines.append("**Recent HVA activity**")
+        alpha_lines.extend(activity[:6])
+
+    followers = mint.get("x_alpha_smart_followers") or []
+    if followers and not activity:
+        names = ", ".join(f"@{h}" for h in followers[:8])
+        alpha_lines.append(f"**HVAs in DB ·** {names}")
+
+    buys = mint.get("smart_wallet_buys") or []
+    buys_line = format_smart_buys_line(buys)
+    if buys_line and buys_line not in "\n".join(alpha_lines):
+        alpha_lines.append("")
+        alpha_lines.append(buys_line)
+
+    desc_parts = []
+    if base.description:
+        desc_parts.append(base.description.strip())
+    desc_parts.append("")
+    desc_parts.append("\n".join(alpha_lines))
+    base.description = "\n".join(desc_parts).strip()[:4000]
+
+    base.color = COLOR_MINT_X_ALPHA if score >= 50 else 0x9B59B6
+    if mint.get("is_smart_wallet_event"):
+        base.color = COLOR_SMART_MINT
+
+    kind = "Hot" if alert_type == "hot" else "Live"
+    icon = brand_logo_embed_icon() or None
+    base.set_author(name=f"📡 {brand_name()} · Mint X Alpha · {kind}", icon_url=icon)
+    base.set_footer(
+        text=f"{brand_name()} · X Alpha · score {score}/100 · brain scan DB",
+        icon_url=icon,
+    )
+    return base

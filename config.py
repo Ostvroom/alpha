@@ -310,6 +310,9 @@ HOT_MINT_CHANNEL_ID = parse_channel_id(
 ENABLE_NFTSCAN_LIVE_MINTS = _env_flag("ENABLE_NFTSCAN_LIVE_MINTS", "1")
 # Highlight tracked-wallet mints/buys on live + hot mint embeds (merged with wallet tracker)
 ENABLE_MINT_SMART_WALLET_INTEL = _env_flag("ENABLE_MINT_SMART_WALLET_INTEL", "1")
+# X/HVA-enriched mint alerts (separate channel; read-only DB, no extra Twikit load)
+ENABLE_MINT_X_ALPHA = _env_flag("ENABLE_MINT_X_ALPHA", "1")
+MINT_X_ALPHA_CHANNEL_ID = parse_channel_id("MINT_X_ALPHA_CHANNEL_ID", default=0)
 # Legacy getLogs poller (trackers/eth_live_mints.py) — off when nftscan feed is on
 ENABLE_ETH_LIVE_MINTS_POLLER = _env_flag("ENABLE_ETH_LIVE_MINTS_POLLER", "0")
 SUPPRESS_UNNAMED = _env_flag("SUPPRESS_UNNAMED", "0")
@@ -352,6 +355,8 @@ LIVE_MINT_INTERVAL = max(15, _env_int("LIVE_MINT_INTERVAL", 60))
 HOT_MINT_THRESHOLD = max(2, _env_int("HOT_MINT_THRESHOLD", 10))
 HOT_MINT_WINDOW = max(60, _env_int("HOT_MINT_WINDOW", 300))
 HOT_MINT_COOLDOWN = max(60, _env_int("HOT_MINT_COOLDOWN", 600))
+MINT_X_ALPHA_MIN_SCORE = max(0, min(100, _env_int("MINT_X_ALPHA_MIN_SCORE", 20)))
+MINT_X_ALPHA_COOLDOWN_SEC = max(60, _env_int("MINT_X_ALPHA_COOLDOWN_SEC", 600))
 
 
 def _env_float(name: str, default: float) -> float:

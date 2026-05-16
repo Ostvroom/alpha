@@ -19,7 +19,11 @@ from brand_assets import collect_embed_attachment_files
 from trackers.collection_image import COLLECTION_FALLBACK_FILENAME, ensure_black_collection_fallback_path
 from trackers.eth_ws_mint_listener import SPAM_CONTRACTS, SPAM_NAME_PATTERNS, EthMintListener
 from trackers.mint_contract_enricher import MintContractEnricher
-from trackers.mint_embeds import build_hot_mint_embed, build_live_mint_embeds
+from trackers.mint_embeds import build_hot_mint_embed, build_live_mint_embeds, build_mint_x_alpha_embed
+from trackers.mint_x_alpha import (
+    compute_mint_x_alpha,
+    mint_qualifies_for_alpha_channel,
+)
 from trackers.mint_social_fetcher import MintSocialFetcher
 from trackers.mint_wallet_intel import (
     attach_hot_mint_wallet_intel,
@@ -49,6 +53,8 @@ class NftscanLiveFeed:
         self._muted_contracts: Set[str] = set()
         self._contract_mint_count: Dict[str, int] = {}
         self._contract_wallet_activity: Dict[str, List[Dict]] = {}
+        self._alpha_alert_cooldown: Dict[str, datetime] = {}
+        self._seen_alpha_txs: Set[str] = set()
         self._task: Optional[asyncio.Task] = None
         self._running = False
         ensure_dirs()
@@ -289,9 +295,77 @@ class NftscanLiveFeed:
             embeds = build_live_mint_embeds(new_mints)
             await self._send_embeds(config.LIVE_MINT_CHANNEL_ID, embeds)
 
-        await self._check_hot_mints(new_hot_mints)
+        if new_mints:
+            await self._process_x_alpha_alerts(new_mints, "live", intel_on)
 
-    async def _check_hot_mints(self, new_mints: List[Dict]) -> None:
+        await self._check_hot_mints(new_hot_mints, intel_on)
+
+    async def _process_x_alpha_alerts(
+        self,
+        mints: List[Dict],
+        alert_type: str,
+        intel_on: bool,
+    ) -> None:
+        """Post enriched X/HVA mint cards to MINT_X_ALPHA_CHANNEL_ID only (optional)."""
+        if not getattr(config, "ENABLE_MINT_X_ALPHA", True):
+            return
+        ch = int(getattr(config, "MINT_X_ALPHA_CHANNEL_ID", 0) or 0)
+        if not ch:
+            return
+        min_score = int(getattr(config, "MINT_X_ALPHA_MIN_SCORE", 20) or 20)
+        cooldown = timedelta(seconds=int(getattr(config, "MINT_X_ALPHA_COOLDOWN_SEC", 600) or 600))
+        now = datetime.now(timezone.utc)
+
+        for m in mints:
+            contract = (m.get("contract_address") or "").lower()
+            if not contract or contract in self._muted_contracts:
+                continue
+            tx = m.get("tx_hash", "") or m.get("hash", "")
+
+            if alert_type == "live" and tx and tx in self._seen_alpha_txs:
+                continue
+            last = self._alpha_alert_cooldown.get(contract)
+            if last and (now - last) < cooldown:
+                continue
+
+            if self.social_fetcher and not m.get("social_links"):
+                try:
+                    socials = await self.social_fetcher.fetch(
+                        contract, m.get("contract_name", "")
+                    )
+                    if socials:
+                        m["social_links"] = socials
+                except Exception:
+                    pass
+
+            if intel_on:
+                enrich_mint_with_wallet_intel(m)
+                if alert_type == "hot":
+                    attach_hot_mint_wallet_intel(
+                        m, self._contract_wallet_activity, config.HOT_MINT_WINDOW
+                    )
+
+            try:
+                signals = compute_mint_x_alpha(m)
+            except Exception as e:
+                logger.debug("mint x alpha compute failed: %s", e)
+                continue
+
+            if not mint_qualifies_for_alpha_channel(m, signals, min_score=min_score):
+                continue
+
+            try:
+                embed = build_mint_x_alpha_embed(m, alert_type)
+                await self._send_embeds(ch, [embed])
+                self._alpha_alert_cooldown[contract] = now
+                if tx:
+                    self._seen_alpha_txs.add(tx)
+                if len(self._seen_alpha_txs) > 5000:
+                    self._seen_alpha_txs.clear()
+            except Exception as e:
+                logger.warning("X alpha alert send failed: %s", e)
+
+    async def _check_hot_mints(self, new_mints: List[Dict], intel_on: bool = True) -> None:
         ch = config.HOT_MINT_CHANNEL_ID
         if not ch or not new_mints:
             return
@@ -337,6 +411,10 @@ class NftscanLiveFeed:
                 )
             embed = build_hot_mint_embed(mint, hot["count"], config.HOT_MINT_WINDOW)
             await self._send_embeds(ch, [embed])
+
+            mint["hot_mint_count"] = hot["count"]
+            mint["hot_mint_window"] = config.HOT_MINT_WINDOW
+            await self._process_x_alpha_alerts([mint], "hot", intel_on)
 
     def _is_spam_name(self, name: str) -> bool:
         if not name:

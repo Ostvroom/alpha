@@ -563,6 +563,22 @@ class BlockBrainBot(commands.Bot):
                         f"    [LiveMints] NFTScan-style feed → live #{getattr(_live_ch, 'name', live_id)} "
                         f"| hot #{getattr(_hot_ch, 'name', hot_id)}"
                     )
+                alpha_id = int(getattr(config, "MINT_X_ALPHA_CHANNEL_ID", 0) or 0)
+                if getattr(config, "ENABLE_MINT_X_ALPHA", True) and alpha_id:
+                    try:
+                        _alpha_ch = self.get_channel(alpha_id) or await self.fetch_channel(alpha_id)
+                    except Exception:
+                        _alpha_ch = None
+                    if _alpha_ch:
+                        print(
+                            f"    [MintXAlpha] X/HVA mint alerts → #{getattr(_alpha_ch, 'name', alpha_id)} "
+                            f"(DB-only; live/hot channels unchanged)"
+                        )
+                    else:
+                        print(
+                            f"    [MintXAlpha] MINT_X_ALPHA_CHANNEL_ID={alpha_id} not found — "
+                            f"set channel ID in .env or disable ENABLE_MINT_X_ALPHA=0"
+                        )
                 else:
                     print(
                         f"    [LiveMints] LIVE_MINT_CHANNEL_ID={live_id} / HOT_MINT_CHANNEL_ID={hot_id} "
