@@ -2,6 +2,7 @@
 Ethereum Tracker - ERC20 & NFT (ERC721/1155)
 """
 import asyncio
+import io
 import json
 import os
 import re
@@ -550,6 +551,69 @@ async def fetch_wallet_avatar(wallet: str, session: aiohttp.ClientSession):
     avatar_url = EFFIGY_AVATAR.format(address=wallet)
     _wallet_avatar_cache[wallet_lower] = avatar_url
     return avatar_url, None
+
+
+async def attach_wallet_pfp_for_embed(
+    wallet: str,
+    session: aiohttp.ClientSession,
+    files: List[discord.File],
+    *,
+    profile_image_url: str = "",
+) -> str:
+    """
+    Always attach a wallet PFP file when possible so Discord shows the author icon.
+    Returns icon_url (attachment://…) for embed.set_author.
+    """
+    wallet_lower = wallet.lower()
+    avatar_url, pfp_local = await fetch_wallet_avatar(wallet, session)
+    prof = (profile_image_url or "").strip()
+    if prof.startswith("http") and "blank" not in prof.lower() and not pfp_local:
+        avatar_url = prof
+
+    if pfp_local:
+        ext = pfp_local.rsplit(".", 1)[-1].lower()
+        fname = f"wt_pfp_{wallet_lower}.{ext}"
+        files.append(discord.File(pfp_local, filename=fname))
+        return f"attachment://{fname}"
+
+    if avatar_url.startswith("attachment://"):
+        return avatar_url
+
+    urls_to_try: List[str] = []
+    if avatar_url.startswith("http"):
+        urls_to_try.append(avatar_url)
+    urls_to_try.append(EFFIGY_AVATAR.format(address=wallet))
+
+    for url in urls_to_try:
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=12)) as r:
+                if r.status != 200:
+                    continue
+                data = await r.read()
+                if len(data) < 200:
+                    continue
+                ctype = (r.headers.get("Content-Type") or "").lower()
+                ext = "png"
+                if "jpeg" in ctype or "jpg" in ctype:
+                    ext = "jpg"
+                elif "gif" in ctype:
+                    ext = "gif"
+                elif "webp" in ctype:
+                    ext = "webp"
+                fname = f"wt_pfp_{wallet_lower}.{ext}"
+                buf = io.BytesIO(data)
+                buf.seek(0)
+                files.append(discord.File(buf, filename=fname))
+                return f"attachment://{fname}"
+        except Exception:
+            continue
+
+    return EFFIGY_AVATAR.format(address=wallet)
+
+
+def _embed_section_spacer(embed: discord.Embed) -> None:
+    """Visual gap between embed field groups."""
+    embed.add_field(name="\u200b", value="\u200b", inline=False)
 
 
 async def fetch_wallet_profile(wallet: str, session: aiohttp.ClientSession) -> dict:
@@ -1126,14 +1190,15 @@ def _wallet_tracker_action_label(action_word: str) -> str:
     }.get(action_word, action_word.title())
 
 
-def _wallet_tracker_action_past(action_word: str) -> str:
+def _wallet_tracker_action_display(action_word: str) -> str:
+    """Past-tense label for the ⚡ Action field (Minted, Bought, Sold, …)."""
     return {
-        "BOUGHT": "bought",
-        "SOLD": "sold",
-        "MINTED": "minted",
-        "CLAIMED": "claimed",
-        "TRANSFERRED": "transferred",
-    }.get(action_word, action_word.lower())
+        "BOUGHT": "Bought",
+        "SOLD": "Sold",
+        "MINTED": "Minted",
+        "CLAIMED": "Claimed",
+        "TRANSFERRED": "Transfer",
+    }.get(action_word, action_word.title())
 
 
 def _wallet_tracker_price_compact(
@@ -1370,6 +1435,8 @@ async def create_eth_nft_embed(
             
     # NOTE: Avoid per-embed HTTP price calls. We maintain _cached_eth_usd via refresh_eth_usd_price().
     info = await get_contract_info(contract)
+    from trackers.collection_image import fetch_collection_image, prepare_collection_thumbnail
+
     image_url = await fetch_token_image(contract, token_id)
     col_name = info.get("name")
     
@@ -1428,63 +1495,25 @@ async def create_eth_nft_embed(
         if not col_name or col_name == "Unknown":
             col_name = "Collection"
 
-    # Collection artwork for large embed image (token metadata → Alchemy → OpenSea → Reservoir → identicon)
-    project_image_url = _normalize_nft_media_url(image_url)
-    if not project_image_url and alchemy_contract_data:
-        osm = alchemy_contract_data.get("openSeaMetadata") or {}
-        project_image_url = _normalize_nft_media_url(
-            osm.get("imageUrl")
-            or osm.get("image_url")
-            or alchemy_contract_data.get("imageUrl")
-            or alchemy_contract_data.get("image_url")
-        )
-    if not project_image_url:
-        try:
-            opensea_contract_url = f"https://api.opensea.io/api/v2/chain/ethereum/contract/{contract.lower()}"
-            headers = {"Accept": "application/json"}
-            if os.getenv("OPENSEA_API_KEY"):
-                headers["X-API-KEY"] = os.getenv("OPENSEA_API_KEY")
-            async with session.get(opensea_contract_url, headers=headers, timeout=5) as r:
-                if r.status == 200:
-                    data = await r.json()
-                    coll = data.get("collection") if isinstance(data.get("collection"), dict) else {}
-                    project_image_url = _normalize_nft_media_url(
-                        data.get("image_url")
-                        or data.get("imageUrl")
-                        or coll.get("image_url")
-                        or coll.get("banner_image_url")
-                    )
-        except Exception:
-            pass
-    if not project_image_url:
-        try:
-            reservoir_url = f"https://api.reservoir.tools/collections/v7?id={contract.lower()}"
-            async with session.get(reservoir_url, timeout=5) as r:
-                if r.status == 200:
-                    data = await r.json()
-                    collections = data.get("collections") or []
-                    if collections:
-                        c0 = collections[0]
-                        meta = c0.get("metadata") if isinstance(c0.get("metadata"), dict) else {}
-                        project_image_url = _normalize_nft_media_url(
-                            c0.get("image") or c0.get("imageUrl") or meta.get("imageUrl") or meta.get("image")
-                        )
-        except Exception:
-            pass
-    if not project_image_url:
-        project_image_url = f"https://cdn.stamp.fyi/avatar/eth:{contract}?s=512"
+    # Collection image: free chain (Alchemy → CoinGecko → NFTScan logo CDN → OpenSea → Reservoir)
+    project_image_url = await fetch_collection_image(
+        session,
+        contract,
+        token_id,
+        alchemy_contract_data=alchemy_contract_data,
+        token_image_url=image_url,
+    )
 
     # Smart label correction for older collections
     if action_word == "MINTED" and floor_eth > 0:
         action_word = "CLAIMED"
         
-    files = []
+    files: List[discord.File] = []
     wallet_profile = await fetch_wallet_profile(wallet, session)
-    avatar_url, pfp_local = await fetch_wallet_avatar(wallet, session)
-    if pfp_local:
-        files.append(discord.File(pfp_local, filename=f"pfp_{wallet.lower()}.{pfp_local.split('.')[-1]}"))
-    if wallet_profile.get("profile_image_url") and not pfp_local:
-        avatar_url = wallet_profile.get("profile_image_url")
+    profile_img = str(wallet_profile.get("profile_image_url") or "").strip()
+    avatar_url = await attach_wallet_pfp_for_embed(
+        wallet, session, files, profile_image_url=profile_img
+    )
 
     # ── Price resolution ─────────────────────────────────────────────────────
     display_eth = price_eth
@@ -1496,73 +1525,86 @@ async def create_eth_nft_embed(
         else:
             display_eth = floor_eth
             is_floor = True
-    # ── Minimal wallet-tracker card (action in author; no address/contract blocks) ─
-    action_label = _wallet_tracker_action_label(action_word)
+    profile_name = str(wallet_profile.get("name") or "").strip()
+    display_name = profile_name if profile_name and profile_name.lower() != wallet_label.lower() else wallet_label
+    col_display = (col_name or "Collection").strip()
+    thumb_url = prepare_collection_thumbnail(image_url, project_image_url, files)
+
+    if getattr(config, "WALLET_TRACKER_LUXURY_MODE", True):
+        from trackers.wallet_tracker_embed import (
+            NftWalletAlertContext,
+            build_premium_nft_wallet_embed_async,
+            resolve_trader_name,
+        )
+
+        os_profile_url = str(wallet_profile.get("opensea_url") or "").strip()
+        trader_x = wallet_database.get_x_url(wallet) or ""
+        trader_name = resolve_trader_name(wallet_label, profile_name)
+
+        alert_ctx = NftWalletAlertContext(
+            action_word=action_word,
+            wallet=wallet,
+            wallet_label=wallet_label,
+            display_name=display_name,
+            contract=contract,
+            collection_name=col_display,
+            token_id=token_id,
+            tx_hash=tx_hash,
+            display_eth=display_eth,
+            price_eth=price_eth,
+            price_source=price_source,
+            is_floor_estimate=is_floor,
+            floor_eth=floor_eth,
+            marketplace_source=source,
+            eth_usd=_cached_eth_usd,
+            from_zero_address=from_addr.lower() == "0x0000000000000000000000000000000000000000",
+            portfolio_usd=float(wallet_profile.get("portfolio_usd") or 0.0),
+            is_verified=bool(wallet_profile.get("is_verified")),
+            joined_iso=str(wallet_profile.get("joined") or ""),
+            avatar_url=avatar_url,
+            thumb_url=thumb_url or "",
+            bulk_qty=bulk_qty,
+            all_token_ids=all_token_ids,
+            chain="Ethereum",
+            trader_name=trader_name,
+            x_url=trader_x,
+            opensea_profile_url=os_profile_url,
+        )
+        embed = await build_premium_nft_wallet_embed_async(alert_ctx, session)
+        return embed, None, None, files
 
     opensea_asset_url = f"https://opensea.io/assets/ethereum/{contract}/{token_id}"
     tx_url = f"https://etherscan.io/tx/{tx_hash}"
     wallet_url = f"https://etherscan.io/address/{wallet}"
-    contract_url = f"https://etherscan.io/address/{contract}"
-    embed = discord.Embed(
-        url=opensea_asset_url,
-        color=color,
-        timestamp=datetime.now(timezone.utc),
-    )
+    action_label = _wallet_tracker_action_label(action_word)
+    embed = discord.Embed(url=opensea_asset_url, color=color, timestamp=datetime.now(timezone.utc))
     embed.set_author(name=action_label, icon_url=avatar_url, url=wallet_url)
-
+    embed.add_field(name="👤 Wallet", value=f"[**{display_name}**]({wallet_url})", inline=True)
+    embed.add_field(name="🖼️ Collection", value=f"[**{col_display}**]({opensea_asset_url})", inline=True)
+    embed.add_field(name="⚡ Action", value=f"**{_wallet_tracker_action_display(action_word)}**", inline=True)
+    _embed_section_spacer(embed)
     qty = bulk_qty if bulk_qty else 1
     price_compact = _wallet_tracker_price_compact(
-        display_eth,
-        price_source,
-        is_floor=is_floor,
-        action_word=action_word,
-        source=source,
-        floor_eth=floor_eth,
-        usd_rate=_cached_eth_usd,
+        display_eth, price_source, is_floor=is_floor, action_word=action_word,
+        source=source, floor_eth=floor_eth, usd_rate=_cached_eth_usd,
     )
-    if bulk_qty and price_eth > 0:
-        price_compact += f"\n_(×{bulk_qty} total)_"
-
     embed.add_field(name="💰 Value", value=price_compact, inline=True)
-    embed.add_field(
-        name="🖼️ Amount",
-        value=f"**{qty}** NFT{'s' if qty != 1 else ''}",
-        inline=True,
-    )
+    embed.add_field(name="🖼️ Amount", value=f"**{qty}** NFT{'s' if qty != 1 else ''}", inline=True)
     embed.add_field(name="🕒 Time", value=f"<t:{int(time.time())}:R>", inline=True)
-
-    ids_value = _wallet_tracker_token_ids_field(token_id, all_token_ids, bulk_qty)
-    embed.add_field(name="🔢 Token IDs", value=ids_value, inline=False)
-
-    socials_dict: Dict[str, Any] = {}
-    if enable_socials:
-        socials_dict = await fetch_eth_nft_socials(contract, session)
-
-    x_prof = wallet_database.get_x_url(wallet)
-    link_parts = [
-        f"[OpenSea]({opensea_asset_url})",
-        f"[Wallet]({wallet_url})",
-    ]
-    if x_prof:
-        link_parts.append(f"[Trader 𝕏]({x_prof})")
-    link_parts += [
-        f"[TX]({tx_url})",
-        f"[Contract]({contract_url})",
-    ]
-    if socials_dict.get("twitter"):
-        link_parts.append(f"[Collection 𝕏]({socials_dict['twitter']})")
-    if socials_dict.get("discord"):
-        link_parts.append(f"[Discord]({socials_dict['discord']})")
-    if socials_dict.get("website"):
-        link_parts.append(f"[Website]({socials_dict['website']})")
-    embed.add_field(name="🔗 Links", value=" · ".join(link_parts)[:1024], inline=False)
-
-    thumb_url = _normalize_nft_media_url(image_url) or project_image_url
-    if thumb_url:
-        embed.set_thumbnail(url=thumb_url)
-
+    _embed_section_spacer(embed)
+    embed.add_field(
+        name="🔢 Token IDs",
+        value=_wallet_tracker_token_ids_field(token_id, all_token_ids, bulk_qty),
+        inline=False,
+    )
+    _embed_section_spacer(embed)
+    embed.add_field(
+        name="🔗 Links",
+        value=f"[OpenSea]({opensea_asset_url}) · [Etherscan TX]({tx_url}) · [Contract](https://etherscan.io/address/{contract})",
+        inline=False,
+    )
+    embed.set_thumbnail(url=thumb_url)
     embed.set_footer(text=f"{_BRAND_NAME} · Wallet Tracker")
-
     return embed, None, None, files
 
 async def create_eth_embed(action: str, wallet: str, contract: str, amount: float, session: aiohttp.ClientSession, tx_hash: str, is_nft: bool = False, token_id: int = None) -> Embed:
