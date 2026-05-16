@@ -955,6 +955,22 @@ async def process_erc721_group(
     bulk_qty = n if n > 1 else None
 
     try:
+        from trackers.eth_address import ZERO_ADDRESS, normalize_eth_address
+        from trackers.mint_wallet_intel import register_wallet_tracker_mint
+
+        if normalize_eth_address(from_addr) == ZERO_ADDRESS:
+            wl = tracked_eth_wallets.get(wallet.lower(), wallet)
+            register_wallet_tracker_mint(
+                tx_hash,
+                wallet,
+                wl,
+                contract=contract,
+                token_id=str(token_id),
+            )
+    except Exception:
+        pass
+
+    try:
         embed, content, view, files = await create_eth_nft_embed(
             action_type=action_type,
             wallet=wallet,
@@ -1318,7 +1334,9 @@ async def create_eth_nft_embed(
     color = Color(_WT_COLOR_NEUTRAL)
     emoji = "🔄"
     
-    if from_addr.lower() == "0x0000000000000000000000000000000000000000":
+    from trackers.eth_address import ZERO_ADDRESS, normalize_eth_address
+
+    if normalize_eth_address(from_addr) == ZERO_ADDRESS:
         action_word = "MINTED"
         color = Color(_WT_COLOR_BUY)
         emoji = "🟢"
@@ -1364,7 +1382,8 @@ async def create_eth_nft_embed(
     if tx_to in SEAPORT_ADDRS: source = "Seaport"
     elif tx_to in BLUR_ADDRS: source = "Blur"
     elif tx_to == "0xef1c6e67703c7bd7107eed8303fbe6ec2554bf6b": source = "Uniswap"
-    elif from_addr.lower() == "0x0000000000000000000000000000000000000000": source = "Mint"
+    elif normalize_eth_address(from_addr) == ZERO_ADDRESS:
+        source = "Mint"
     
     # =====================================================================
     # 4-LAYER PRICE RESOLUTION (most reliable first)
@@ -1557,7 +1576,7 @@ async def create_eth_nft_embed(
             floor_eth=floor_eth,
             marketplace_source=source,
             eth_usd=_cached_eth_usd,
-            from_zero_address=from_addr.lower() == "0x0000000000000000000000000000000000000000",
+            from_zero_address=normalize_eth_address(from_addr) == ZERO_ADDRESS,
             portfolio_usd=float(wallet_profile.get("portfolio_usd") or 0.0),
             is_verified=bool(wallet_profile.get("is_verified")),
             joined_iso=str(wallet_profile.get("joined") or ""),

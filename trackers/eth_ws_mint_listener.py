@@ -22,8 +22,9 @@ logger = logging.getLogger(__name__)
 ERC721_TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 ERC1155_TRANSFER_SINGLE = "0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62"
 ERC1155_TRANSFER_BATCH = "0x4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e595d983b8c0526c8f7fb"
-ZERO_ADDRESS = "0x0000000000000000000000000000000000000000000000000000000000000000"
-ZERO_ADDRESS_SHORT = "0x0000000000000000000000000000000000000000"
+from trackers.eth_address import ZERO_ADDRESS, normalize_eth_address
+
+ZERO_ADDRESS_SHORT = ZERO_ADDRESS
 
 # Public WebSocket RPC endpoints (fallback chain)
 WS_ENDPOINTS = [
@@ -301,7 +302,7 @@ class EthMintListener:
             return
 
         event_sig = topics[0].lower()
-        contract = log.get("address", "").lower()
+        contract = normalize_eth_address(log.get("address", ""))
         tx_hash = log.get("transactionHash", "")
 
         if self._is_spam_contract(contract):
@@ -309,10 +310,10 @@ class EthMintListener:
 
         # ── ERC721 Transfer ──
         if event_sig == ERC721_TRANSFER and len(topics) >= 4:
-            from_addr = topics[1].lower()
-            to_addr = topics[2].lower()
+            from_addr = normalize_eth_address(topics[1])
+            to_addr = normalize_eth_address(topics[2])
             token_id = int(topics[3], 16)
-            is_mint = from_addr == ZERO_ADDRESS or from_addr == ZERO_ADDRESS_SHORT
+            is_mint = from_addr == ZERO_ADDRESS
             is_whale_in = self._is_known_whale(to_addr)
             is_whale_out = self._is_known_whale(from_addr) and not is_mint
 
@@ -372,10 +373,10 @@ class EthMintListener:
 
         # ── ERC1155 TransferSingle ──
         elif event_sig == ERC1155_TRANSFER_SINGLE and len(topics) >= 4:
-            from_addr = topics[2].lower()
-            to_addr = topics[3].lower()
+            from_addr = normalize_eth_address(topics[2])
+            to_addr = normalize_eth_address(topics[3])
             data = log.get("data", "")
-            is_mint = (from_addr == ZERO_ADDRESS or from_addr == ZERO_ADDRESS_SHORT) and len(data) >= 130
+            is_mint = from_addr == ZERO_ADDRESS and len(data) >= 130
             is_whale_in = self._is_known_whale(to_addr)
             is_whale_out = self._is_known_whale(from_addr) and not is_mint
 
@@ -442,9 +443,9 @@ class EthMintListener:
 
         # ── ERC1155 TransferBatch ──
         elif event_sig == ERC1155_TRANSFER_BATCH and len(topics) >= 4:
-            from_addr = topics[2].lower()
-            to_addr = topics[3].lower()
-            is_mint = from_addr == ZERO_ADDRESS or from_addr == ZERO_ADDRESS_SHORT
+            from_addr = normalize_eth_address(topics[2])
+            to_addr = normalize_eth_address(topics[3])
+            is_mint = from_addr == ZERO_ADDRESS
             is_whale_in = self._is_known_whale(to_addr)
             is_whale_out = self._is_known_whale(from_addr) and not is_mint
 

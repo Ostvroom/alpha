@@ -4,15 +4,61 @@ Cross-link live/hot mint embeds with the ETH wallet tracker (tracked + seed smar
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import wallet_database
+from trackers.eth_address import normalize_eth_address
 
 # Embed colors when a tracked / smart wallet is involved
 COLOR_SMART_MINT = int(os.getenv("MINT_SMART_WALLET_MINT_COLOR", "FFD700"), 16)  # gold
 COLOR_SMART_BUY = int(os.getenv("MINT_SMART_WALLET_BUY_COLOR", "5865F2"), 16)  # blurple
 COLOR_HOT_SMART = int(os.getenv("MINT_SMART_WALLET_HOT_COLOR", "A855F7"), 16)  # purple
+
+# Filled when wallet tracker (Etherscan) processes a mint — bridges WS live mint feed
+_wallet_mint_by_tx: Dict[str, Dict[str, Any]] = {}
+_WALLET_MINT_TX_TTL_SEC = 600
+
+
+def register_wallet_tracker_mint(
+    tx_hash: str,
+    wallet: str,
+    label: str,
+    *,
+    contract: str = "",
+    token_id: Optional[str] = None,
+) -> None:
+    """Cache mint seen by wallet tracker so live mint embed can show trader name."""
+    tx = (tx_hash or "").strip().lower()
+    w = normalize_eth_address(wallet)
+    if not tx or not w:
+        return
+    _wallet_mint_by_tx[tx] = {
+        "wallet": w,
+        "label": (label or "").strip(),
+        "contract": (contract or "").lower(),
+        "token_id": token_id,
+        "ts": time.time(),
+    }
+    if len(_wallet_mint_by_tx) > 2000:
+        cutoff = time.time() - _WALLET_MINT_TX_TTL_SEC
+        for k in list(_wallet_mint_by_tx.keys()):
+            if _wallet_mint_by_tx[k].get("ts", 0) < cutoff:
+                del _wallet_mint_by_tx[k]
+
+
+def _lookup_wallet_tracker_mint(mint: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    tx = ((mint.get("tx_hash") or mint.get("hash") or "")).strip().lower()
+    if not tx:
+        return None
+    entry = _wallet_mint_by_tx.get(tx)
+    if not entry:
+        return None
+    if time.time() - float(entry.get("ts") or 0) > _WALLET_MINT_TX_TTL_SEC:
+        _wallet_mint_by_tx.pop(tx, None)
+        return None
+    return entry
 
 
 def get_tracked_wallet_map() -> Dict[str, str]:
@@ -44,15 +90,30 @@ def trader_display(label: str, address: str) -> str:
 def enrich_mint_with_wallet_intel(mint: Dict[str, Any]) -> Dict[str, Any]:
     """Tag mint dict if minter is a tracked wallet."""
     wallets = get_tracked_wallet_map()
-    to_addr = (mint.get("to") or "").lower()
+    to_addr = normalize_eth_address(mint.get("to") or "")
+    if to_addr:
+        mint["to"] = to_addr
+
+    label = ""
+    wallet_key = ""
     if to_addr and to_addr in wallets:
+        wallet_key = to_addr
         label = trader_display(wallets[to_addr], to_addr)
+    else:
+        cached = _lookup_wallet_tracker_mint(mint)
+        if cached:
+            wallet_key = cached.get("wallet") or ""
+            label = trader_display(cached.get("label") or "", wallet_key)
+            if wallet_key:
+                mint["to"] = wallet_key
+
+    if wallet_key and label:
         mint["tracked_trader"] = label
-        mint["tracked_wallet"] = to_addr
+        mint["tracked_wallet"] = wallet_key
         mint["tracked_action"] = "mint"
         mint["is_smart_wallet_event"] = True
         mint["smart_embed_color"] = COLOR_SMART_MINT
-        x_url = wallet_database.get_x_url(to_addr)
+        x_url = wallet_database.get_x_url(wallet_key)
         if x_url:
             mint["tracked_trader_x"] = x_url
     return mint
@@ -65,10 +126,10 @@ def record_tracked_buy(
 ) -> None:
     """Append a tracked-wallet buy to per-contract rolling activity."""
     wallets = wallets or get_tracked_wallet_map()
-    to_addr = (event.get("to") or "").lower()
+    to_addr = normalize_eth_address(event.get("to") or "")
     if not to_addr or to_addr not in wallets:
         return
-    contract = (event.get("contract_address") or "").lower()
+    contract = normalize_eth_address(event.get("contract_address") or "")
     if not contract:
         return
     label = trader_display(wallets[to_addr], to_addr)
