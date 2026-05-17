@@ -147,6 +147,44 @@ def apply_hot_mint_branding(embed: discord.Embed) -> None:
         embed.set_footer(text=footer_text)
 
 
+def embed_has_image(embed: discord.Embed) -> bool:
+    return bool(embed.image and embed.image.url)
+
+
+def prepare_claim_roles_panel(
+    embed: discord.Embed,
+    files: Optional[List[discord.File]] = None,
+) -> Tuple[discord.Embed, List[discord.File]]:
+    """
+    Attach claim-roles panel banner: CLAIM_ROLES_EMBED_IMAGE_URL (already on embed),
+    then CLAIM_ROLES_BANNER_PATH, then repo brand banner (banner.jpg).
+    """
+    import config
+
+    out: List[discord.File] = list(files or [])
+    if embed_has_image(embed):
+        return embed, out
+
+    banner_path_cfg = getattr(config, "CLAIM_ROLES_BANNER_PATH", "") or ""
+    if banner_path_cfg.startswith(("http://", "https://")):
+        embed.set_image(url=banner_path_cfg)
+        return embed, out
+
+    banner_path: Optional[str] = None
+    banner_file: Optional[str] = None
+    if banner_path_cfg and os.path.isfile(banner_path_cfg):
+        banner_path = banner_path_cfg
+        banner_file = os.path.basename(banner_path_cfg)
+    else:
+        _logo_p, _logo_f, banner_path, banner_file = resolve_brand_assets()
+
+    if banner_path and banner_file:
+        if not any(getattr(f, "filename", None) == banner_file for f in out):
+            out.append(discord.File(banner_path, filename=banner_file))
+        embed.set_image(url=f"attachment://{banner_file}")
+    return embed, out
+
+
 def collect_embed_attachment_files(embeds: List[discord.Embed]) -> List[discord.File]:
     """Attach local files referenced by embed attachment:// URLs."""
     files: List[discord.File] = []

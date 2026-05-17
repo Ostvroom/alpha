@@ -19,18 +19,26 @@ from brand_assets import collect_embed_attachment_files
 from trackers.collection_image import COLLECTION_FALLBACK_FILENAME, ensure_black_collection_fallback_path
 from trackers.eth_ws_mint_listener import SPAM_CONTRACTS, SPAM_NAME_PATTERNS, EthMintListener
 from trackers.mint_contract_enricher import MintContractEnricher
-from trackers.mint_embeds import build_hot_mint_embed, build_live_mint_embeds, build_mint_x_alpha_embed
+from trackers.mint_embeds import (
+    build_hot_mint_embed,
+    build_live_mint_embeds,
+    build_mint_x_alpha_embed,
+    build_smart_wallet_buy_embed,
+)
 from trackers.mint_x_alpha import (
     compute_mint_x_alpha,
     mint_qualifies_for_alpha_channel,
 )
 from trackers.mint_social_fetcher import MintSocialFetcher
 from trackers.mint_wallet_intel import (
+    attach_collection_wallet_intel,
     attach_hot_mint_wallet_intel,
     enrich_mint_with_wallet_intel,
+    get_contract_activity,
     get_tracked_wallet_map,
     prune_contract_activity,
     record_tracked_buy,
+    trader_display,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,9 +60,10 @@ class NftscanLiveFeed:
         self._spam_contract_expiry: Dict[str, datetime] = {}
         self._muted_contracts: Set[str] = set()
         self._contract_mint_count: Dict[str, int] = {}
-        self._contract_wallet_activity: Dict[str, List[Dict]] = {}
+        self._contract_wallet_activity = get_contract_activity()
         self._alpha_alert_cooldown: Dict[str, datetime] = {}
         self._seen_alpha_txs: Set[str] = set()
+        self._seen_smart_buy_txs: Set[str] = set()
         self._task: Optional[asyncio.Task] = None
         self._running = False
         ensure_dirs()
@@ -218,15 +227,20 @@ class NftscanLiveFeed:
         if not self.listener:
             return
         intel_on = getattr(config, "ENABLE_MINT_SMART_WALLET_INTEL", True)
+        engagement_window = int(
+            getattr(config, "MINT_SMART_ENGAGEMENT_WINDOW_SEC", config.HOT_MINT_WINDOW) or 1800
+        )
         if intel_on:
             self._sync_tracked_addresses()
         raw_mints = await self.listener.flush_recent_mints(50)
         if intel_on:
             tracked_buys = await self.listener.flush_recent_tracked_activity(50)
             wallets = get_tracked_wallet_map()
+            store = self._contract_wallet_activity
             for ev in tracked_buys:
-                record_tracked_buy(self._contract_wallet_activity, ev, wallets)
-            prune_contract_activity(self._contract_wallet_activity, config.HOT_MINT_WINDOW)
+                record_tracked_buy(store, ev, wallets)
+            await self._process_smart_buy_alerts(tracked_buys, wallets)
+            prune_contract_activity(store, engagement_window)
 
         for m in raw_mints:
             contract = m.get("contract_address", "").lower()
@@ -289,7 +303,9 @@ class NftscanLiveFeed:
                 if contract and contract in self._contract_mint_count:
                     m["total_supply"] = self._contract_mint_count[contract]
             if intel_on:
-                enrich_mint_with_wallet_intel(m)
+                attach_collection_wallet_intel(
+                    m, self._contract_wallet_activity, engagement_window
+                )
 
         if new_mints and config.LIVE_MINT_CHANNEL_ID:
             embeds = build_live_mint_embeds(new_mints)
@@ -298,7 +314,52 @@ class NftscanLiveFeed:
         if new_mints:
             await self._process_x_alpha_alerts(new_mints, "live", intel_on)
 
-        await self._check_hot_mints(new_hot_mints, intel_on)
+        await self._check_hot_mints(new_hot_mints, intel_on, engagement_window)
+
+    def _engagement_window(self) -> int:
+        return int(
+            getattr(config, "MINT_SMART_ENGAGEMENT_WINDOW_SEC", config.HOT_MINT_WINDOW) or 1800
+        )
+
+    async def _process_smart_buy_alerts(
+        self,
+        buy_events: List[Dict],
+        wallets: Dict[str, str],
+    ) -> None:
+        """Post immediate smart-wallet buy cards to SMART_WALLET_BUY_CHANNEL_ID."""
+        if not getattr(config, "ENABLE_MINT_SMART_WALLET_INTEL", True):
+            return
+        ch = int(getattr(config, "SMART_WALLET_BUY_CHANNEL_ID", 0) or 0)
+        if not ch or not buy_events:
+            return
+
+        to_send: List[Dict] = []
+        for ev in buy_events:
+            tx = (ev.get("tx_hash") or ev.get("hash") or "").strip().lower()
+            if tx and tx in self._seen_smart_buy_txs:
+                continue
+            to_addr = (ev.get("to") or "").lower()
+            if not to_addr or to_addr not in wallets:
+                continue
+            payload = dict(ev)
+            payload["wallet"] = to_addr
+            payload["label"] = trader_display(wallets[to_addr], to_addr)
+            to_send.append(payload)
+            if tx:
+                self._seen_smart_buy_txs.add(tx)
+        if len(self._seen_smart_buy_txs) > 5000:
+            self._seen_smart_buy_txs.clear()
+        if not to_send:
+            return
+
+        if self.enricher:
+            try:
+                to_send = await self.enricher.batch_enrich(to_send)
+            except Exception as e:
+                logger.debug("smart buy enrich failed: %s", e)
+
+        embeds = [build_smart_wallet_buy_embed(ev) for ev in to_send]
+        await self._send_embeds(ch, embeds)
 
     async def _process_x_alpha_alerts(
         self,
@@ -339,11 +400,11 @@ class NftscanLiveFeed:
                     pass
 
             if intel_on:
-                enrich_mint_with_wallet_intel(m)
+                win = self._engagement_window()
                 if alert_type == "hot":
-                    attach_hot_mint_wallet_intel(
-                        m, self._contract_wallet_activity, config.HOT_MINT_WINDOW
-                    )
+                    attach_hot_mint_wallet_intel(m, self._contract_wallet_activity, win)
+                else:
+                    attach_collection_wallet_intel(m, self._contract_wallet_activity, win)
 
             try:
                 signals = compute_mint_x_alpha(m)
@@ -365,7 +426,12 @@ class NftscanLiveFeed:
             except Exception as e:
                 logger.warning("X alpha alert send failed: %s", e)
 
-    async def _check_hot_mints(self, new_mints: List[Dict], intel_on: bool = True) -> None:
+    async def _check_hot_mints(
+        self,
+        new_mints: List[Dict],
+        intel_on: bool = True,
+        engagement_window: Optional[int] = None,
+    ) -> None:
         ch = config.HOT_MINT_CHANNEL_ID
         if not ch or not new_mints:
             return
@@ -406,9 +472,8 @@ class NftscanLiveFeed:
             if mint.get("total_supply") is None and hot["contract"] in self._contract_mint_count:
                 mint["total_supply"] = self._contract_mint_count[hot["contract"]]
             if intel_on:
-                attach_hot_mint_wallet_intel(
-                    mint, self._contract_wallet_activity, config.HOT_MINT_WINDOW
-                )
+                win = engagement_window or self._engagement_window()
+                attach_hot_mint_wallet_intel(mint, self._contract_wallet_activity, win)
             embed = build_hot_mint_embed(mint, hot["count"], config.HOT_MINT_WINDOW)
             await self._send_embeds(ch, [embed])
 
@@ -536,6 +601,19 @@ def normalize_eth_contract(address: str) -> Optional[str]:
     except ValueError:
         return None
     return addr
+
+
+def record_smart_wallet_buy_from_tracker(event: Dict) -> None:
+    """Bridge eth wallet tracker buys into mint-feed collection memory + optional alert."""
+    if not getattr(config, "ENABLE_MINT_SMART_WALLET_INTEL", True):
+        return
+    wallets = get_tracked_wallet_map()
+    store = get_contract_activity()
+    if _feed is not None:
+        store = _feed._contract_wallet_activity
+    record_tracked_buy(store, event, wallets)
+    if _feed is not None:
+        asyncio.create_task(_feed._process_smart_buy_alerts([event], wallets))
 
 
 async def start_nftscan_live_feed(bot: discord.Client) -> NftscanLiveFeed:

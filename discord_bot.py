@@ -574,6 +574,19 @@ class BlockBrainBot(commands.Bot):
                             f"    [MintXAlpha] X/HVA mint alerts → #{getattr(_alpha_ch, 'name', alpha_id)} "
                             f"(DB-only; live/hot channels unchanged)"
                         )
+                smart_buy_id = int(getattr(config, "SMART_WALLET_BUY_CHANNEL_ID", 0) or 0)
+                if getattr(config, "ENABLE_MINT_SMART_WALLET_INTEL", True) and smart_buy_id:
+                    try:
+                        _sb_ch = self.get_channel(smart_buy_id) or await self.fetch_channel(smart_buy_id)
+                    except Exception:
+                        _sb_ch = None
+                    if _sb_ch:
+                        print(
+                            f"    [SmartBuy] Tracked-wallet buys → "
+                            f"#{getattr(_sb_ch, 'name', smart_buy_id)} "
+                            f"(+ collection engagement on live/hot for "
+                            f"{getattr(config, 'MINT_SMART_ENGAGEMENT_WINDOW_SEC', 1800)}s)"
+                        )
                     else:
                         print(
                             f"    [MintXAlpha] MINT_X_ALPHA_CHANNEL_ID={alpha_id} not found — "

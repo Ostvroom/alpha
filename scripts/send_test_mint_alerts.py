@@ -16,6 +16,7 @@ import asyncio
 import os
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -60,8 +61,10 @@ async def _run(args) -> None:
     from trackers.eth_address import ZERO_ADDRESS, normalize_eth_address
     from trackers.mint_embeds import build_hot_mint_embed, build_live_mint_embeds, build_mint_x_alpha_embed
     from trackers.mint_wallet_intel import (
+        attach_collection_wallet_intel,
         attach_hot_mint_wallet_intel,
-        enrich_mint_with_wallet_intel,
+        get_contract_activity,
+        record_tracked_buy,
         register_wallet_tracker_mint,
     )
     from trackers.mint_x_alpha import compute_mint_x_alpha
@@ -132,8 +135,20 @@ async def _run(args) -> None:
             await enricher.close()
             await social.close()
 
-    enrich_mint_with_wallet_intel(mint)
-    attach_hot_mint_wallet_intel(mint, {}, config.HOT_MINT_WINDOW)
+    store = get_contract_activity()
+    record_tracked_buy(
+        store,
+        {
+            "to": wallet,
+            "contract_address": contract,
+            "token_id": "1793",
+            "tx_hash": "0x" + "b" * 64,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    win = int(getattr(config, "MINT_SMART_ENGAGEMENT_WINDOW_SEC", 1800) or 1800)
+    attach_collection_wallet_intel(mint, store, win)
+    attach_hot_mint_wallet_intel(mint, store, win)
     compute_mint_x_alpha(mint)
 
     print(f"Trader: {mint.get('tracked_trader')} | smart={mint.get('is_smart_wallet_event')}")

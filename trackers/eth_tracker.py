@@ -967,6 +967,18 @@ async def process_erc721_group(
                 contract=contract,
                 token_id=str(token_id),
             )
+        elif kind != "sell":
+            from trackers.nftscan_live_feed import record_smart_wallet_buy_from_tracker
+
+            record_smart_wallet_buy_from_tracker(
+                {
+                    "to": wallet,
+                    "contract_address": contract,
+                    "token_id": str(token_id),
+                    "tx_hash": tx_hash,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            )
     except Exception:
         pass
 

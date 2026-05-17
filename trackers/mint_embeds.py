@@ -9,10 +9,12 @@ from brand_assets import (
     brand_name,
 )
 from trackers.mint_wallet_intel import (
+    format_collection_engagement_lines,
     format_smart_buys_line,
     format_trader_line,
     resolve_embed_color,
     COLOR_SMART_MINT,
+    COLOR_SMART_BUY,
     COLOR_HOT_SMART,
 )
 
@@ -136,10 +138,15 @@ def build_live_mint_embeds(collections: List[Dict]) -> List[discord.Embed]:
 
         # Build description
         lines = []
-        trader_line = format_trader_line(col)
-        if trader_line:
-            lines.append(trader_line)
+        engagement = format_collection_engagement_lines(col)
+        if engagement:
+            lines.extend(engagement)
             lines.append("")
+        elif col.get("tracked_trader"):
+            trader_line = format_trader_line(col)
+            if trader_line:
+                lines.append(trader_line)
+                lines.append("")
         meta_parts = []
         if block_num:
             meta_parts.append(f"⬛ `{block_num}`")
@@ -179,7 +186,10 @@ def build_live_mint_embeds(collections: List[Dict]) -> List[discord.Embed]:
             timestamp=datetime.now(timezone.utc)
         )
         apply_live_mint_branding(embed)
-        if col.get("is_smart_wallet_event") and col.get("tracked_trader"):
+        if col.get("collection_smart_engagement"):
+            icon = brand_logo_embed_icon() or None
+            embed.set_author(name=f"🧠 {brand_name()} · Smart Wallet Activity", icon_url=icon)
+        elif col.get("is_smart_wallet_event") and col.get("tracked_trader"):
             icon = brand_logo_embed_icon() or None
             embed.set_author(name=f"🧠 {brand_name()} · Smart Wallet Mint", icon_url=icon)
 
@@ -371,13 +381,9 @@ def build_hot_mint_embed(mint: Dict, count: int, window_seconds: int) -> discord
 
     # Build description — same structure as live mints
     lines = []
-    trader_line = format_trader_line(mint)
-    if trader_line:
-        lines.append(trader_line)
-        lines.append("")
-    buys_line = format_smart_buys_line(mint.get("smart_wallet_buys") or [])
-    if buys_line:
-        lines.append(buys_line)
+    engagement = format_collection_engagement_lines(mint)
+    if engagement:
+        lines.extend(engagement)
         lines.append("")
     lines.append(f"🔥 **{count}** mints in the last **{window_min}m** — trending!")
     lines.append("")
@@ -516,3 +522,57 @@ def build_mint_x_alpha_embed(mint: Dict, alert_type: str = "live") -> discord.Em
         icon_url=icon,
     )
     return base
+
+
+def build_smart_wallet_buy_embed(event: Dict[str, Any]) -> discord.Embed:
+    """Dedicated smart-wallet buy alert for SMART_WALLET_BUY_CHANNEL_ID."""
+    name = _safe_str(event.get("contract_name") or event.get("name"), "Unknown", max_len=200)
+    contract_addr = (event.get("contract_address") or "").lower()
+    token_id = _safe_str(event.get("token_id", "?"))
+    label = _safe_str(event.get("label") or event.get("tracked_trader"), "Smart wallet")
+    wallet = (event.get("wallet") or event.get("to") or "").lower()
+    tx_hash = event.get("tx_hash", "") or event.get("hash", "")
+    image_url = event.get("image_url", "")
+    if image_url == "https://www.nftscan.com/images/og-img/home.png":
+        image_url = ""
+    opensea_url = event.get("opensea_url", "")
+    social_links = event.get("social_links", {}) or {}
+    x_url = event.get("x_url") or event.get("tracked_trader_x")
+
+    if not name and contract_addr:
+        name = f"{contract_addr[:6]}...{contract_addr[-4:]}"
+    url = opensea_url or (f"https://etherscan.io/address/{contract_addr}" if contract_addr else "https://opensea.io")
+
+    lines = [f"🛒 **Smart wallet buy ·** [{label}]({x_url or f'https://etherscan.io/address/{wallet}'})"]
+    lines.append(f"**{name}** #{token_id}")
+    lines.append("")
+    lines.append("Tracked wallets will show this buy on upcoming mint alerts for this collection.")
+
+    embed = discord.Embed(
+        title=f"🛒 {name}",
+        url=url,
+        description="\n".join(lines),
+        color=COLOR_SMART_BUY,
+        timestamp=datetime.now(timezone.utc),
+    )
+    icon = brand_logo_embed_icon() or None
+    embed.set_author(name=f"🧠 {brand_name()} · Smart Wallet Buy", icon_url=icon)
+    apply_live_mint_branding(embed)
+
+    links = []
+    if opensea_url:
+        links.append(f"[OpenSea]({opensea_url})")
+    if tx_hash:
+        links.append(f"[Tx ↗](https://etherscan.io/tx/{tx_hash})")
+    if wallet:
+        links.append(f"[Wallet](https://etherscan.io/address/{wallet})")
+    if social_links.get("twitter"):
+        links.append(f"[Twitter]({social_links['twitter']})")
+    if links:
+        embed.add_field(name="", value=" · ".join(links), inline=False)
+
+    from trackers.collection_image import COLLECTION_FALLBACK_FILENAME
+
+    thumb = _square_thumbnail(image_url) or f"attachment://{COLLECTION_FALLBACK_FILENAME}"
+    embed.set_thumbnail(url=thumb)
+    return embed

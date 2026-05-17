@@ -350,14 +350,11 @@ async def post_crypto_to_channel(channel: discord.TextChannel) -> None:
 
 async def post_claim_roles_to_channel(channel: discord.TextChannel) -> None:
     """Send self-assignable role buttons for this guild (configured via addpingrole)."""
-    from velcor_features import PingRolesView, build_claim_roles_embed
+    from velcor_features import send_claim_roles_panel
 
-    guild = channel.guild
-    if guild is None:
+    if channel.guild is None:
         raise ValueError("post_claim_roles_to_channel requires a guild text channel")
-    view = PingRolesView(guild_id=guild.id)
-    embed = build_claim_roles_embed(for_empty_config=not view.children)
-    await channel.send(embed=embed, view=view)
+    await send_claim_roles_panel(channel, guild_id=channel.guild.id)
 
 
 def _needs_manage_guild(interaction: Interaction) -> bool:

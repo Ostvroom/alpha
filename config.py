@@ -22,6 +22,16 @@ def _env_or_default(key: str, default: str) -> str:
     return s if s else default
 
 
+# Custom server emoji for auto-react (success channel). Name is only used for PartialEmoji; ID is what Discord uses.
+VELCOR_AUTO_REACT_EMOJI_ID = int(os.getenv("VELCOR_AUTO_REACT_EMOJI_ID", "1497265215451172914") or 0)
+VELCOR_AUTO_REACT_EMOJI_NAME = _env_or_default("VELCOR_AUTO_REACT_EMOJI_NAME", "velcor")
+VELCOR_AUTO_REACT_EMOJI_ANIMATED = os.getenv("VELCOR_AUTO_REACT_EMOJI_ANIMATED", "0").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+
 CLAIM_ROLES_EMBED_TITLE = _env_or_default("CLAIM_ROLES_EMBED_TITLE", "Claim roles")
 CLAIM_ROLES_EMBED_DESCRIPTION = _env_or_default(
     "CLAIM_ROLES_EMBED_DESCRIPTION",
@@ -50,6 +60,9 @@ def _env_optional_url(key: str) -> str:
 
 # Large image (embed "Image" / set_image). Must be https URL Discord can fetch.
 CLAIM_ROLES_EMBED_IMAGE_URL = _env_optional_url("CLAIM_ROLES_EMBED_IMAGE_URL")
+# Local file path or https URL for panel banner (used when EMBED_IMAGE_URL is unset).
+# Empty = attach repo `banner.jpg` / brand banner when posting the panel.
+CLAIM_ROLES_BANNER_PATH = (os.getenv("CLAIM_ROLES_BANNER_PATH") or "").strip()
 # Small top-right thumbnail (optional).
 CLAIM_ROLES_EMBED_THUMBNAIL_URL = _env_optional_url("CLAIM_ROLES_EMBED_THUMBNAIL_URL")
 
@@ -312,7 +325,14 @@ ENABLE_NFTSCAN_LIVE_MINTS = _env_flag("ENABLE_NFTSCAN_LIVE_MINTS", "1")
 ENABLE_MINT_SMART_WALLET_INTEL = _env_flag("ENABLE_MINT_SMART_WALLET_INTEL", "1")
 # X/HVA-enriched mint alerts (separate channel; read-only DB, no extra Twikit load)
 ENABLE_MINT_X_ALPHA = _env_flag("ENABLE_MINT_X_ALPHA", "1")
-MINT_X_ALPHA_CHANNEL_ID = parse_channel_id("MINT_X_ALPHA_CHANNEL_ID", default=0)
+# Smart-wallet buy alerts + X-alpha enrichment (same channel by default)
+_MINT_SMART_ALERT_CHANNEL_DEFAULT = 1505238395843252375
+MINT_X_ALPHA_CHANNEL_ID = parse_channel_id(
+    "MINT_X_ALPHA_CHANNEL_ID", default=_MINT_SMART_ALERT_CHANNEL_DEFAULT
+)
+SMART_WALLET_BUY_CHANNEL_ID = parse_channel_id(
+    "SMART_WALLET_BUY_CHANNEL_ID", default=_MINT_SMART_ALERT_CHANNEL_DEFAULT
+)
 # Legacy getLogs poller (trackers/eth_live_mints.py) — off when nftscan feed is on
 ENABLE_ETH_LIVE_MINTS_POLLER = _env_flag("ENABLE_ETH_LIVE_MINTS_POLLER", "0")
 SUPPRESS_UNNAMED = _env_flag("SUPPRESS_UNNAMED", "0")
@@ -355,6 +375,10 @@ LIVE_MINT_INTERVAL = max(15, _env_int("LIVE_MINT_INTERVAL", 60))
 HOT_MINT_THRESHOLD = max(2, _env_int("HOT_MINT_THRESHOLD", 10))
 HOT_MINT_WINDOW = max(60, _env_int("HOT_MINT_WINDOW", 300))
 HOT_MINT_COOLDOWN = max(60, _env_int("HOT_MINT_COOLDOWN", 600))
+# How long collection shows smart-wallet mint/buy engagement on live + hot embeds (seconds)
+MINT_SMART_ENGAGEMENT_WINDOW_SEC = max(
+    60, _env_int("MINT_SMART_ENGAGEMENT_WINDOW_SEC", 1800)
+)
 MINT_X_ALPHA_MIN_SCORE = max(0, min(100, _env_int("MINT_X_ALPHA_MIN_SCORE", 20)))
 MINT_X_ALPHA_COOLDOWN_SEC = max(60, _env_int("MINT_X_ALPHA_COOLDOWN_SEC", 600))
 

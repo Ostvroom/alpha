@@ -33,6 +33,18 @@ PERMISSION_MESSAGE = "I need the `Manage Messages` permission to delete links!"
 AUTO_ROLE_ID = getattr(config, "VELCOR_AUTO_ROLE_ID", 0)
 WELCOME_CHANNEL_ID = getattr(config, "VELCOR_WELCOME_CHANNEL_ID", 0)
 AUTO_REACT_CHANNEL_ID = getattr(config, "VELCOR_AUTO_REACT_CHANNEL_ID", 0)
+
+
+def _auto_react_emoji() -> discord.PartialEmoji | str:
+    """Custom guild emoji or unicode fallback for success-channel auto-reactions."""
+    emoji_id = int(getattr(config, "VELCOR_AUTO_REACT_EMOJI_ID", 0) or 0)
+    if emoji_id:
+        return discord.PartialEmoji(
+            name=getattr(config, "VELCOR_AUTO_REACT_EMOJI_NAME", "velcor") or "velcor",
+            id=emoji_id,
+            animated=bool(getattr(config, "VELCOR_AUTO_REACT_EMOJI_ANIMATED", False)),
+        )
+    return "🔥"
 WELCOME_BANNER_PATH = getattr(
     config,
     "VELCOR_WELCOME_BANNER_PATH",
@@ -535,7 +547,7 @@ class PingRolesView(discord.ui.View):
 
 
 def build_claim_roles_embed(*, for_empty_config: bool = False) -> discord.Embed:
-    """Embed for claim-roles panel; title/description from config; optional image/thumbnail URLs."""
+    """Embed for claim-roles panel; title/description from config; optional banner URL/thumbnail."""
     if for_empty_config:
         description = (
             "No claim-role buttons are configured for this server yet.\n"
@@ -559,6 +571,20 @@ def build_claim_roles_embed(*, for_empty_config: bool = False) -> discord.Embed:
     if thumb_url:
         embed.set_thumbnail(url=thumb_url)
     return embed
+
+
+async def send_claim_roles_panel(channel, *, guild_id: Optional[int] = None) -> None:
+    """Post claim-roles embed + buttons with banner attachment when available."""
+    from brand_assets import prepare_claim_roles_panel
+
+    gid = guild_id if guild_id is not None else getattr(getattr(channel, "guild", None), "id", None)
+    view = PingRolesView(guild_id=gid)
+    embed = build_claim_roles_embed(for_empty_config=not view.children)
+    embed, files = prepare_claim_roles_panel(embed)
+    kwargs: dict = {"embed": embed, "view": view}
+    if files:
+        kwargs["files"] = files
+    await channel.send(**kwargs)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -650,7 +676,7 @@ class VelcorFeatures(commands.Cog):
         # Auto-reactions
         if AUTO_REACT_CHANNEL_ID and message.channel.id == AUTO_REACT_CHANNEL_ID:
             try:
-                await message.add_reaction("🔥")
+                await message.add_reaction(_auto_react_emoji())
                 print(f"[{timestamp}] ✅ Auto-reacted in #{message.channel.name}")
             except Exception as e:
                 print(f"[{timestamp}] ⚠️ Failed auto-reaction: {e}")
@@ -1462,9 +1488,7 @@ class VelcorFeatures(commands.Cog):
 
     @commands.command(name="pingroles", help="Post the claim-roles (self-assign) panel in this channel")
     async def pingroles(self, ctx):
-        view = PingRolesView(guild_id=ctx.guild.id)
-        embed = build_claim_roles_embed(for_empty_config=False)
-        await ctx.send(embed=embed, view=view)
+        await send_claim_roles_panel(ctx.channel, guild_id=ctx.guild.id)
 
     # ── DM Sender (owner-only) ─────────────────────────────────────────────
 
