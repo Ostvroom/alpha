@@ -61,11 +61,18 @@ def _safe_str(value: Any, default: str = "N/A", max_len: int = 0) -> str:
 
 def _build_progress_bar(current: int, total: int, length: int = 10) -> str:
     try:
-        pct = min(100, int((current / total) * 100)) if total > 0 else 0
+        current = int(current)
+        total = int(total)
+        if total <= 0:
+            pct = 0
+        else:
+            pct = min(100, round((current / total) * 100))
+            if current > 0 and pct == 0:
+                pct = 1
         filled = int((pct / 100) * length)
         bar = "█" * filled + "░" * (length - filled)
         return f"{bar}  {pct}%"
-    except:
+    except (TypeError, ValueError, ZeroDivisionError):
         return "░░░░░░░░░░  0%"
 
 

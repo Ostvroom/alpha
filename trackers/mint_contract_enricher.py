@@ -86,6 +86,8 @@ class MintContractEnricher:
     def __init__(self):
         ensure_dirs()
         self._contract_cache: Dict[str, Dict] = {}
+        self._supply_cache: Dict[str, Dict] = {}
+        self._supply_cache_ttl_sec = 45
         self._tx_cache: Dict[str, Dict] = {}
         self._session: Optional[aiohttp.ClientSession] = None
         self._lock = asyncio.Lock()
@@ -165,13 +167,39 @@ class MintContractEnricher:
     # Contract metadata (name + image + links)
     # ──────────────────────────────────────────────────────────────────────────
 
+    async def _get_fresh_supply(self, contract: str) -> tuple:
+        """On-chain minted count + max supply (short TTL cache; never use stale contract file cache)."""
+        now = datetime.utcnow()
+        cached = self._supply_cache.get(contract)
+        if cached and (now - cached["updated"]).total_seconds() < self._supply_cache_ttl_sec:
+            return cached.get("total_supply"), cached.get("max_supply")
+
+        alchemy_meta = await self._get_alchemy_metadata(contract)
+        total_supply = alchemy_meta.get("total_supply")
+        if total_supply is None:
+            total_supply = await self._get_total_supply(contract)
+        max_supply = await self._get_max_supply(contract)
+
+        self._supply_cache[contract] = {
+            "total_supply": total_supply,
+            "max_supply": max_supply,
+            "updated": now,
+        }
+        return total_supply, max_supply
+
     async def _enrich_contract(self, contract: str, token_id: str) -> Dict:
         if not contract:
             return {}
 
         cached = self._contract_cache.get(contract)
         if cached:
-            return cached
+            total_supply, max_supply = await self._get_fresh_supply(contract)
+            out = dict(cached)
+            if total_supply is not None:
+                out["total_supply"] = total_supply
+            if max_supply is not None:
+                out["max_supply"] = max_supply
+            return out
 
         # Check well-known contracts first
         known = KNOWN_CONTRACTS.get(contract)
@@ -234,8 +262,13 @@ class MintContractEnricher:
         }
 
         async with self._lock:
-            self._contract_cache[contract] = data
+            self._contract_cache[contract] = {k: v for k, v in data.items() if k not in ("total_supply", "max_supply")}
             self._save_contract_cache()
+            self._supply_cache[contract] = {
+                "total_supply": total_supply,
+                "max_supply": max_supply,
+                "updated": datetime.utcnow(),
+            }
 
         return data
 

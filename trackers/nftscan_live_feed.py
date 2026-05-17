@@ -54,12 +54,12 @@ class NftscanLiveFeed:
         self.enricher: Optional[MintContractEnricher] = None
         self.social_fetcher: Optional[MintSocialFetcher] = None
         self._seen_mint_txs: Set[str] = set()
-        self._mint_tracker: Dict[str, List[datetime]] = {}
+        # Per-contract mint events for hot spike detection: {ts, amount, key}
+        self._mint_tracker: Dict[str, List[Dict]] = {}
         self._hot_alert_cooldown: Dict[str, datetime] = {}
         self._spam_contracts: Set[str] = set()
         self._spam_contract_expiry: Dict[str, datetime] = {}
         self._muted_contracts: Set[str] = set()
-        self._contract_mint_count: Dict[str, int] = {}
         self._contract_wallet_activity = get_contract_activity()
         self._alpha_alert_cooldown: Dict[str, datetime] = {}
         self._seen_alpha_txs: Set[str] = set()
@@ -157,18 +157,54 @@ class NftscanLiveFeed:
         except Exception:
             pass
 
-    def active_hot_trackers(self) -> List[tuple]:
-        """Contracts with mint activity in the hot-mint window: (address, count)."""
+    @staticmethod
+    def _mint_event_key(mint: Dict) -> tuple:
+        return (
+            (mint.get("tx_hash") or mint.get("hash") or "").strip().lower(),
+            str(mint.get("token_id", "")),
+        )
+
+    def _record_hot_mint_event(self, contract: str, mint: Dict) -> None:
+        """Track mint volume for hot alerts (dedupe by tx+token, count ERC1155 amount)."""
+        now = datetime.now(timezone.utc)
+        try:
+            amount = max(1, int(mint.get("amount") or 1))
+        except (TypeError, ValueError):
+            amount = 1
+        self._mint_tracker.setdefault(contract, []).append(
+            {"ts": now, "amount": amount, "key": self._mint_event_key(mint)}
+        )
+        keep = timedelta(seconds=max(config.HOT_MINT_WINDOW * 2, 120))
+        self._mint_tracker[contract] = [
+            e for e in self._mint_tracker[contract] if now - e["ts"] <= keep
+        ]
+
+    def _hot_mint_volume_in_window(self, contract: str) -> int:
+        """NFT mint units in the hot window (deduped, ERC1155 amounts included)."""
         now = datetime.now(timezone.utc)
         window = timedelta(seconds=config.HOT_MINT_WINDOW)
+        seen: Set[tuple] = set()
+        total = 0
+        for e in self._mint_tracker.get(contract, []):
+            if now - e["ts"] > window:
+                continue
+            key = e.get("key")
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            total += int(e.get("amount") or 1)
+        return total
+
+    def active_hot_trackers(self) -> List[tuple]:
+        """Contracts with mint activity in the hot-mint window: (address, count)."""
         active: List[tuple] = []
-        for contract, times in list(self._mint_tracker.items()):
+        for contract in list(self._mint_tracker.keys()):
             if contract in self._muted_contracts:
                 continue
-            valid = [t for t in times if now - t <= window]
-            if valid:
-                self._mint_tracker[contract] = valid
-                active.append((contract, len(valid)))
+            count = self._hot_mint_volume_in_window(contract)
+            if count > 0:
+                active.append((contract, count))
             else:
                 self._mint_tracker.pop(contract, None)
         active.sort(key=lambda x: x[1], reverse=True)
@@ -242,11 +278,6 @@ class NftscanLiveFeed:
             await self._process_smart_buy_alerts(tracked_buys, wallets)
             prune_contract_activity(store, engagement_window)
 
-        for m in raw_mints:
-            contract = m.get("contract_address", "").lower()
-            if contract:
-                self._contract_mint_count[contract] = self._contract_mint_count.get(contract, 0) + 1
-
         new_mints: List[Dict] = []
         for m in raw_mints:
             tx = m.get("tx_hash", "") or m.get("hash", "")
@@ -298,10 +329,6 @@ class NftscanLiveFeed:
                         m["contract_name"] = social_name
 
         for m in new_mints:
-            if m.get("total_supply") is None:
-                contract = m.get("contract_address", "").lower()
-                if contract and contract in self._contract_mint_count:
-                    m["total_supply"] = self._contract_mint_count[contract]
             if intel_on:
                 attach_collection_wallet_intel(
                     m, self._contract_wallet_activity, engagement_window
@@ -445,13 +472,8 @@ class NftscanLiveFeed:
             contract = m.get("contract_address", "").lower()
             if not contract or contract in self._muted_contracts:
                 continue
-            if contract not in self._mint_tracker:
-                self._mint_tracker[contract] = []
-            self._mint_tracker[contract].append(now)
-            self._mint_tracker[contract] = [
-                t for t in self._mint_tracker[contract] if now - t <= window
-            ]
-            count = len(self._mint_tracker[contract])
+            self._record_hot_mint_event(contract, m)
+            count = self._hot_mint_volume_in_window(contract)
             if count >= config.HOT_MINT_THRESHOLD:
                 last_alert = self._hot_alert_cooldown.get(contract)
                 if not last_alert or (now - last_alert) > cooldown:
@@ -469,8 +491,6 @@ class NftscanLiveFeed:
 
         for hot in hot_collections:
             mint = hot["mint"]
-            if mint.get("total_supply") is None and hot["contract"] in self._contract_mint_count:
-                mint["total_supply"] = self._contract_mint_count[hot["contract"]]
             if intel_on:
                 win = engagement_window or self._engagement_window()
                 attach_hot_mint_wallet_intel(mint, self._contract_wallet_activity, win)
