@@ -151,6 +151,24 @@ def embed_has_image(embed: discord.Embed) -> bool:
     return bool(embed.image and embed.image.url)
 
 
+def apply_claim_roles_branding(embed: discord.Embed) -> None:
+    """Author/footer + color for the claim-roles reaction panel."""
+    import config
+
+    brand = brand_name()
+    icon = brand_logo_embed_icon()
+    color = int(getattr(config, "CLAIM_ROLES_EMBED_COLOR", 0x7C3AED) or 0x7C3AED)
+    embed.color = color
+    author = f"🎭  {brand} · Role picker"
+    footer = f"{brand} · React to claim · remove reaction to unclaim"
+    if icon:
+        embed.set_author(name=author, icon_url=icon)
+        embed.set_footer(text=footer, icon_url=icon)
+    else:
+        embed.set_author(name=author)
+        embed.set_footer(text=footer)
+
+
 def prepare_claim_roles_panel(
     embed: discord.Embed,
     files: Optional[List[discord.File]] = None,

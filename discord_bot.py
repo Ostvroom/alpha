@@ -321,6 +321,7 @@ class BlockBrainBot(commands.Bot):
         intents = discord.Intents.default()
         intents.message_content = True
         intents.members = True
+        intents.guild_reactions = True
         super().__init__(command_prefix="!velcor3 ", intents=intents, help_command=None)
         self.twitter = TwitterClient()
         self.ai = AIAnalyzer()
@@ -445,6 +446,7 @@ class BlockBrainBot(commands.Bot):
         await payment_commands.setup(self)
         self.add_view(VerificationView())
         self.add_view(CryptoPaymentView())
+        # Legacy button panels only (new panels use reactions)
         _claim_roles_view = PingRolesView()
         if _claim_roles_view.children:
             self.add_view(_claim_roles_view)

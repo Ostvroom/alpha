@@ -184,6 +184,22 @@ def init_database():
         """
     )
 
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS claim_role_panels (
+            message_id INTEGER PRIMARY KEY,
+            guild_id INTEGER NOT NULL,
+            channel_id INTEGER NOT NULL,
+            created_at TEXT
+        )
+        """
+    )
+
+    try:
+        cursor.execute("ALTER TABLE ping_roles ADD COLUMN description TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+
     conn.commit()
     conn.close()
     print("[VelcorFeatures] Database initialized")
@@ -491,8 +507,118 @@ def is_whitelisted_domain(url: str):
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# UI Components
+# Claim roles — reaction panels (+ legacy buttons for old messages)
 # ════════════════════════════════════════════════════════════════════════════
+
+
+def load_ping_roles(guild_id: int) -> list:
+    """Rows: role_id, label, emoji, description for one guild."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT role_id, label, emoji, COALESCE(description, '')
+            FROM ping_roles WHERE guild_id = ? ORDER BY label
+            """,
+            (guild_id,),
+        )
+        rows = [
+            {"role_id": r[0], "label": r[1], "emoji": r[2], "description": r[3] or ""}
+            for r in cursor.fetchall()
+        ]
+        conn.close()
+        return rows
+    except Exception as e:
+        print(f"[VelcorFeatures] load_ping_roles: {e}")
+        return []
+
+
+def format_claim_roles_bullets(guild: discord.Guild | None, roles: list) -> str:
+    """Bullet list with colored role mentions — matches panel layout."""
+    lines: list[str] = []
+    for row in roles:
+        rid = int(row["role_id"])
+        role = guild.get_role(rid) if guild else None
+        mention = role.mention if role else f"<@&{rid}>"
+        desc = (row.get("description") or "").strip()
+        if not desc:
+            desc = (row.get("label") or "").strip()
+        if desc:
+            lines.append(f"• {mention} — {desc}")
+        else:
+            lines.append(f"• {mention}")
+    return "\n".join(lines)
+
+
+def parse_stored_emoji(emoji_str: str) -> discord.PartialEmoji | str | None:
+    s = (emoji_str or "").strip()
+    if not s:
+        return None
+    if s.isdigit():
+        return discord.PartialEmoji(name="role", id=int(s))
+    return s
+
+
+def format_role_emoji_display(guild: discord.Guild | None, emoji_str: str) -> str:
+    """Markdown-safe emoji for embed fields."""
+    s = (emoji_str or "").strip()
+    if not s:
+        return "▫️"
+    if s.isdigit() and guild:
+        em = guild.get_emoji(int(s))
+        if em:
+            return str(em)
+        return "▫️"
+    return s
+
+
+def reaction_matches_stored(stored_emoji: str, reaction_emoji) -> bool:
+    parsed = parse_stored_emoji(stored_emoji)
+    if isinstance(parsed, discord.PartialEmoji):
+        rid = getattr(reaction_emoji, "id", None)
+        return rid is not None and int(rid) == int(parsed.id)
+    return str(reaction_emoji) == str(parsed)
+
+
+def role_id_for_reaction(guild_id: int, reaction_emoji) -> int | None:
+    for row in load_ping_roles(guild_id):
+        if reaction_matches_stored(row["emoji"], reaction_emoji):
+            return int(row["role_id"])
+    return None
+
+
+def register_claim_panel(message_id: int, guild_id: int, channel_id: int) -> None:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT OR REPLACE INTO claim_role_panels (message_id, guild_id, channel_id, created_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (message_id, guild_id, channel_id, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_claim_panel(message_id: int) -> dict | None:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT guild_id, channel_id FROM claim_role_panels WHERE message_id = ?",
+        (message_id,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {"guild_id": row[0], "channel_id": row[1]}
+
+
+def is_claim_panel_message(message_id: int) -> bool:
+    return get_claim_panel(message_id) is not None
+
 
 class DynamicPingRoleButton(discord.ui.Button):
     def __init__(self, role_id: int, label: str, emoji: str):
@@ -546,45 +672,102 @@ class PingRolesView(discord.ui.View):
             print(f"[VelcorFeatures] Error loading ping roles: {e}")
 
 
-def build_claim_roles_embed(*, for_empty_config: bool = False) -> discord.Embed:
-    """Embed for claim-roles panel; title/description from config; optional banner URL/thumbnail."""
-    if for_empty_config:
+def build_claim_roles_embed(
+    *,
+    guild: discord.Guild | None = None,
+    roles: list | None = None,
+    for_empty_config: bool = False,
+) -> discord.Embed:
+    """Rich embed for claim-roles reaction panel."""
+    from brand_assets import apply_claim_roles_branding
+
+    title = getattr(config, "CLAIM_ROLES_EMBED_TITLE", "🎭  Claim your roles")
+    if for_empty_config or not roles:
         description = (
-            "No claim-role buttons are configured for this server yet.\n"
-            "Staff: use **`!velcor3 addpingrole @Role emoji label`** (administrator) to add buttons, then run **`!velcor3 post_claim_roles`** again."
+            "No claim roles are configured for this server yet.\n\n"
+            "**Staff setup**\n"
+            "• `!velcor3 addpingrole @Role emoji description here` — add a reaction role\n"
+            "• `!velcor3 post_claim_roles` — post this panel again"
         )
-    else:
-        description = getattr(
-            config,
-            "CLAIM_ROLES_EMBED_DESCRIPTION",
-            "Click a button below to toggle a self-assignable role.",
-        )
-    embed = discord.Embed(
-        title=getattr(config, "CLAIM_ROLES_EMBED_TITLE", "Claim roles"),
-        description=description,
-        color=discord.Color.blue(),
+        embed = discord.Embed(title=title, description=description)
+        apply_claim_roles_branding(embed)
+        return embed
+
+    intro = getattr(
+        config,
+        "CLAIM_ROLES_EMBED_DESCRIPTION",
+        "React with the matching emoji on this message to claim a role. Remove your reaction to unclaim.",
     )
+    roles_field_name = getattr(config, "CLAIM_ROLES_ROLES_FIELD_NAME", "Role name")
+    role_list = format_claim_roles_bullets(guild, roles)
+
+    embed = discord.Embed(
+        title=title,
+        description=intro,
+    )
+    embed.add_field(
+        name=roles_field_name,
+        value=role_list[:1024] or "—",
+        inline=False,
+    )
+    embed.add_field(
+        name="How to claim",
+        value=(
+            "React below with the emoji for the role you want\n"
+            "Remove your reaction anytime to drop that role"
+        ),
+        inline=False,
+    )
+
+    apply_claim_roles_branding(embed)
+
     image_url = getattr(config, "CLAIM_ROLES_EMBED_IMAGE_URL", "") or ""
     if image_url:
         embed.set_image(url=image_url)
     thumb_url = getattr(config, "CLAIM_ROLES_EMBED_THUMBNAIL_URL", "") or ""
     if thumb_url:
         embed.set_thumbnail(url=thumb_url)
+    elif guild and guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+
     return embed
 
 
 async def send_claim_roles_panel(channel, *, guild_id: Optional[int] = None) -> None:
-    """Post claim-roles embed + buttons with banner attachment when available."""
+    """Post claim-roles embed; users claim via reactions (not buttons)."""
     from brand_assets import prepare_claim_roles_panel
 
-    gid = guild_id if guild_id is not None else getattr(getattr(channel, "guild", None), "id", None)
-    view = PingRolesView(guild_id=gid)
-    embed = build_claim_roles_embed(for_empty_config=not view.children)
+    guild = getattr(channel, "guild", None)
+    gid = guild_id if guild_id is not None else getattr(guild, "id", None)
+    if not gid:
+        raise ValueError("send_claim_roles_panel requires a guild channel")
+
+    roles = load_ping_roles(int(gid))
+    embed = build_claim_roles_embed(
+        guild=guild,
+        roles=roles,
+        for_empty_config=not roles,
+    )
     embed, files = prepare_claim_roles_panel(embed)
-    kwargs: dict = {"embed": embed, "view": view}
+    kwargs: dict = {"embed": embed}
     if files:
         kwargs["files"] = files
-    await channel.send(**kwargs)
+    message = await channel.send(**kwargs)
+
+    if not roles:
+        return
+
+    register_claim_panel(message.id, int(gid), channel.id)
+    for row in roles:
+        reaction_emoji = parse_stored_emoji(row["emoji"])
+        if not reaction_emoji:
+            continue
+        try:
+            await message.add_reaction(reaction_emoji)
+        except discord.HTTPException as e:
+            print(
+                f"[VelcorFeatures] Could not add reaction for role {row['role_id']}: {e}"
+            )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -606,6 +789,78 @@ class VelcorFeatures(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         print("[VelcorFeatures] Cog loaded — settings and database ready.")
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
+        if payload.user_id == self.bot.user.id:
+            return
+        panel = get_claim_panel(payload.message_id)
+        if not panel or payload.guild_id != panel["guild_id"]:
+            return
+
+        guild = self.bot.get_guild(payload.guild_id)
+        if not guild:
+            return
+
+        role_id = role_id_for_reaction(panel["guild_id"], payload.emoji)
+        if not role_id:
+            return
+
+        role = guild.get_role(role_id)
+        if not role:
+            return
+
+        member = guild.get_member(payload.user_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(payload.user_id)
+            except Exception:
+                return
+
+        if role in member.roles:
+            return
+        try:
+            await member.add_roles(role, reason="Claim roles panel — reaction add")
+        except discord.Forbidden:
+            print(f"[VelcorFeatures] No permission to add role {role_id}")
+        except Exception as e:
+            print(f"[VelcorFeatures] add_roles failed: {e}")
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent) -> None:
+        if payload.user_id == self.bot.user.id:
+            return
+        panel = get_claim_panel(payload.message_id)
+        if not panel or payload.guild_id != panel["guild_id"]:
+            return
+
+        guild = self.bot.get_guild(payload.guild_id)
+        if not guild:
+            return
+
+        role_id = role_id_for_reaction(panel["guild_id"], payload.emoji)
+        if not role_id:
+            return
+
+        role = guild.get_role(role_id)
+        if not role:
+            return
+
+        member = guild.get_member(payload.user_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(payload.user_id)
+            except Exception:
+                return
+
+        if role not in member.roles:
+            return
+        try:
+            await member.remove_roles(role, reason="Claim roles panel — reaction removed")
+        except discord.Forbidden:
+            print(f"[VelcorFeatures] No permission to remove role {role_id}")
+        except Exception as e:
+            print(f"[VelcorFeatures] remove_roles failed: {e}")
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
@@ -964,10 +1219,11 @@ class VelcorFeatures(commands.Cog):
         roles = [
             "`!velcor3 batchrole @Role <ids>` — Batch assign role",
             "`!velcor3 role_roleless @Role` — Assign to roleless",
-            "`!velcor3 addpingrole @Role emoji label` — Add claim-role button",
-            "`!velcor3 removepingrole @Role` — Remove claim-role button",
-            "`!velcor3 pingroles` — Post claim-roles panel (here)",
-            "`!velcor3 post_claim_roles` — Post claim-roles panel (Manage Server)",
+            "`!velcor3 addpingrole @Role emoji description:...` — Add claim-role reaction",
+            "`!velcor3 setpingroledesc @Role description:...` — Update role line text",
+            "`!velcor3 removepingrole @Role` — Remove claim-role reaction",
+            "`!velcor3 pingroles` — Post claim-roles reaction panel (here)",
+            "`!velcor3 post_claim_roles` — Post claim-roles reaction panel (Manage Server)",
         ]
         embed.add_field(name="🛡️ General", value="\n".join(general), inline=False)
         embed.add_field(name="📈 Stats", value="\n".join(stats), inline=False)
@@ -1463,20 +1719,51 @@ class VelcorFeatures(commands.Cog):
 
     # ── Ping Roles ─────────────────────────────────────────────────────────
 
-    @commands.command(name="addpingrole", help="Add a claim-role (self-assign) button (Admin only)")
+    @commands.command(name="addpingrole", help="Add a claim-role reaction (Admin only)")
     @commands.has_permissions(administrator=True)
-    async def addpingrole(self, ctx, role: discord.Role, emoji: str, *, label: str):
+    async def addpingrole(
+        self,
+        ctx,
+        role: discord.Role,
+        emoji: str,
+        description: commands.Greedy[str],
+        label: str = "",
+    ):
+        """Example: !velcor3 addpingrole @WL Realm 🔥 for WL raffle/giveaways"""
+        label = (label or role.name).strip()
+        description = (description or "").strip()
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT OR REPLACE INTO ping_roles (guild_id, role_id, label, emoji) VALUES (?, ?, ?, ?)",
-            (ctx.guild.id, role.id, label, emoji),
+            """
+            INSERT OR REPLACE INTO ping_roles (guild_id, role_id, label, emoji, description)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (ctx.guild.id, role.id, label, emoji, description),
         )
         conn.commit()
         conn.close()
-        await ctx.send(f"✅ Added ping role **{label}** → {role.mention}")
+        preview = f"• {role.mention} — {description}" if description else f"• {role.mention}"
+        await ctx.send(f"✅ Added reaction role\n{preview}")
 
-    @commands.command(name="removepingrole", help="Remove a claim-role button (Admin only)")
+    @commands.command(name="setpingroledesc", help="Update a claim-role line description (Admin only)")
+    @commands.has_permissions(administrator=True)
+    async def setpingroledesc(self, ctx, role: discord.Role, *, description: str):
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE ping_roles SET description = ? WHERE guild_id = ? AND role_id = ?",
+            (description.strip(), ctx.guild.id, role.id),
+        )
+        if cursor.rowcount == 0:
+            conn.close()
+            await ctx.send(f"⚠️ No ping role configured for {role.mention}. Use `addpingrole` first.")
+            return
+        conn.commit()
+        conn.close()
+        await ctx.send(f"✅ Updated {role.mention} — {description.strip()}")
+
+    @commands.command(name="removepingrole", help="Remove a claim-role reaction (Admin only)")
     @commands.has_permissions(administrator=True)
     async def removepingrole(self, ctx, role: discord.Role):
         conn = get_db_connection()
@@ -1486,7 +1773,7 @@ class VelcorFeatures(commands.Cog):
         conn.close()
         await ctx.send(f"✅ Removed ping role for {role.mention}")
 
-    @commands.command(name="pingroles", help="Post the claim-roles (self-assign) panel in this channel")
+    @commands.command(name="pingroles", help="Post the claim-roles reaction panel in this channel")
     async def pingroles(self, ctx):
         await send_claim_roles_panel(ctx.channel, guild_id=ctx.guild.id)
 
