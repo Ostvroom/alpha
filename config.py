@@ -471,9 +471,9 @@ X_PROJECT_SEARCH_MAX_MENTION_TIMEOUTS_PER_CYCLE = max(2, min(100, _env_int("X_PR
 
 # HVA scan @mention resolution — tune these to reduce timeout waste
 # Hard timeout (seconds) per mention resolve. Lower = less wasted time per bad proxy.
-MENTION_RESOLVE_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("MENTION_RESOLVE_TIMEOUT_SEC", 12.0)))
+MENTION_RESOLVE_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("MENTION_RESOLVE_TIMEOUT_SEC", 18.0)))
 # Retry attempts after a timeout (0 = no retry; retrying with a bad session just doubles the wait).
-MENTION_RESOLVE_RETRIES = max(0, min(3, _env_int("MENTION_RESOLVE_RETRIES", 0)))
+MENTION_RESOLVE_RETRIES = max(0, min(3, _env_int("MENTION_RESOLVE_RETRIES", 1)))
 # Max @mentions to resolve per HVA scan (caps total lookups; each lookup costs ~12s if it times out).
 MENTION_RESOLVE_MAX_PER_HVA_SCAN = max(1, min(30, _env_int("MENTION_RESOLVE_MAX_PER_HVA_SCAN", 12)))
 # After this many timeouts in a batch, stop attempting more @mention lookups for that batch.

@@ -569,12 +569,27 @@ class NftscanLiveFeed:
             kwargs: Dict = {}
             if files:
                 kwargs["files"] = files
-            try:
-                await channel.send(embeds=chunk, **kwargs)
-            except discord.HTTPException as e:
-                logger.error("Discord HTTP error mint feed %s: %s", channel_id, e)
-            except Exception as e:
-                logger.error("Failed to send mint feed to %s: %s", channel_id, e)
+            for d_attempt in range(3):
+                try:
+                    await channel.send(embeds=chunk, **kwargs)
+                    break
+                except discord.HTTPException as e:
+                    status = int(getattr(e, "status", 0) or 0)
+                    if status == 429:
+                        retry_after = float(getattr(e, "retry_after", 1.0) or 1.0)
+                        logger.warning("Discord 429 mint feed %s; retry after %.1fs (attempt %d/3)", channel_id, retry_after, d_attempt + 1)
+                        await asyncio.sleep(retry_after + 0.5)
+                        continue
+                    if status >= 500:
+                        wait = 2.0 * (2 ** d_attempt)
+                        logger.warning("Discord %s mint feed %s; retrying in %.1fs (attempt %d/3)", status, channel_id, wait, d_attempt + 1)
+                        await asyncio.sleep(wait)
+                        continue
+                    logger.error("Discord HTTP error mint feed %s: %s", channel_id, e)
+                    break
+                except Exception as e:
+                    logger.error("Failed to send mint feed to %s: %s", channel_id, e)
+                    break
 
     def _embed_size(self, embed: discord.Embed) -> int:
         total = 0

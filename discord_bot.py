@@ -1273,14 +1273,20 @@ class BlockBrainBot(commands.Bot):
                         
                         await asyncio.sleep(random.uniform(8, 18))
 
-                        try:
-                            timeline = await asyncio.wait_for(
-                                self.twitter.get_user_timeline(hva_id, count=15),
-                                timeout=45.0,
-                            )
-                        except asyncio.TimeoutError:
-                            print(f"      ⚠️ Timeout fetching timeline for @{hva_handle}, skipping.")
-                            timeline = []
+                        timeline = []
+                        for t_attempt in range(2):
+                            try:
+                                timeline = await asyncio.wait_for(
+                                    self.twitter.get_user_timeline(hva_id, count=15),
+                                    timeout=45.0,
+                                )
+                                break
+                            except asyncio.TimeoutError:
+                                print(f"      ⚠️ Timeout fetching timeline for @{hva_handle} (attempt {t_attempt + 1}/2)")
+                                if t_attempt < 1:
+                                    await asyncio.sleep(5)
+                                else:
+                                    timeline = []
 
                         # Same account can appear on many RT rows — process once per HVA scan
                         seen_rt_user_ids: Set[str] = set()
@@ -2405,7 +2411,7 @@ class BlockBrainBot(commands.Bot):
                 try:
                     timeline_tweets = await asyncio.wait_for(
                         self.twitter.get_user_timeline(account.id, count=8),
-                        timeout=30.0,
+                        timeout=35.0,
                     )
                 except asyncio.TimeoutError:
                     print(f"         ⚠️ Timeout fetching timeline for @{account.screen_name} (attempt {attempt + 1}/3)")
