@@ -611,25 +611,21 @@ def save_ping_role(guild_id: int, role_id: int, label: str, emoji: str, descript
 
 
 def format_claim_roles_bullets(guild: discord.Guild | None, roles: list) -> str:
-    """Emoji → role mapping so users know which reaction to click."""
-    lines: list[str] = [
-        "**React with the emoji on the left** (same emoji under this message):",
-        "",
-    ]
+    """Role list for the embed (dropdown shows the same options)."""
+    lines: list[str] = []
     for row in roles:
         rid = int(row["role_id"])
         role = guild.get_role(rid) if guild else None
         mention = role.mention if role else f"<@&{rid}>"
-        em = format_role_emoji_display(guild, row.get("emoji", ""))
         desc = (row.get("description") or "").strip()
         if "addpingrole" in desc.lower():
             desc = ""
         if not desc:
             desc = (row.get("label") or "").strip()
         if desc:
-            lines.append(f"{em}  →  {mention}  —  {desc}")
+            lines.append(f"• {mention} — {desc}")
         else:
-            lines.append(f"{em}  →  {mention}")
+            lines.append(f"• {mention}")
     return "\n".join(lines)
 
 
@@ -764,10 +760,7 @@ class DynamicPingRoleButton(discord.ui.Button):
 
 class PingRolesView(discord.ui.View):
     """
-    Self-assignable ("claim") role buttons. custom_id pattern: pingrole_{role_id}.
-
-    guild_id=None: load every configured row (for bot.add_view persistence after restart).
-    guild_id set: only that server's roles (for posting a panel in that guild).
+    Legacy self-assignable role buttons (old panels only). custom_id: pingrole_{role_id}.
     """
 
     def __init__(self, guild_id: int | None = None):
@@ -789,13 +782,135 @@ class PingRolesView(discord.ui.View):
             print(f"[VelcorFeatures] Error loading ping roles: {e}")
 
 
+def distinct_ping_roles_guild_ids() -> list[int]:
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT guild_id FROM ping_roles")
+        ids = [int(r[0]) for r in cursor.fetchall()]
+        conn.close()
+        return ids
+    except Exception:
+        return []
+
+
+def _select_option_emoji(
+    guild: discord.Guild | None, emoji_str: str
+) -> str | discord.PartialEmoji | None:
+    parsed = parse_stored_emoji(emoji_str, guild)
+    if parsed is None:
+        return None
+    return parsed
+
+
+class ClaimRolesSelect(discord.ui.Select):
+    """Multi-select dropdown — syncs member roles with selection."""
+
+    def __init__(self, guild_id: int, roles: list, guild: discord.Guild | None = None):
+        self.guild_id = guild_id
+        options: list[discord.SelectOption] = []
+        for row in roles[:25]:
+            rid = int(row["role_id"])
+            label = (row.get("label") or "Role")[:100]
+            desc = (row.get("description") or row.get("label") or "")[:100]
+            if "addpingrole" in desc.lower():
+                desc = (row.get("label") or "")[:100]
+            em = _select_option_emoji(guild, row.get("emoji", ""))
+            opt_kw: dict = {"label": label, "value": str(rid)}
+            if desc:
+                opt_kw["description"] = desc
+            if em is not None:
+                opt_kw["emoji"] = em
+            options.append(discord.SelectOption(**opt_kw))
+
+        super().__init__(
+            placeholder="Choose your roles…",
+            min_values=0,
+            max_values=max(1, len(options)),
+            options=options,
+            custom_id=f"velcor_claim_roles_{guild_id}",
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild or interaction.guild.id != self.guild_id:
+            await interaction.response.send_message(
+                "This menu is no longer valid. Ask staff to post a new claim panel.",
+                ephemeral=True,
+            )
+            return
+        member = interaction.user
+        if not isinstance(member, discord.Member):
+            await interaction.response.send_message("Could not resolve member.", ephemeral=True)
+            return
+
+        rows = load_ping_roles(self.guild_id)
+        claimable = {int(r["role_id"]) for r in rows}
+        selected = {int(v) for v in self.values if v.isdigit()}
+
+        added: list[str] = []
+        removed: list[str] = []
+        failed: list[str] = []
+
+        for rid in claimable:
+            role = interaction.guild.get_role(rid)
+            if not role:
+                continue
+            has = role in member.roles
+            want = rid in selected
+            try:
+                if want and not has:
+                    await member.add_roles(role, reason="Claim roles dropdown")
+                    added.append(role.mention)
+                elif not want and has:
+                    await member.remove_roles(role, reason="Claim roles dropdown")
+                    removed.append(role.mention)
+            except discord.Forbidden:
+                failed.append(role.name)
+            except discord.HTTPException:
+                failed.append(role.name)
+
+        lines: list[str] = []
+        if added:
+            lines.append("✅ **Added:** " + ", ".join(added))
+        if removed:
+            lines.append("➖ **Removed:** " + ", ".join(removed))
+        if failed:
+            lines.append("⚠️ Could not update: " + ", ".join(failed))
+        if not lines:
+            lines.append("No changes — your roles already match your selection.")
+
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+
+class ClaimRolesView(discord.ui.View):
+    """Persistent dropdown for claim roles (one view per guild_id)."""
+
+    def __init__(self, guild_id: int, roles: list, guild: discord.Guild | None = None):
+        super().__init__(timeout=None)
+        if roles:
+            self.add_item(ClaimRolesSelect(guild_id, roles, guild))
+
+
+def register_claim_role_views(bot: commands.Bot) -> int:
+    """Re-register dropdown views after restart (one per guild with ping_roles)."""
+    count = 0
+    for gid in distinct_ping_roles_guild_ids():
+        roles = load_ping_roles(gid)
+        if not roles:
+            continue
+        guild = bot.get_guild(gid)
+        bot.add_view(ClaimRolesView(gid, roles, guild))
+        count += 1
+    return count
+
+
 def build_claim_roles_embed(
     *,
     guild: discord.Guild | None = None,
     roles: list | None = None,
     for_empty_config: bool = False,
 ) -> discord.Embed:
-    """Rich embed for claim-roles reaction panel."""
+    """Rich embed for claim-roles dropdown panel."""
     from brand_assets import apply_claim_roles_branding
 
     title = getattr(config, "CLAIM_ROLES_EMBED_TITLE", "🎭  Claim your roles")
@@ -813,9 +928,9 @@ def build_claim_roles_embed(
     intro = getattr(
         config,
         "CLAIM_ROLES_EMBED_DESCRIPTION",
-        "React with the matching emoji on this message to claim a role. Remove your reaction to unclaim.",
+        "Use the **dropdown below** to pick your roles. You can select more than one.",
     )
-    roles_field_name = getattr(config, "CLAIM_ROLES_ROLES_FIELD_NAME", "Emoji → Role")
+    roles_field_name = getattr(config, "CLAIM_ROLES_ROLES_FIELD_NAME", "Available roles")
     role_list = format_claim_roles_bullets(guild, roles)
 
     embed = discord.Embed(
@@ -830,9 +945,10 @@ def build_claim_roles_embed(
     embed.add_field(
         name="How to claim",
         value=(
-            "1️⃣ Pick your role in the list above (left emoji = reaction to use)\n"
-            "2️⃣ **Click that emoji** under this message\n"
-            "3️⃣ Remove your reaction anytime to drop the role"
+            "1️⃣ Open **Choose your roles…** below\n"
+            "2️⃣ Tick every role you want (multi-select)\n"
+            "3️⃣ Submit — unchecked roles are removed\n"
+            "4️⃣ Open again anytime to change your selection"
         ),
         inline=False,
     )
@@ -848,8 +964,13 @@ def build_claim_roles_embed(
     return embed
 
 
-async def send_claim_roles_panel(channel, *, guild_id: Optional[int] = None) -> None:
-    """Post claim-roles embed; users claim via reactions (not buttons)."""
+async def send_claim_roles_panel(
+    channel,
+    *,
+    guild_id: Optional[int] = None,
+    bot: Optional[commands.Bot] = None,
+) -> None:
+    """Post claim-roles embed with a multi-select dropdown."""
     from brand_assets import hydrate_claim_roles_banner_attachment, prepare_claim_roles_panel
 
     guild = getattr(channel, "guild", None)
@@ -865,9 +986,12 @@ async def send_claim_roles_panel(channel, *, guild_id: Optional[int] = None) -> 
     )
     embed, files = prepare_claim_roles_panel(embed)
     embed, files = await hydrate_claim_roles_banner_attachment(embed, files)
+    view = ClaimRolesView(int(gid), roles, guild) if roles else None
     kwargs: dict = {"embed": embed}
     if files:
         kwargs["files"] = files
+    if view is not None:
+        kwargs["view"] = view
     message = await channel.send(**kwargs)
 
     if not roles:
@@ -875,40 +999,8 @@ async def send_claim_roles_panel(channel, *, guild_id: Optional[int] = None) -> 
 
     register_claim_panel(message.id, int(gid), channel.id)
 
-    seen_keys: set[str] = set()
-    to_add: list = []
-    duplicate_labels: list[str] = []
-    for row in roles:
-        reaction_emoji = parse_stored_emoji(row["emoji"], guild)
-        if not reaction_emoji:
-            duplicate_labels.append(f"{row.get('label', row['role_id'])} (no emoji)")
-            continue
-        key = reaction_emoji_key(reaction_emoji)
-        if key in seen_keys:
-            duplicate_labels.append(row.get("label") or str(row["role_id"]))
-            continue
-        seen_keys.add(key)
-        to_add.append(reaction_emoji)
-
-    for reaction_emoji in to_add:
-        try:
-            await message.add_reaction(reaction_emoji)
-            await asyncio.sleep(0.35)
-        except discord.HTTPException as e:
-            print(
-                f"[VelcorFeatures] Could not add reaction {reaction_emoji!r}: {e}"
-            )
-
-    if duplicate_labels:
-        warn = (
-            "⚠️ **Some roles were not given a reaction** because Discord only allows "
-            "**one reaction per emoji** on a message. Each role needs a **different** emoji:\n"
-            + "\n".join(f"• {name}" for name in duplicate_labels[:10])
-        )
-        try:
-            await channel.send(warn, delete_after=30)
-        except Exception:
-            print(f"[VelcorFeatures] Duplicate claim-role emojis: {duplicate_labels}")
+    if bot is not None:
+        bot.add_view(ClaimRolesView(int(gid), roles, guild))
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -929,7 +1021,8 @@ class VelcorFeatures(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print("[VelcorFeatures] Cog loaded — settings and database ready.")
+        n = register_claim_role_views(self.bot)
+        print(f"[VelcorFeatures] Cog loaded — claim-role dropdowns registered: {n}")
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
@@ -1363,8 +1456,8 @@ class VelcorFeatures(commands.Cog):
             "`!velcor3 addpingrole @Role emoji for WL raffle/giveaways` — Add claim-role reaction",
             "`!velcor3 setpingroledesc @Role description:...` — Update role line text",
             "`!velcor3 removepingrole @Role` — Remove claim-role reaction",
-            "`!velcor3 pingroles` — Post claim-roles reaction panel (here)",
-            "`!velcor3 post_claim_roles` — Post claim-roles reaction panel (Manage Server)",
+            "`!velcor3 pingroles` — Post claim-roles dropdown panel (here)",
+            "`!velcor3 post_claim_roles` — Post claim-roles dropdown panel (Manage Server)",
         ]
         embed.add_field(name="🛡️ General", value="\n".join(general), inline=False)
         embed.add_field(name="📈 Stats", value="\n".join(stats), inline=False)
@@ -1978,7 +2071,7 @@ class VelcorFeatures(commands.Cog):
 
     @commands.command(name="pingroles", help="Post the claim-roles reaction panel in this channel")
     async def pingroles(self, ctx):
-        await send_claim_roles_panel(ctx.channel, guild_id=ctx.guild.id)
+        await send_claim_roles_panel(ctx.channel, guild_id=ctx.guild.id, bot=ctx.bot)
 
     # ── DM Sender (owner-only) ─────────────────────────────────────────────
 

@@ -35,9 +35,9 @@ VELCOR_AUTO_REACT_EMOJI_ANIMATED = os.getenv("VELCOR_AUTO_REACT_EMOJI_ANIMATED",
 CLAIM_ROLES_EMBED_TITLE = _env_or_default("CLAIM_ROLES_EMBED_TITLE", "🎭  Claim your roles")
 CLAIM_ROLES_EMBED_DESCRIPTION = _env_or_default(
     "CLAIM_ROLES_EMBED_DESCRIPTION",
-    "React with the matching emoji on this message to claim a role. Remove your reaction to unclaim.",
+    "Use the **dropdown below** to pick your roles. You can select more than one.",
 )
-CLAIM_ROLES_ROLES_FIELD_NAME = _env_or_default("CLAIM_ROLES_ROLES_FIELD_NAME", "Emoji → Role")
+CLAIM_ROLES_ROLES_FIELD_NAME = _env_or_default("CLAIM_ROLES_ROLES_FIELD_NAME", "Available roles")
 
 
 def _env_color_hex(key: str, default: int) -> int:

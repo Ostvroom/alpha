@@ -354,7 +354,8 @@ async def post_claim_roles_to_channel(channel: discord.TextChannel) -> None:
 
     if channel.guild is None:
         raise ValueError("post_claim_roles_to_channel requires a guild text channel")
-    await send_claim_roles_panel(channel, guild_id=channel.guild.id)
+    client = channel._state._get_client()
+    await send_claim_roles_panel(channel, guild_id=channel.guild.id, bot=client)
 
 
 def _needs_manage_guild(interaction: Interaction) -> bool:

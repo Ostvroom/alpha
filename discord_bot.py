@@ -49,7 +49,7 @@ from server_panels import (
 )
 import guild_license
 from guild_alerts_commands import GuildLicenseCommands
-from velcor_features import VelcorFeatures, PingRolesView
+from velcor_features import VelcorFeatures, PingRolesView, register_claim_role_views
 
 BRAND_NAME = "Velcor3"
 
@@ -446,10 +446,11 @@ class BlockBrainBot(commands.Bot):
         await payment_commands.setup(self)
         self.add_view(VerificationView())
         self.add_view(CryptoPaymentView())
-        # Legacy button panels only (new panels use reactions)
+        # Legacy button panels (old messages); new panels use ClaimRolesView dropdown
         _claim_roles_view = PingRolesView()
         if _claim_roles_view.children:
             self.add_view(_claim_roles_view)
+        register_claim_role_views(self)
         self.monitor_twitter.start()
         self.trending_report.start()
         self.daily_x_trending_task.start()
