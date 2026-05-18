@@ -534,9 +534,56 @@ def load_ping_roles(guild_id: int) -> list:
         return []
 
 
+_ADDPINGROLE_LINE_RE = re.compile(
+    r"(?:!?\s*velcor3\s+)?addpingrole\s+"
+    r"(?:<@&(?P<role_id>\d+)>)\s+"
+    r"(?P<emoji><a?:\w+:\d+>|\d+|\S+)\s+"
+    r"(?P<description>.+?)\s*$",
+    re.IGNORECASE,
+)
+
+
+def parse_addpingrole_lines(content: str, guild: discord.Guild) -> list:
+    """Parse one or more addpingrole lines from a single message (paste-friendly)."""
+    rows: list = []
+    for line in (content or "").splitlines():
+        line = line.strip()
+        if not line or "addpingrole" not in line.lower():
+            continue
+        m = _ADDPINGROLE_LINE_RE.search(line)
+        if not m:
+            continue
+        role = guild.get_role(int(m.group("role_id")))
+        if not role:
+            continue
+        emoji_raw = (m.group("emoji") or "").strip()
+        if emoji_raw.startswith("<") and emoji_raw.endswith(">"):
+            em_id = re.search(r":(\d+)>", emoji_raw)
+            emoji_raw = em_id.group(1) if em_id else emoji_raw
+        rows.append(
+            {
+                "role": role,
+                "role_id": role.id,
+                "label": role.name,
+                "emoji": emoji_raw,
+                "description": (m.group("description") or "").strip(),
+            }
+        )
+    return rows
+
+
 def _pingrole_description_from_message(content: str, role: discord.Role, emoji: str) -> str:
-    """Parse multi-word description from the raw command (Greedy[str] is not valid in discord.py)."""
+    """Description for a single addpingrole (one line only — avoids swallowing pasted batches)."""
+    for row in parse_addpingrole_lines(content, role.guild):
+        if row["role_id"] == role.id:
+            return row["description"]
     text = (content or "").strip()
+    if "\n" in text and text.lower().count("addpingrole") > 1:
+        for line in text.splitlines():
+            if role.mention in line or f"<@&{role.id}>" in line:
+                sub = parse_addpingrole_lines(line, role.guild)
+                if sub:
+                    return sub[0]["description"]
     text = re.sub(r"(?i)^\s*!?\s*velcor3\s+addpingrole\s*", "", text).strip()
     for needle in (role.mention, f"<@&{role.id}>"):
         if needle in text:
@@ -544,7 +591,23 @@ def _pingrole_description_from_message(content: str, role: discord.Role, emoji: 
     emoji_s = (emoji or "").strip()
     if emoji_s and emoji_s in text:
         text = text.replace(emoji_s, " ", 1)
-    return " ".join(text.split())
+    if "addpingrole" in text.lower():
+        text = text.split("addpingrole")[0]
+    return " ".join(text.split()).strip()
+
+
+def save_ping_role(guild_id: int, role_id: int, label: str, emoji: str, description: str) -> None:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT OR REPLACE INTO ping_roles (guild_id, role_id, label, emoji, description)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (guild_id, role_id, label, emoji, description),
+    )
+    conn.commit()
+    conn.close()
 
 
 def format_claim_roles_bullets(guild: discord.Guild | None, roles: list) -> str:
@@ -555,6 +618,8 @@ def format_claim_roles_bullets(guild: discord.Guild | None, roles: list) -> str:
         role = guild.get_role(rid) if guild else None
         mention = role.mention if role else f"<@&{rid}>"
         desc = (row.get("description") or "").strip()
+        if "addpingrole" in desc.lower():
+            desc = ""
         if not desc:
             desc = (row.get("label") or "").strip()
         if desc:
@@ -1789,37 +1854,94 @@ class VelcorFeatures(commands.Cog):
 
     # ── Ping Roles ─────────────────────────────────────────────────────────
 
-    @commands.command(name="addpingrole", help="Add a claim-role reaction (Admin only)")
+    @commands.command(name="addpingrole", help="Add claim-role reaction(s). Paste multiple lines at once.")
     @commands.has_permissions(administrator=True)
     async def addpingrole(
         self,
         ctx,
-        role: discord.Role,
-        emoji: str,
+        role: discord.Role = None,
+        emoji: str = None,
     ):
-        """Example: !velcor3 addpingrole @WL Realm 🔥 for WL raffle/giveaways"""
+        """
+        One role per line when pasting a batch, e.g.:
+        !velcor3 addpingrole @WL Realm 🎫 for WL raffle/giveaways
+        !velcor3 addpingrole @Alpha Realm 🚀 for alpha plays
+        """
+        parsed = parse_addpingrole_lines(ctx.message.content or "", ctx.guild)
+
+        if len(parsed) > 1:
+            added: list[str] = []
+            skipped: list[str] = []
+            for row in parsed:
+                dup = emoji_already_used(ctx.guild.id, row["emoji"], ctx.guild)
+                if dup:
+                    skipped.append(f"{row['label']} (emoji used by {dup})")
+                    continue
+                save_ping_role(
+                    ctx.guild.id,
+                    row["role_id"],
+                    row["label"],
+                    row["emoji"],
+                    row["description"],
+                )
+                added.append(
+                    f"• {row['role'].mention} — {row['description']}"
+                    if row["description"]
+                    else f"• {row['role'].mention}"
+                )
+            lines = []
+            if added:
+                lines.append(f"✅ **Added {len(added)} reaction role(s):**\n" + "\n".join(added))
+            if skipped:
+                lines.append(
+                    "⚠️ **Skipped** (duplicate emoji — use a different emoji per role):\n"
+                    + "\n".join(f"• {s}" for s in skipped)
+                )
+            await ctx.send("\n\n".join(lines) or "Nothing added.")
+            return
+
+        if len(parsed) == 1:
+            row = parsed[0]
+            role = row["role"]
+            emoji = row["emoji"]
+            description = row["description"]
+        else:
+            if role is None or emoji is None:
+                await ctx.send(
+                    "Usage: `!velcor3 addpingrole @Role 🎫 short description`\n"
+                    "Or paste **one command per line** to add several roles at once."
+                )
+                return
+            description = _pingrole_description_from_message(
+                ctx.message.content or "", role, emoji
+            )
+
         dup = emoji_already_used(ctx.guild.id, emoji, ctx.guild)
         if dup:
             await ctx.send(
                 f"⚠️ That emoji is already used for **{dup}**. "
-                "Each role needs a **unique** reaction emoji (Discord allows only one per emoji on a message)."
+                "Each role needs a **unique** reaction emoji."
             )
             return
-        label = role.name.strip()
-        description = _pingrole_description_from_message(ctx.message.content or "", role, emoji)
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT OR REPLACE INTO ping_roles (guild_id, role_id, label, emoji, description)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (ctx.guild.id, role.id, label, emoji, description),
-        )
-        conn.commit()
-        conn.close()
+        save_ping_role(ctx.guild.id, role.id, role.name.strip(), emoji, description)
         preview = f"• {role.mention} — {description}" if description else f"• {role.mention}"
         await ctx.send(f"✅ Added reaction role\n{preview}")
+
+    @commands.command(name="listpingroles", help="List configured claim-role reactions (Admin only)")
+    @commands.has_permissions(administrator=True)
+    async def listpingroles(self, ctx):
+        roles = load_ping_roles(ctx.guild.id)
+        if not roles:
+            await ctx.send("No claim roles configured. Use `!velcor3 addpingrole`.")
+            return
+        lines = []
+        for row in roles:
+            r = ctx.guild.get_role(int(row["role_id"]))
+            mention = r.mention if r else f"<@&{row['role_id']}>"
+            em = format_role_emoji_display(ctx.guild, row["emoji"])
+            desc = (row.get("description") or row.get("label") or "").strip()
+            lines.append(f"{em} {mention} — `{row['emoji']}` — {desc}")
+        await ctx.send("**Claim roles:**\n" + "\n".join(lines))
 
     @commands.command(name="setpingroledesc", help="Update a claim-role line description (Admin only)")
     @commands.has_permissions(administrator=True)
