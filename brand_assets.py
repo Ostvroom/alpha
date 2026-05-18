@@ -3,10 +3,15 @@ Velcor brand logo + name for Discord embeds (author/footer icons).
 """
 from __future__ import annotations
 
+import io
+import logging
 import os
 from typing import List, Optional, Tuple
 
+import aiohttp
 import discord
+
+logger = logging.getLogger(__name__)
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -169,18 +174,21 @@ def apply_claim_roles_branding(embed: discord.Embed) -> None:
         embed.set_footer(text=footer)
 
 
-def _public_banner_urls() -> List[str]:
-    """HTTPS banner candidates (Render has no local banner.jpg unless you set a URL)."""
+def claim_roles_banner_urls() -> List[str]:
+    """HTTPS banner URLs from env (CLAIM_ROLES_BANNER_URL first)."""
     import config
 
     urls: List[str] = []
     for val in (
-        getattr(config, "CLAIM_ROLES_EMBED_IMAGE_URL", "") or "",
         getattr(config, "CLAIM_ROLES_BANNER_URL", "") or "",
+        getattr(config, "CLAIM_ROLES_EMBED_IMAGE_URL", "") or "",
     ):
         s = (val or "").strip()
         if s.startswith(("http://", "https://")):
             urls.append(s)
+    banner_path_cfg = (getattr(config, "CLAIM_ROLES_BANNER_PATH", "") or "").strip()
+    if banner_path_cfg.startswith(("http://", "https://")):
+        urls.append(banner_path_cfg)
     site = (
         (os.getenv("VELOCR3_PUBLIC_URL") or os.getenv("WEBSITE_PUBLIC_URL") or "")
         .strip()
@@ -189,7 +197,14 @@ def _public_banner_urls() -> List[str]:
     if site:
         for name in ("banner.jpg", "banner.png", "velcor3_banner.jpg", "velcor3_banner.png"):
             urls.append(f"{site}/{name}")
-    return urls
+    # De-dupe while preserving order
+    seen: set[str] = set()
+    out: List[str] = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
 
 
 def prepare_claim_roles_panel(
@@ -197,8 +212,8 @@ def prepare_claim_roles_panel(
     files: Optional[List[discord.File]] = None,
 ) -> Tuple[discord.Embed, List[discord.File]]:
     """
-    Attach claim-roles panel banner (large embed image at bottom).
-    Priority: embed image already set → CLAIM_ROLES_BANNER_PATH (file/URL) → repo file → public /banner.jpg URL.
+    Pick banner source for claim-roles panel.
+    Env HTTPS URLs (CLAIM_ROLES_BANNER_URL) win over local banner.jpg on disk.
     """
     import config
 
@@ -206,11 +221,12 @@ def prepare_claim_roles_panel(
     if embed_has_image(embed):
         return embed, out
 
-    banner_path_cfg = getattr(config, "CLAIM_ROLES_BANNER_PATH", "") or ""
-    if banner_path_cfg.startswith(("http://", "https://")):
-        embed.set_image(url=banner_path_cfg)
+    urls = claim_roles_banner_urls()
+    if urls:
+        embed.set_image(url=urls[0])
         return embed, out
 
+    banner_path_cfg = getattr(config, "CLAIM_ROLES_BANNER_PATH", "") or ""
     banner_path: Optional[str] = None
     banner_file: Optional[str] = None
     if banner_path_cfg and os.path.isfile(banner_path_cfg):
@@ -225,10 +241,47 @@ def prepare_claim_roles_panel(
         embed.set_image(url=f"attachment://{banner_file}")
         return embed, out
 
-    for url in _public_banner_urls():
-        embed.set_image(url=url)
+    return embed, out
+
+
+async def hydrate_claim_roles_banner_attachment(
+    embed: discord.Embed,
+    files: Optional[List[discord.File]] = None,
+) -> Tuple[discord.Embed, List[discord.File]]:
+    """
+    Download HTTPS banner and attach to the message (Discord often fails to proxy postimg URLs).
+    """
+    out: List[discord.File] = list(files or [])
+    if not embed or not embed.image or not embed.image.url:
+        return embed, out
+    url = (embed.image.url or "").strip()
+    if not url.startswith(("http://", "https://")):
         return embed, out
 
+    fname = "claim_roles_banner.png"
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; Velcor3Bot/1.0)"}
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(
+                url, timeout=aiohttp.ClientTimeout(total=20), allow_redirects=True
+            ) as resp:
+                if resp.status != 200:
+                    logger.warning("Claim roles banner HTTP %s for %s", resp.status, url)
+                    return embed, out
+                data = await resp.read()
+                if len(data) < 800:
+                    logger.warning("Claim roles banner too small (%s bytes) for %s", len(data), url)
+                    return embed, out
+                ctype = (resp.headers.get("content-type") or "").lower()
+                if "jpeg" in ctype or "jpg" in ctype:
+                    fname = "claim_roles_banner.jpg"
+                elif "webp" in ctype:
+                    fname = "claim_roles_banner.webp"
+                if not any(getattr(f, "filename", None) == fname for f in out):
+                    out.append(discord.File(io.BytesIO(data), filename=fname))
+                embed.set_image(url=f"attachment://{fname}")
+    except Exception as e:
+        logger.warning("Claim roles banner download failed for %s: %s", url, e)
     return embed, out
 
 

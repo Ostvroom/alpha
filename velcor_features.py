@@ -845,7 +845,7 @@ def build_claim_roles_embed(
 
 async def send_claim_roles_panel(channel, *, guild_id: Optional[int] = None) -> None:
     """Post claim-roles embed; users claim via reactions (not buttons)."""
-    from brand_assets import prepare_claim_roles_panel
+    from brand_assets import hydrate_claim_roles_banner_attachment, prepare_claim_roles_panel
 
     guild = getattr(channel, "guild", None)
     gid = guild_id if guild_id is not None else getattr(guild, "id", None)
@@ -859,6 +859,7 @@ async def send_claim_roles_panel(channel, *, guild_id: Optional[int] = None) -> 
         for_empty_config=not roles,
     )
     embed, files = prepare_claim_roles_panel(embed)
+    embed, files = await hydrate_claim_roles_banner_attachment(embed, files)
     kwargs: dict = {"embed": embed}
     if files:
         kwargs["files"] = files
