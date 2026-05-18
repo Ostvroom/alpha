@@ -169,13 +169,36 @@ def apply_claim_roles_branding(embed: discord.Embed) -> None:
         embed.set_footer(text=footer)
 
 
+def _public_banner_urls() -> List[str]:
+    """HTTPS banner candidates (Render has no local banner.jpg unless you set a URL)."""
+    import config
+
+    urls: List[str] = []
+    for val in (
+        getattr(config, "CLAIM_ROLES_EMBED_IMAGE_URL", "") or "",
+        getattr(config, "CLAIM_ROLES_BANNER_URL", "") or "",
+    ):
+        s = (val or "").strip()
+        if s.startswith(("http://", "https://")):
+            urls.append(s)
+    site = (
+        (os.getenv("VELOCR3_PUBLIC_URL") or os.getenv("WEBSITE_PUBLIC_URL") or "")
+        .strip()
+        .rstrip("/")
+    )
+    if site:
+        for name in ("banner.jpg", "banner.png", "velcor3_banner.jpg", "velcor3_banner.png"):
+            urls.append(f"{site}/{name}")
+    return urls
+
+
 def prepare_claim_roles_panel(
     embed: discord.Embed,
     files: Optional[List[discord.File]] = None,
 ) -> Tuple[discord.Embed, List[discord.File]]:
     """
-    Attach claim-roles panel banner: CLAIM_ROLES_EMBED_IMAGE_URL (already on embed),
-    then CLAIM_ROLES_BANNER_PATH, then repo brand banner (banner.jpg).
+    Attach claim-roles panel banner (large embed image at bottom).
+    Priority: embed image already set → CLAIM_ROLES_BANNER_PATH (file/URL) → repo file → public /banner.jpg URL.
     """
     import config
 
@@ -200,6 +223,12 @@ def prepare_claim_roles_panel(
         if not any(getattr(f, "filename", None) == banner_file for f in out):
             out.append(discord.File(banner_path, filename=banner_file))
         embed.set_image(url=f"attachment://{banner_file}")
+        return embed, out
+
+    for url in _public_banner_urls():
+        embed.set_image(url=url)
+        return embed, out
+
     return embed, out
 
 

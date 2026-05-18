@@ -564,13 +564,27 @@ def format_claim_roles_bullets(guild: discord.Guild | None, roles: list) -> str:
     return "\n".join(lines)
 
 
-def parse_stored_emoji(emoji_str: str) -> discord.PartialEmoji | str | None:
+def parse_stored_emoji(
+    emoji_str: str,
+    guild: discord.Guild | None = None,
+) -> discord.PartialEmoji | str | None:
     s = (emoji_str or "").strip()
     if not s:
         return None
     if s.isdigit():
-        return discord.PartialEmoji(name="role", id=int(s))
+        eid = int(s)
+        if guild:
+            em = guild.get_emoji(eid)
+            if em:
+                return em
+        return discord.PartialEmoji(name="emoji", id=eid)
     return s
+
+
+def reaction_emoji_key(emoji: discord.PartialEmoji | str) -> str:
+    if isinstance(emoji, discord.PartialEmoji):
+        return f"custom:{emoji.id}"
+    return f"unicode:{emoji}"
 
 
 def format_role_emoji_display(guild: discord.Guild | None, emoji_str: str) -> str:
@@ -586,18 +600,39 @@ def format_role_emoji_display(guild: discord.Guild | None, emoji_str: str) -> st
     return s
 
 
-def reaction_matches_stored(stored_emoji: str, reaction_emoji) -> bool:
-    parsed = parse_stored_emoji(stored_emoji)
+def reaction_matches_stored(
+    stored_emoji: str,
+    reaction_emoji,
+    guild: discord.Guild | None = None,
+) -> bool:
+    parsed = parse_stored_emoji(stored_emoji, guild)
     if isinstance(parsed, discord.PartialEmoji):
         rid = getattr(reaction_emoji, "id", None)
         return rid is not None and int(rid) == int(parsed.id)
     return str(reaction_emoji) == str(parsed)
 
 
-def role_id_for_reaction(guild_id: int, reaction_emoji) -> int | None:
+def role_id_for_reaction(
+    guild_id: int,
+    reaction_emoji,
+    guild: discord.Guild | None = None,
+) -> int | None:
     for row in load_ping_roles(guild_id):
-        if reaction_matches_stored(row["emoji"], reaction_emoji):
+        if reaction_matches_stored(row["emoji"], reaction_emoji, guild):
             return int(row["role_id"])
+    return None
+
+
+def emoji_already_used(guild_id: int, emoji_str: str, guild: discord.Guild | None = None) -> str | None:
+    """Return label of existing role using this emoji, or None."""
+    probe = parse_stored_emoji(emoji_str, guild)
+    if probe is None:
+        return None
+    key = reaction_emoji_key(probe)
+    for row in load_ping_roles(guild_id):
+        other = parse_stored_emoji(row["emoji"], guild)
+        if other is not None and reaction_emoji_key(other) == key:
+            return row.get("label") or str(row["role_id"])
     return None
 
 
@@ -734,9 +769,6 @@ def build_claim_roles_embed(
 
     apply_claim_roles_branding(embed)
 
-    image_url = getattr(config, "CLAIM_ROLES_EMBED_IMAGE_URL", "") or ""
-    if image_url:
-        embed.set_image(url=image_url)
     thumb_url = getattr(config, "CLAIM_ROLES_EMBED_THUMBNAIL_URL", "") or ""
     if thumb_url:
         embed.set_thumbnail(url=thumb_url)
@@ -771,16 +803,41 @@ async def send_claim_roles_panel(channel, *, guild_id: Optional[int] = None) -> 
         return
 
     register_claim_panel(message.id, int(gid), channel.id)
+
+    seen_keys: set[str] = set()
+    to_add: list = []
+    duplicate_labels: list[str] = []
     for row in roles:
-        reaction_emoji = parse_stored_emoji(row["emoji"])
+        reaction_emoji = parse_stored_emoji(row["emoji"], guild)
         if not reaction_emoji:
+            duplicate_labels.append(f"{row.get('label', row['role_id'])} (no emoji)")
             continue
+        key = reaction_emoji_key(reaction_emoji)
+        if key in seen_keys:
+            duplicate_labels.append(row.get("label") or str(row["role_id"]))
+            continue
+        seen_keys.add(key)
+        to_add.append(reaction_emoji)
+
+    for reaction_emoji in to_add:
         try:
             await message.add_reaction(reaction_emoji)
+            await asyncio.sleep(0.35)
         except discord.HTTPException as e:
             print(
-                f"[VelcorFeatures] Could not add reaction for role {row['role_id']}: {e}"
+                f"[VelcorFeatures] Could not add reaction {reaction_emoji!r}: {e}"
             )
+
+    if duplicate_labels:
+        warn = (
+            "⚠️ **Some roles were not given a reaction** because Discord only allows "
+            "**one reaction per emoji** on a message. Each role needs a **different** emoji:\n"
+            + "\n".join(f"• {name}" for name in duplicate_labels[:10])
+        )
+        try:
+            await channel.send(warn, delete_after=30)
+        except Exception:
+            print(f"[VelcorFeatures] Duplicate claim-role emojis: {duplicate_labels}")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -815,7 +872,7 @@ class VelcorFeatures(commands.Cog):
         if not guild:
             return
 
-        role_id = role_id_for_reaction(panel["guild_id"], payload.emoji)
+        role_id = role_id_for_reaction(panel["guild_id"], payload.emoji, guild)
         if not role_id:
             return
 
@@ -851,7 +908,7 @@ class VelcorFeatures(commands.Cog):
         if not guild:
             return
 
-        role_id = role_id_for_reaction(panel["guild_id"], payload.emoji)
+        role_id = role_id_for_reaction(panel["guild_id"], payload.emoji, guild)
         if not role_id:
             return
 
@@ -1741,6 +1798,13 @@ class VelcorFeatures(commands.Cog):
         emoji: str,
     ):
         """Example: !velcor3 addpingrole @WL Realm 🔥 for WL raffle/giveaways"""
+        dup = emoji_already_used(ctx.guild.id, emoji, ctx.guild)
+        if dup:
+            await ctx.send(
+                f"⚠️ That emoji is already used for **{dup}**. "
+                "Each role needs a **unique** reaction emoji (Discord allows only one per emoji on a message)."
+            )
+            return
         label = role.name.strip()
         description = _pingrole_description_from_message(ctx.message.content or "", role, emoji)
         conn = get_db_connection()

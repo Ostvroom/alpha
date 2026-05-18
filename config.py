@@ -79,6 +79,8 @@ CLAIM_ROLES_EMBED_IMAGE_URL = _env_optional_url("CLAIM_ROLES_EMBED_IMAGE_URL")
 # Local file path or https URL for panel banner (used when EMBED_IMAGE_URL is unset).
 # Empty = attach repo `banner.jpg` / brand banner when posting the panel.
 CLAIM_ROLES_BANNER_PATH = (os.getenv("CLAIM_ROLES_BANNER_PATH") or "").strip()
+# Direct HTTPS banner URL (recommended on Render): e.g. https://yoursite.com/banner.jpg
+CLAIM_ROLES_BANNER_URL = _env_optional_url("CLAIM_ROLES_BANNER_URL")
 # Small top-right thumbnail (optional).
 CLAIM_ROLES_EMBED_THUMBNAIL_URL = _env_optional_url("CLAIM_ROLES_EMBED_THUMBNAIL_URL")
 
