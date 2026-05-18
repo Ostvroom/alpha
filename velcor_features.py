@@ -611,21 +611,25 @@ def save_ping_role(guild_id: int, role_id: int, label: str, emoji: str, descript
 
 
 def format_claim_roles_bullets(guild: discord.Guild | None, roles: list) -> str:
-    """Bullet list with colored role mentions — matches panel layout."""
-    lines: list[str] = []
+    """Emoji → role mapping so users know which reaction to click."""
+    lines: list[str] = [
+        "**React with the emoji on the left** (same emoji under this message):",
+        "",
+    ]
     for row in roles:
         rid = int(row["role_id"])
         role = guild.get_role(rid) if guild else None
         mention = role.mention if role else f"<@&{rid}>"
+        em = format_role_emoji_display(guild, row.get("emoji", ""))
         desc = (row.get("description") or "").strip()
         if "addpingrole" in desc.lower():
             desc = ""
         if not desc:
             desc = (row.get("label") or "").strip()
         if desc:
-            lines.append(f"• {mention} — {desc}")
+            lines.append(f"{em}  →  {mention}  —  {desc}")
         else:
-            lines.append(f"• {mention}")
+            lines.append(f"{em}  →  {mention}")
     return "\n".join(lines)
 
 
@@ -811,7 +815,7 @@ def build_claim_roles_embed(
         "CLAIM_ROLES_EMBED_DESCRIPTION",
         "React with the matching emoji on this message to claim a role. Remove your reaction to unclaim.",
     )
-    roles_field_name = getattr(config, "CLAIM_ROLES_ROLES_FIELD_NAME", "Role name")
+    roles_field_name = getattr(config, "CLAIM_ROLES_ROLES_FIELD_NAME", "Emoji → Role")
     role_list = format_claim_roles_bullets(guild, roles)
 
     embed = discord.Embed(
@@ -826,8 +830,9 @@ def build_claim_roles_embed(
     embed.add_field(
         name="How to claim",
         value=(
-            "React below with the emoji for the role you want\n"
-            "Remove your reaction anytime to drop that role"
+            "1️⃣ Pick your role in the list above (left emoji = reaction to use)\n"
+            "2️⃣ **Click that emoji** under this message\n"
+            "3️⃣ Remove your reaction anytime to drop the role"
         ),
         inline=False,
     )

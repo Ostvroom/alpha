@@ -37,7 +37,7 @@ CLAIM_ROLES_EMBED_DESCRIPTION = _env_or_default(
     "CLAIM_ROLES_EMBED_DESCRIPTION",
     "React with the matching emoji on this message to claim a role. Remove your reaction to unclaim.",
 )
-CLAIM_ROLES_ROLES_FIELD_NAME = _env_or_default("CLAIM_ROLES_ROLES_FIELD_NAME", "Role name")
+CLAIM_ROLES_ROLES_FIELD_NAME = _env_or_default("CLAIM_ROLES_ROLES_FIELD_NAME", "Emoji → Role")
 
 
 def _env_color_hex(key: str, default: int) -> int:
