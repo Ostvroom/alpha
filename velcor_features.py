@@ -534,6 +534,19 @@ def load_ping_roles(guild_id: int) -> list:
         return []
 
 
+def _pingrole_description_from_message(content: str, role: discord.Role, emoji: str) -> str:
+    """Parse multi-word description from the raw command (Greedy[str] is not valid in discord.py)."""
+    text = (content or "").strip()
+    text = re.sub(r"(?i)^\s*!?\s*velcor3\s+addpingrole\s*", "", text).strip()
+    for needle in (role.mention, f"<@&{role.id}>"):
+        if needle in text:
+            text = text.replace(needle, " ", 1)
+    emoji_s = (emoji or "").strip()
+    if emoji_s and emoji_s in text:
+        text = text.replace(emoji_s, " ", 1)
+    return " ".join(text.split())
+
+
 def format_claim_roles_bullets(guild: discord.Guild | None, roles: list) -> str:
     """Bullet list with colored role mentions — matches panel layout."""
     lines: list[str] = []
@@ -1219,7 +1232,7 @@ class VelcorFeatures(commands.Cog):
         roles = [
             "`!velcor3 batchrole @Role <ids>` — Batch assign role",
             "`!velcor3 role_roleless @Role` — Assign to roleless",
-            "`!velcor3 addpingrole @Role emoji description:...` — Add claim-role reaction",
+            "`!velcor3 addpingrole @Role emoji for WL raffle/giveaways` — Add claim-role reaction",
             "`!velcor3 setpingroledesc @Role description:...` — Update role line text",
             "`!velcor3 removepingrole @Role` — Remove claim-role reaction",
             "`!velcor3 pingroles` — Post claim-roles reaction panel (here)",
@@ -1726,12 +1739,10 @@ class VelcorFeatures(commands.Cog):
         ctx,
         role: discord.Role,
         emoji: str,
-        description: commands.Greedy[str],
-        label: str = "",
     ):
         """Example: !velcor3 addpingrole @WL Realm 🔥 for WL raffle/giveaways"""
-        label = (label or role.name).strip()
-        description = (description or "").strip()
+        label = role.name.strip()
+        description = _pingrole_description_from_message(ctx.message.content or "", role, emoji)
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
