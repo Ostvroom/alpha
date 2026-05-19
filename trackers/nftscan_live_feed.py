@@ -269,6 +269,8 @@ class NftscanLiveFeed:
         if intel_on:
             self._sync_tracked_addresses()
         raw_mints = await self.listener.flush_recent_mints(50)
+        if raw_mints:
+            logger.info("[LiveMints] Received %s raw mint event(s) from listener", len(raw_mints))
         if intel_on:
             tracked_buys = await self.listener.flush_recent_tracked_activity(50)
             wallets = get_tracked_wallet_map()
@@ -314,6 +316,8 @@ class NftscanLiveFeed:
                     continue
             filtered.append(m)
         new_mints = filtered
+        if raw_mints or new_mints:
+            logger.info("[LiveMints] raw=%s -> dedup=%s -> filtered=%s", len(raw_mints), len(new_hot_mints), len(new_mints))
 
         if new_mints and self.social_fetcher:
             for m in new_mints:
@@ -336,6 +340,7 @@ class NftscanLiveFeed:
 
         if new_mints and config.LIVE_MINT_CHANNEL_ID:
             embeds = build_live_mint_embeds(new_mints)
+            logger.info("[LiveMints] Sending %s live mint embed(s) to channel %s", len(embeds), config.LIVE_MINT_CHANNEL_ID)
             await self._send_embeds(config.LIVE_MINT_CHANNEL_ID, embeds)
 
         if new_mints:
@@ -489,6 +494,7 @@ class NftscanLiveFeed:
             for hot, e in zip(hot_collections, enriched):
                 hot["mint"] = e
 
+        logger.info("[HotMints] Sending %s hot mint alert(s) to channel %s", len(hot_collections), ch)
         for hot in hot_collections:
             mint = hot["mint"]
             if intel_on:

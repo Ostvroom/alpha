@@ -29,7 +29,8 @@ ZERO_ADDRESS_SHORT = ZERO_ADDRESS
 # Public WebSocket RPC endpoints (fallback chain)
 WS_ENDPOINTS = [
     "wss://ethereum.publicnode.com",
-    "wss://eth.llamarpc.com",
+    "wss://eth.drpc.org",
+    "wss://ethereum-rpc.publicnode.com",
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -228,7 +229,16 @@ class EthMintListener:
                 endpoint_idx += 1
 
     async def _connect_and_listen(self, uri: str):
-        async with websockets.connect(uri, ping_interval=20, ping_timeout=10) as ws:
+        async with websockets.connect(
+            uri,
+            ping_interval=20,
+            ping_timeout=10,
+            close_timeout=5,
+            extra_headers={
+                "Origin": "https://etherscan.io",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+            },
+        ) as ws:
             await ws.send(json.dumps({
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -237,7 +247,7 @@ class EthMintListener:
                     "topics": [[ERC721_TRANSFER, ERC1155_TRANSFER_SINGLE, ERC1155_TRANSFER_BATCH]]
                 }]
             }))
-            response = json.loads(await ws.recv())
+            response = json.loads(await asyncio.wait_for(ws.recv(), timeout=15))
             self._sub_id = response.get("result")
             if not self._sub_id:
                 logger.error(f"Subscription failed: {response}")
