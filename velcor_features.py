@@ -878,8 +878,13 @@ class ClaimRolesSelect(discord.ui.Select):
             err_lines.append("⚠️ Could not update: " + ", ".join(failed))
             await interaction.response.send_message("\n".join(err_lines), ephemeral=True)
         else:
-            # Silent success — no confirmation embed/message
-            await interaction.response.defer(ephemeral=True)
+            # Refresh the panel view to force-close the dropdown
+            try:
+                roles = load_ping_roles(self.guild_id)
+                view = ClaimRolesView(self.guild_id, roles, interaction.guild)
+                await interaction.response.edit_message(view=view)
+            except Exception:
+                await interaction.response.defer(ephemeral=True)
 
 
 class ClaimRolesView(discord.ui.View):
