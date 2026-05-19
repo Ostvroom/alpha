@@ -1545,7 +1545,10 @@ class TwitterClient:
         # Internal timeout: aget_user_info can hang indefinitely with curl_cffi
         # (curl doesn't honour asyncio cancellation). Apply a hard cap here so
         # the caller's outer asyncio.wait_for doesn't have to do all the work.
-        _inner_timeout = max(8.0, float(getattr(config, "MENTION_RESOLVE_TIMEOUT_SEC", 12.0) or 12.0) - 2.0)
+        # Split outer timeout 50/50 between Scweet and Twikit fallback so
+        # Twikit actually gets time to respond instead of being starved.
+        _outer = float(getattr(config, "MENTION_RESOLVE_TIMEOUT_SEC", 12.0) or 12.0)
+        _inner_timeout = max(5.0, _outer * 0.5)
         try:
             await self._twikit_pace()
             profiles = await asyncio.wait_for(

@@ -475,10 +475,12 @@ MENTION_RESOLVE_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("MENTION_RESOLVE_TIM
 # Retry attempts after a timeout (0 = no retry; retrying with a bad session just doubles the wait).
 MENTION_RESOLVE_RETRIES = max(0, min(3, _env_int("MENTION_RESOLVE_RETRIES", 0)))
 # Max @mentions to resolve per HVA scan (caps total lookups; each lookup costs ~12s if it times out).
-MENTION_RESOLVE_MAX_PER_HVA_SCAN = max(1, min(30, _env_int("MENTION_RESOLVE_MAX_PER_HVA_SCAN", 12)))
+MENTION_RESOLVE_MAX_PER_HVA_SCAN = max(1, min(30, _env_int("MENTION_RESOLVE_MAX_PER_HVA_SCAN", 6)))
 # After this many timeouts in a batch, stop attempting more @mention lookups for that batch.
 # Prevents a degraded proxy from burning minutes on every HVA in the batch.
-MENTION_RESOLVE_MAX_TIMEOUTS_PER_BATCH = max(1, min(50, _env_int("MENTION_RESOLVE_MAX_TIMEOUTS_PER_BATCH", 6)))
+MENTION_RESOLVE_MAX_TIMEOUTS_PER_BATCH = max(1, min(50, _env_int("MENTION_RESOLVE_MAX_TIMEOUTS_PER_BATCH", 3)))
+# Bypass Scweet after this many timeouts per session (lower = faster failover to Twikit).
+MENTION_SCWEET_BYPASS_AFTER_TIMEOUTS = max(1, min(10, _env_int("MENTION_SCWEET_BYPASS_AFTER_TIMEOUTS", 1)))
 
 
 def _parse_time_hhmm(val: str, default: str = "00:00"):
