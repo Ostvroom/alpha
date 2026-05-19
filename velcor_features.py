@@ -806,8 +806,15 @@ def _select_option_emoji(
 class ClaimRolesSelect(discord.ui.Select):
     """Multi-select dropdown — syncs member roles with selection."""
 
-    def __init__(self, guild_id: int, roles: list, guild: discord.Guild | None = None):
+    def __init__(
+        self,
+        guild_id: int,
+        roles: list,
+        guild: discord.Guild | None = None,
+        member: discord.Member | None = None,
+    ):
         self.guild_id = guild_id
+        member_role_ids = {r.id for r in getattr(member, "roles", [])}
         options: list[discord.SelectOption] = []
         for row in roles[:25]:
             rid = int(row["role_id"])
@@ -816,7 +823,11 @@ class ClaimRolesSelect(discord.ui.Select):
             if "addpingrole" in desc.lower():
                 desc = (row.get("label") or "")[:100]
             em = _select_option_emoji(guild, row.get("emoji", ""))
-            opt_kw: dict = {"label": label, "value": str(rid)}
+            opt_kw: dict = {
+                "label": label,
+                "value": str(rid),
+                "default": rid in member_role_ids,
+            }
             if desc:
                 opt_kw["description"] = desc
             if em is not None:
@@ -879,9 +890,13 @@ class ClaimRolesSelect(discord.ui.Select):
             await interaction.response.send_message("\n".join(err_lines), ephemeral=True)
         else:
             # Refresh the panel view to force-close the dropdown
+            # Rebuild with member's current roles pre-checked so reopening
+            # the menu shows reality — preventing accidental removals.
             try:
                 roles = load_ping_roles(self.guild_id)
-                view = ClaimRolesView(self.guild_id, roles, interaction.guild)
+                view = ClaimRolesView(
+                    self.guild_id, roles, interaction.guild, member
+                )
                 await interaction.response.edit_message(view=view)
             except Exception:
                 await interaction.response.defer(ephemeral=True)
@@ -902,10 +917,16 @@ class ClaimRolesSelect(discord.ui.Select):
 class ClaimRolesView(discord.ui.View):
     """Persistent dropdown for claim roles (one view per guild_id)."""
 
-    def __init__(self, guild_id: int, roles: list, guild: discord.Guild | None = None):
+    def __init__(
+        self,
+        guild_id: int,
+        roles: list,
+        guild: discord.Guild | None = None,
+        member: discord.Member | None = None,
+    ):
         super().__init__(timeout=None)
         if roles:
-            self.add_item(ClaimRolesSelect(guild_id, roles, guild))
+            self.add_item(ClaimRolesSelect(guild_id, roles, guild, member))
 
 
 def register_claim_role_views(bot: commands.Bot) -> int:
