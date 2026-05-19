@@ -811,10 +811,8 @@ class ClaimRolesSelect(discord.ui.Select):
         guild_id: int,
         roles: list,
         guild: discord.Guild | None = None,
-        member: discord.Member | None = None,
     ):
         self.guild_id = guild_id
-        member_role_ids = {r.id for r in getattr(member, "roles", [])}
         options: list[discord.SelectOption] = []
         for row in roles[:25]:
             rid = int(row["role_id"])
@@ -823,11 +821,7 @@ class ClaimRolesSelect(discord.ui.Select):
             if "addpingrole" in desc.lower():
                 desc = (row.get("label") or "")[:100]
             em = _select_option_emoji(guild, row.get("emoji", ""))
-            opt_kw: dict = {
-                "label": label,
-                "value": str(rid),
-                "default": rid in member_role_ids,
-            }
+            opt_kw: dict = {"label": label, "value": str(rid)}
             if desc:
                 opt_kw["description"] = desc
             if em is not None:
@@ -907,16 +901,10 @@ class ClaimRolesSelect(discord.ui.Select):
 class ClaimRolesView(discord.ui.View):
     """Persistent dropdown for claim roles (one view per guild_id)."""
 
-    def __init__(
-        self,
-        guild_id: int,
-        roles: list,
-        guild: discord.Guild | None = None,
-        member: discord.Member | None = None,
-    ):
+    def __init__(self, guild_id: int, roles: list, guild: discord.Guild | None = None):
         super().__init__(timeout=None)
         if roles:
-            self.add_item(ClaimRolesSelect(guild_id, roles, guild, member))
+            self.add_item(ClaimRolesSelect(guild_id, roles, guild))
 
 
 def register_claim_role_views(bot: commands.Bot) -> int:
