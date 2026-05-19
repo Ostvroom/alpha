@@ -869,17 +869,17 @@ class ClaimRolesSelect(discord.ui.Select):
             except discord.HTTPException:
                 failed.append(role.name)
 
-        lines: list[str] = []
-        if added:
-            lines.append("✅ **Added:** " + ", ".join(added))
-        if removed:
-            lines.append("➖ **Removed:** " + ", ".join(removed))
         if failed:
-            lines.append("⚠️ Could not update: " + ", ".join(failed))
-        if not lines:
-            lines.append("No changes — your roles already match your selection.")
-
-        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+            err_lines: list[str] = []
+            if added:
+                err_lines.append("✅ **Added:** " + ", ".join(added))
+            if removed:
+                err_lines.append("➖ **Removed:** " + ", ".join(removed))
+            err_lines.append("⚠️ Could not update: " + ", ".join(failed))
+            await interaction.response.send_message("\n".join(err_lines), ephemeral=True)
+        else:
+            # Silent success — no confirmation embed/message
+            await interaction.response.defer(ephemeral=True)
 
 
 class ClaimRolesView(discord.ui.View):
