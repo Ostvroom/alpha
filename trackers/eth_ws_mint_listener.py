@@ -16,6 +16,12 @@ from datetime import datetime, timezone, timedelta
 import websockets
 import logging
 
+# Free HTTP RPC fallbacks for when WebSocket is blocked (cloud IPs)
+_HTTP_POLL_RPCS = [
+    "https://1rpc.io/eth",
+    "https://eth.drpc.org",
+]
+
 logger = logging.getLogger(__name__)
 
 # Event signatures
@@ -236,11 +242,87 @@ class EthMintListener:
                 err_str = str(e) or f"{type(e).__name__}"
                 logger.error(f"Listener error: {err_str}")
                 consecutive_errors += 1
+            # Fallback: if WebSocket is consistently blocked, poll via HTTP RPC
+            if consecutive_errors >= 3 and self._running:
+                await self._http_poll_once()
             if self._running:
                 wait = min(60, 5 * (2 ** min(consecutive_errors, 5)))
                 logger.debug(f"Reconnecting in {wait}s...")
                 await asyncio.sleep(wait)
                 endpoint_idx += 1
+
+    async def _http_poll_once(self) -> None:
+        """Poll recent blocks via HTTP RPC when WebSocket is blocked by IP filtering."""
+        w3 = None
+        try:
+            import trackers.eth_tracker as et
+            w3 = getattr(et, "w3", None)
+            if w3 is not None:
+                try:
+                    if not w3.is_connected():
+                        w3 = None
+                except Exception:
+                    w3 = None
+        except Exception:
+            w3 = None
+
+        if w3 is None:
+            try:
+                from web3 import Web3
+                for url in _HTTP_POLL_RPCS:
+                    try:
+                        w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 20}))
+                        if w3.is_connected():
+                            break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+        if w3 is None:
+            return
+
+        try:
+            current = await asyncio.to_thread(lambda: w3.eth.block_number)
+            from_block = max(current - 5, 0)
+            logs = await asyncio.to_thread(
+                lambda: w3.eth.get_logs(
+                    {
+                        "fromBlock": from_block,
+                        "toBlock": current,
+                        "topics": [
+                            [ERC721_TRANSFER, ERC1155_TRANSFER_SINGLE, ERC1155_TRANSFER_BATCH],
+                            NULL_ADDRESS_TOPIC,
+                        ],
+                    }
+                )
+            )
+            if logs:
+                logger.info(
+                    "[HTTP Poll] Fetched %s mint event(s) from blocks %s-%s",
+                    len(logs),
+                    from_block,
+                    current,
+                )
+                for log in logs:
+                    raw_log = {
+                        "address": str(log.get("address", "")).lower(),
+                        "topics": [
+                            "0x" + t.hex() if hasattr(t, "hex") else str(t)
+                            for t in (log.get("topics") or [])
+                        ],
+                        "data": "0x" + log["data"].hex() if hasattr(log["data"], "hex") else str(log.get("data", "")),
+                        "transactionHash": "0x" + log["transactionHash"].hex()
+                        if hasattr(log["transactionHash"], "hex")
+                        else str(log.get("transactionHash", "")),
+                        "blockNumber": hex(int(log["blockNumber"])),
+                    }
+                    try:
+                        await self._handle_log(raw_log)
+                    except Exception as e:
+                        logger.debug("[HTTP Poll] _handle_log error: %s", e)
+        except Exception as e:
+            logger.debug("[HTTP Poll] Error: %s", e)
 
     async def _connect_and_listen(self, uri: str):
         async with websockets.connect(
