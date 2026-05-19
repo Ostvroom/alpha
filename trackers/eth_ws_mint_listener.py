@@ -26,12 +26,25 @@ from trackers.eth_address import ZERO_ADDRESS, normalize_eth_address
 
 ZERO_ADDRESS_SHORT = ZERO_ADDRESS
 
-# Public WebSocket RPC endpoints (fallback chain)
-WS_ENDPOINTS = [
-    "wss://ethereum.publicnode.com",
-    "wss://eth.drpc.org",
-    "wss://ethereum-rpc.publicnode.com",
-]
+def _build_ws_endpoints() -> List[str]:
+    """Build WebSocket endpoint list from env (private RPCs first, then public fallbacks)."""
+    custom: List[str] = []
+    raw = (os.getenv("ETHEREUM_WS_RPC_URLS") or "").strip()
+    if raw:
+        custom = [u.strip() for u in raw.split(",") if u.strip()]
+    else:
+        single = (os.getenv("ETHEREUM_WS_RPC_URL") or "").strip()
+        if single:
+            custom = [single]
+    # Public fallbacks — these may block cloud IPs (Render, AWS, etc.)
+    public = [
+        "wss://ethereum.publicnode.com",
+        "wss://eth.drpc.org",
+        "wss://ethereum-rpc.publicnode.com",
+    ]
+    return custom + public
+
+WS_ENDPOINTS = _build_ws_endpoints()
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SPAM / DUST FILTER
@@ -220,7 +233,8 @@ class EthMintListener:
                 logger.warning(f"WebSocket closed ({e.code}): {e.reason}")
                 consecutive_errors += 1
             except Exception as e:
-                logger.error(f"Listener error: {e}")
+                err_str = str(e) or f"{type(e).__name__}"
+                logger.error(f"Listener error: {err_str}")
                 consecutive_errors += 1
             if self._running:
                 wait = min(60, 5 * (2 ** min(consecutive_errors, 5)))
