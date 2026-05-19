@@ -209,16 +209,20 @@ class EthMintListener:
 
     async def _run_loop(self):
         endpoint_idx = 0
+        consecutive_errors = 0
         while self._running:
             endpoint = WS_ENDPOINTS[endpoint_idx % len(WS_ENDPOINTS)]
             try:
                 await self._connect_and_listen(endpoint)
+                consecutive_errors = 0
             except websockets.ConnectionClosed as e:
                 logger.warning(f"WebSocket closed ({e.code}): {e.reason}")
+                consecutive_errors += 1
             except Exception as e:
                 logger.error(f"Listener error: {e}")
+                consecutive_errors += 1
             if self._running:
-                wait = 5
+                wait = min(60, 5 * (2 ** min(consecutive_errors, 5)))
                 logger.debug(f"Reconnecting in {wait}s...")
                 await asyncio.sleep(wait)
                 endpoint_idx += 1

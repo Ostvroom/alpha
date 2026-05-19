@@ -1218,7 +1218,7 @@ class TwitterClient:
             if not err_msg:
                 err_msg = f"Empty {type(e).__name__}"
 
-            if any(code in err_msg for code in ["429", "503", "403", "502", "504"]) or "Empty" in err_msg or "Timeout" in err_msg:
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504"]) or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
                     return await self.get_user_id(handle, _retry_depth=_retry_depth + 1)
@@ -1244,7 +1244,7 @@ class TwitterClient:
             return None
         except Exception as e:
             err_msg = str(e)
-            if any(code in err_msg for code in ["429", "503", "403", "502", "504"]) or "Empty" in err_msg or "Timeout" in err_msg:
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504"]) or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
                     return await self._get_user_id_twikit(handle, session, _retry_depth + 1)
@@ -1324,7 +1324,7 @@ class TwitterClient:
             if not err_msg:
                 err_msg = f"Empty {type(e).__name__}"
 
-            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg:
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 print(f"      Retrying due to {err_msg}...")
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
@@ -1386,7 +1386,7 @@ class TwitterClient:
             err_msg = str(e)
             if not err_msg:
                 err_msg = f"Empty {type(e).__name__}"
-            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg:
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 print(f"      Retrying due to {err_msg}...")
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
@@ -1428,7 +1428,7 @@ class TwitterClient:
                 return []
             if not err_msg:
                 err_msg = f"Empty {type(e).__name__}"
-            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg:
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
                     return await self.get_user_timeline(user_id, count, handle=handle, _retry_depth=_retry_depth + 1)
@@ -1454,7 +1454,7 @@ class TwitterClient:
                 return []
             if not err_msg:
                 err_msg = f"Empty {type(e).__name__}"
-            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg:
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
                     return await self._get_user_timeline_twikit(user_id, count, _retry_depth + 1)
@@ -1490,7 +1490,7 @@ class TwitterClient:
             err_msg = _scweet_error_to_str(e)
             if not err_msg:
                 err_msg = f"Empty {type(e).__name__}"
-            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg:
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
                     return await self.get_user_info(user_id, handle=handle, _retry_depth=_retry_depth + 1)
@@ -1512,7 +1512,7 @@ class TwitterClient:
             err_msg = str(e)
             if not err_msg:
                 err_msg = f"Empty {type(e).__name__}"
-            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg:
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
                     return await self._get_user_info_twikit(user_id, _retry_depth + 1)
@@ -1578,7 +1578,7 @@ class TwitterClient:
             err_msg = _scweet_error_to_str(e)
             if not err_msg:
                 err_msg = f"Empty {type(e).__name__}"
-            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Timeout" in err_msg:
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
                     return await self.get_user_by_handle(handle, _retry_depth=_retry_depth + 1)
@@ -1597,7 +1597,7 @@ class TwitterClient:
             return user
         except Exception as e:
             err_msg = str(e) or f"Empty {type(e).__name__}"
-            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Timeout" in err_msg:
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
                     return await self._get_user_by_handle_twikit(handle, _retry_depth + 1)
@@ -1639,7 +1639,7 @@ class TwitterClient:
             err_msg = _scweet_error_to_str(e)
             if not err_msg:
                 err_msg = f"Empty {type(e).__name__}"
-            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Timeout" in err_msg:
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
                     return await self.search_recent_tweets(query, count=count, _retry_depth=_retry_depth + 1)
@@ -1670,7 +1670,7 @@ class TwitterClient:
                 return out
         except Exception as e:
             err_msg = str(e) or f"Empty {type(e).__name__}"
-            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Timeout" in err_msg:
+            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
                     return await self._search_recent_tweets_twikit(query, count, _retry_depth + 1)
