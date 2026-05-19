@@ -886,6 +886,18 @@ class ClaimRolesSelect(discord.ui.Select):
             except Exception:
                 await interaction.response.defer(ephemeral=True)
 
+            # Ephemeral confirmation of what changed
+            if added or removed:
+                lines: list[str] = []
+                if added:
+                    lines.append("✅ **Claimed:** " + ", ".join(added))
+                if removed:
+                    lines.append("➖ **Removed:** " + ", ".join(removed))
+                try:
+                    await interaction.followup.send("\n".join(lines), ephemeral=True)
+                except Exception:
+                    pass
+
 
 class ClaimRolesView(discord.ui.View):
     """Persistent dropdown for claim roles (one view per guild_id)."""
