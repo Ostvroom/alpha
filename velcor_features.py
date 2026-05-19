@@ -878,6 +878,14 @@ class ClaimRolesSelect(discord.ui.Select):
             await interaction.response.send_message("\n".join(err_lines), ephemeral=True)
         else:
             await interaction.response.defer(ephemeral=True)
+            # Reset dropdown so Discord doesn't persist claimed roles in header
+            try:
+                await interaction.message.edit(view=None)
+                roles = load_ping_roles(self.guild_id)
+                view = ClaimRolesView(self.guild_id, roles, interaction.guild)
+                await interaction.message.edit(view=view)
+            except Exception:
+                pass
             if added:
                 try:
                     await interaction.followup.send(
