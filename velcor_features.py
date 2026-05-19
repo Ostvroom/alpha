@@ -872,9 +872,6 @@ class ClaimRolesSelect(discord.ui.Select):
                 if want and not has:
                     await member.add_roles(role, reason="Claim roles dropdown")
                     added.append(role.mention)
-                elif not want and has:
-                    await member.remove_roles(role, reason="Claim roles dropdown")
-                    removed.append(role.mention)
             except discord.Forbidden:
                 failed.append(role.name)
             except discord.HTTPException:
@@ -884,14 +881,10 @@ class ClaimRolesSelect(discord.ui.Select):
             err_lines: list[str] = []
             if added:
                 err_lines.append("✅ **Added:** " + ", ".join(added))
-            if removed:
-                err_lines.append("➖ **Removed:** " + ", ".join(removed))
             err_lines.append("⚠️ Could not update: " + ", ".join(failed))
             await interaction.response.send_message("\n".join(err_lines), ephemeral=True)
         else:
             # Refresh the panel view to force-close the dropdown
-            # Rebuild with member's current roles pre-checked so reopening
-            # the menu shows reality — preventing accidental removals.
             try:
                 roles = load_ping_roles(self.guild_id)
                 view = ClaimRolesView(
@@ -902,14 +895,11 @@ class ClaimRolesSelect(discord.ui.Select):
                 await interaction.response.defer(ephemeral=True)
 
             # Ephemeral confirmation of what changed
-            if added or removed:
-                lines: list[str] = []
-                if added:
-                    lines.append("✅ **Claimed:** " + ", ".join(added))
-                if removed:
-                    lines.append("➖ **Removed:** " + ", ".join(removed))
+            if added:
                 try:
-                    await interaction.followup.send("\n".join(lines), ephemeral=True)
+                    await interaction.followup.send(
+                        "✅ **Claimed:** " + ", ".join(added), ephemeral=True
+                    )
                 except Exception:
                     pass
 
@@ -985,8 +975,8 @@ def build_claim_roles_embed(
         value=(
             "1️⃣ Open **Choose your roles…** below\n"
             "2️⃣ Tick every role you want (multi-select)\n"
-            "3️⃣ Submit — unchecked roles are removed\n"
-            "4️⃣ Open again anytime to change your selection"
+            "3️⃣ Submit — selected roles are added\n"
+            "4️⃣ Open again anytime to claim more"
         ),
         inline=False,
     )
