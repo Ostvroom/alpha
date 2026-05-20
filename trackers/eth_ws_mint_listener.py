@@ -327,9 +327,10 @@ class EthMintListener:
     async def _connect_and_listen(self, uri: str):
         async with websockets.connect(
             uri,
-            ping_interval=20,
-            ping_timeout=10,
-            close_timeout=5,
+            ping_interval=30,
+            ping_timeout=20,
+            close_timeout=10,
+            open_timeout=30,
             extra_headers={
                 "Origin": "https://etherscan.io",
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
@@ -343,7 +344,12 @@ class EthMintListener:
                     "topics": [[ERC721_TRANSFER, ERC1155_TRANSFER_SINGLE, ERC1155_TRANSFER_BATCH]]
                 }]
             }))
-            response = json.loads(await asyncio.wait_for(ws.recv(), timeout=15))
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=30)
+            except asyncio.TimeoutError:
+                logger.warning("Subscription ack timed out for %s", uri)
+                return
+            response = json.loads(raw)
             self._sub_id = response.get("result")
             if not self._sub_id:
                 logger.error(f"Subscription failed: {response}")
@@ -351,8 +357,15 @@ class EthMintListener:
             logger.info(f"Subscribed to mint events via {uri} (id={self._sub_id})")
 
             while self._running:
-                raw = await asyncio.wait_for(ws.recv(), timeout=60)
-                data = json.loads(raw)
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=120)
+                except asyncio.TimeoutError:
+                    # Quiet chain periods are normal — keep the connection open.
+                    continue
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
                 result = data.get("params", {}).get("result")
                 if result:
                     await self._handle_log(result)

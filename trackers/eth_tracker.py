@@ -801,6 +801,28 @@ async def fetch_eth_nft_socials(contract: str, session: aiohttp.ClientSession) -
     _nft_socials_cache[contract_lower] = (socials, time_module.time())
     return socials
 
+
+def _unique_channel_ids(primary, fallback=None) -> List[int]:
+    """Parse comma-separated Discord channel snowflakes, deduped in order."""
+    raw = primary if primary else fallback
+    if not raw:
+        return []
+    out: List[int] = []
+    seen: Set[int] = set()
+    for part in str(raw).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            cid = int(part)
+        except ValueError:
+            continue
+        if cid not in seen:
+            seen.add(cid)
+            out.append(cid)
+    return out
+
+
 async def check_eth_block(client, token_channel_id: int, nft_channel_id: int):
     """Refined API Poller replacing Web3 getLogs"""
     global startup_time
@@ -995,11 +1017,8 @@ async def process_erc721_group(
             bulk_quantity=bulk_qty,
             all_token_ids=all_token_ids if bulk_qty else None,
         )
-        target_ids = str(nft_channel_id).split(",") if nft_channel_id else str(token_channel_id).split(",")
-        for t_id in target_ids:
-            if not t_id.strip():
-                continue
-            chan_id = int(t_id.strip())
+        target_ids = _unique_channel_ids(nft_channel_id, token_channel_id)
+        for chan_id in target_ids:
             ch = client.get_channel(chan_id)
             if ch is None:
                 try:
@@ -1064,10 +1083,8 @@ async def process_api_tx(tx, wallet, tx_type, client, session, token_channel_id,
                 session=session, tx_hash=tx_hash, token_id=token_id,
                 from_addr=from_addr, to_addr=to_addr
             )
-            target_ids = str(nft_channel_id).split(',') if nft_channel_id else str(token_channel_id).split(',')
-            for t_id in target_ids:
-                if not t_id.strip(): continue
-                chan_id = int(t_id.strip())
+            target_ids = _unique_channel_ids(nft_channel_id, token_channel_id)
+            for chan_id in target_ids:
                 ch = client.get_channel(chan_id)
                 if ch is None:
                     try:
@@ -1088,10 +1105,8 @@ async def process_api_tx(tx, wallet, tx_type, client, session, token_channel_id,
                 action=f"{action_type} Token", wallet=wallet, contract=contract,
                 amount=amount, session=session, tx_hash=tx_hash
             )
-            target_ids = str(token_channel_id).split(',') if token_channel_id else []
-            for t_id in target_ids:
-                if not t_id.strip(): continue
-                chan_id = int(t_id.strip())
+            target_ids = _unique_channel_ids(token_channel_id)
+            for chan_id in target_ids:
                 ch = client.get_channel(chan_id)
                 if ch is None:
                     try:
