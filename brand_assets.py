@@ -1,5 +1,5 @@
 """
-Velcor brand logo + name for Discord embeds (author/footer icons).
+Velcor3 brand logo + name for Discord embeds (author/footer icons).
 """
 from __future__ import annotations
 

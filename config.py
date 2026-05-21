@@ -24,7 +24,7 @@ def _env_or_default(key: str, default: str) -> str:
 
 # Custom server emoji for auto-react (success channel). Name is only used for PartialEmoji; ID is what Discord uses.
 VELCOR_AUTO_REACT_EMOJI_ID = int(os.getenv("VELCOR_AUTO_REACT_EMOJI_ID", "1497265215451172914") or 0)
-VELCOR_AUTO_REACT_EMOJI_NAME = _env_or_default("VELCOR_AUTO_REACT_EMOJI_NAME", "velcor")
+VELCOR_AUTO_REACT_EMOJI_NAME = _env_or_default("VELCOR_AUTO_REACT_EMOJI_NAME", "velcor3")
 VELCOR_AUTO_REACT_EMOJI_ANIMATED = os.getenv("VELCOR_AUTO_REACT_EMOJI_ANIMATED", "0").strip().lower() in (
     "1",
     "true",

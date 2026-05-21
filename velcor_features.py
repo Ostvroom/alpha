@@ -40,7 +40,7 @@ def _auto_react_emoji() -> discord.PartialEmoji | str:
     emoji_id = int(getattr(config, "VELCOR_AUTO_REACT_EMOJI_ID", 0) or 0)
     if emoji_id:
         return discord.PartialEmoji(
-            name=getattr(config, "VELCOR_AUTO_REACT_EMOJI_NAME", "velcor") or "velcor",
+            name=getattr(config, "VELCOR_AUTO_REACT_EMOJI_NAME", "velcor3") or "velcor3",
             id=emoji_id,
             animated=bool(getattr(config, "VELCOR_AUTO_REACT_EMOJI_ANIMATED", False)),
         )
