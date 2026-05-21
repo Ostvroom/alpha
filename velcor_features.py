@@ -56,6 +56,17 @@ DISCORD_INVITE_REGEX = r"(?:https?://)?(?:www\.)?(?:discord(?:app)?\.com/(?:invi
 URL_REGEX = r"(https?://[^\s]+|www\.[^\s]+|\b[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:/[^\s]*)?)"
 SOCIAL_MEDIA_REGEX = r"(?:https?://)?(?:www\.)?(?:youtube\.com|youtu\.be|twitter\.com|x\.com|instagram\.com|facebook\.com|tiktok\.com|reddit\.com|twitch\.tv|spotify\.com|soundcloud\.com)/[^\s]+"
 FILE_SHARING_REGEX = r"(?:https?://)?(?:www\.)?(?:mediafire\.com|mega\.nz|dropbox\.com|drive\.google\.com|onedrive\.live\.com)/[^\s]+"
+# Discord GIF picker + common hosts (allowed when allow_gifs is on)
+GIF_HOST_REGEX = re.compile(
+    r"(?:^|//)(?:"
+    r"(?:[\w-]+\.)?tenor\.com|tenor\.co|"
+    r"(?:[\w-]+\.)?giphy\.com|"
+    r"media\.tenor\.com|media\.giphy\.com|"
+    r"(?:[\w-]+\.)?discordapp\.(?:net|com)|"
+    r"(?:[\w-]+\.)?discord\.com/(?:attachments|ephemeral-attachments)"
+    r")",
+    re.IGNORECASE,
+)
 
 # ── Permission helper ───────────────────────────────────────────────────────
 def is_owner_or_admin(ctx):
@@ -194,6 +205,11 @@ def init_database():
         )
         """
     )
+
+    try:
+        cursor.execute("ALTER TABLE guild_settings ADD COLUMN allow_gifs INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
 
     try:
         cursor.execute("ALTER TABLE ping_roles ADD COLUMN description TEXT DEFAULT ''")
@@ -403,8 +419,8 @@ def save_guild_settings(guild_id, settings_dict):
     cursor.execute(
         """
         INSERT OR REPLACE INTO guild_settings
-        (guild_id, delete_links, delete_discord_invites, delete_social_media, delete_file_sharing, delete_all_links, protected_channels)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        (guild_id, delete_links, delete_discord_invites, delete_social_media, delete_file_sharing, delete_all_links, protected_channels, allow_gifs)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             guild_id,
@@ -414,6 +430,7 @@ def save_guild_settings(guild_id, settings_dict):
             1 if settings_dict.get("delete_file_sharing") else 0,
             1 if settings_dict.get("delete_all_links") else 0,
             json.dumps(settings_dict.get("protected_channels", [])),
+            1 if settings_dict.get("allow_gifs", True) else 0,
         ),
     )
     conn.commit()
@@ -433,6 +450,7 @@ def load_all_settings():
             "delete_file_sharing": bool(row[4]),
             "delete_all_links": bool(row[5]),
             "protected_channels": json.loads(row[6]),
+            "allow_gifs": (bool(row[7]) if row[7] is not None else True) if len(row) > 7 else True,
             "whitelisted_channels": [],
         }
     conn.close()
@@ -504,6 +522,116 @@ def is_whitelisted_domain(url: str):
             return True
     return False
 
+
+def is_gif_url(url: str) -> bool:
+    """True for Tenor, Giphy, Discord CDN, or obvious .gif URLs."""
+    u = (url or "").lower().strip()
+    if not u:
+        return False
+    if u.endswith(".gif") or ".gif?" in u:
+        return True
+    return bool(GIF_HOST_REGEX.search(u))
+
+
+def _attachments_are_gif_only(message: discord.Message) -> bool:
+    if not message.attachments:
+        return False
+    for att in message.attachments:
+        ct = (att.content_type or "").lower()
+        fn = (att.filename or "").lower()
+        if "gif" in ct or fn.endswith(".gif"):
+            continue
+        return False
+    return True
+
+
+def _stickers_are_gif_only(message: discord.Message) -> bool:
+    stickers = getattr(message, "stickers", None) or []
+    if not stickers:
+        return False
+    for sticker in stickers:
+        fmt = getattr(sticker, "format", None)
+        if fmt == discord.StickerFormatType.gif:
+            continue
+        return False
+    return True
+
+
+def _embeds_are_gif_only(message: discord.Message) -> bool:
+    if not message.embeds:
+        return False
+    for emb in message.embeds:
+        et = str(getattr(emb, "type", "") or "").lower()
+        urls = [
+            emb.url or "",
+            (emb.image.url if emb.image else "") or "",
+            (emb.thumbnail.url if emb.thumbnail else "") or "",
+            (emb.video.url if emb.video else "") or "",
+        ]
+        if et in ("gif", "gifv"):
+            continue
+        if any(is_gif_url(u) for u in urls if u):
+            continue
+        if et == "image" and any(".gif" in (u or "").lower() for u in urls):
+            continue
+        return False
+    return True
+
+
+def _collect_message_urls(message: discord.Message, links_from_content: list) -> list:
+    urls = list(links_from_content)
+    for emb in message.embeds:
+        for u in (
+            emb.url,
+            emb.image.url if emb.image else None,
+            emb.thumbnail.url if emb.thumbnail else None,
+            emb.video.url if emb.video else None,
+        ):
+            if u and u not in urls:
+                urls.append(u)
+    return urls
+
+
+def should_allow_gif_message(
+    message: discord.Message,
+    links_found: list,
+    settings: dict,
+) -> bool:
+    """Allow GIF-only posts in link-filtered channels (picker URLs, files, embeds, stickers)."""
+    if not settings.get("allow_gifs", True):
+        return False
+
+    if _stickers_are_gif_only(message) and not links_found:
+        return True
+    if _attachments_are_gif_only(message) and not links_found:
+        return True
+    if not links_found and _embeds_are_gif_only(message):
+        return True
+
+    all_urls = _collect_message_urls(message, links_found)
+    if not all_urls:
+        return False
+
+    for link in all_urls:
+        link_lower = link.lower()
+        if is_whitelisted_domain(link_lower):
+            continue
+        if is_gif_url(link_lower):
+            continue
+        discord_match = re.search(DISCORD_INVITE_REGEX, link_lower)
+        if discord_match and settings.get("delete_discord_invites"):
+            if discord_match.group(1).lower() not in get_whitelisted_invites():
+                return False
+        if re.search(SOCIAL_MEDIA_REGEX, link_lower) and settings.get("delete_social_media"):
+            return False
+        if re.search(FILE_SHARING_REGEX, link_lower) and settings.get("delete_file_sharing"):
+            return False
+        if settings.get("delete_all_links"):
+            return False
+        if re.search(URL_REGEX, link_lower) and settings.get("delete_links"):
+            return False
+
+    return any(is_gif_url(u) for u in all_urls) or _attachments_are_gif_only(message)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1191,6 +1319,7 @@ class VelcorFeatures(commands.Cog):
                 "delete_social_media": True,
                 "delete_file_sharing": True,
                 "delete_all_links": False,
+                "allow_gifs": True,
                 "whitelisted_channels": [],
                 "protected_channels": [],
             }
@@ -1203,7 +1332,15 @@ class VelcorFeatures(commands.Cog):
             return
 
         links_found = get_all_links(message.content)
-        if not links_found:
+        has_gif_media = (
+            bool(message.attachments)
+            or bool(message.embeds)
+            or bool(getattr(message, "stickers", None))
+        )
+        if not links_found and not has_gif_media:
+            return
+
+        if should_allow_gif_message(message, links_found, settings):
             return
 
         blocked_links = []
@@ -1286,6 +1423,7 @@ class VelcorFeatures(commands.Cog):
                 "delete_social_media": True,
                 "delete_file_sharing": True,
                 "delete_all_links": False,
+                "allow_gifs": True,
                 "whitelisted_channels": [],
                 "protected_channels": [],
             }
@@ -1300,6 +1438,11 @@ class VelcorFeatures(commands.Cog):
             embed.add_field(
                 name="What's blocked",
                 value="• Discord invites\n• Social media links\n• File sharing links\n• General URLs",
+                inline=False,
+            )
+            embed.add_field(
+                name="Allowed",
+                value="• GIFs (Tenor / Giphy / Discord picker) when **Allow GIFs** is on",
                 inline=False,
             )
             await ctx.send(embed=embed)
@@ -1345,6 +1488,7 @@ class VelcorFeatures(commands.Cog):
             "delete_social_media": True,
             "delete_file_sharing": True,
             "delete_all_links": False,
+            "allow_gifs": True,
             "protected_channels": [],
         })
         protected = settings.get("protected_channels", [])
@@ -1358,6 +1502,7 @@ class VelcorFeatures(commands.Cog):
         embed.add_field(name="File Sharing", value="🟢 ON" if settings.get("delete_file_sharing") else "🔴 OFF", inline=True)
         embed.add_field(name="General Links", value="🟢 ON" if settings.get("delete_links") else "🔴 OFF", inline=True)
         embed.add_field(name="Delete ALL Links", value="🟢 ON" if settings.get("delete_all_links") else "🔴 OFF", inline=True)
+        embed.add_field(name="Allow GIFs", value="🟢 ON" if settings.get("allow_gifs", True) else "🔴 OFF", inline=True)
         embed.add_field(name="Protected Channels", value=protected_mentions, inline=False)
         embed.add_field(name="Whitelisted Domains", value="\n".join(domains) if domains else "None", inline=False)
         embed.add_field(name="Whitelisted Invites", value="\n".join(invites) if invites else "None", inline=False)
@@ -1374,6 +1519,7 @@ class VelcorFeatures(commands.Cog):
                 "delete_social_media": True,
                 "delete_file_sharing": True,
                 "delete_all_links": False,
+                "allow_gifs": True,
                 "whitelisted_channels": [],
                 "protected_channels": [],
             }
@@ -1382,9 +1528,36 @@ class VelcorFeatures(commands.Cog):
         status = "🟢 ON" if self.guild_settings[guild_id]["delete_all_links"] else "🔴 OFF"
         await ctx.send(f"Delete ALL links is now **{status}**")
 
+    @commands.command(name="toggle_gifs", help="Toggle allowing GIFs in protected channels (Admin only)")
+    @commands.has_permissions(administrator=True)
+    async def toggle_gifs(self, ctx):
+        guild_id = ctx.guild.id
+        if guild_id not in self.guild_settings:
+            self.guild_settings[guild_id] = {
+                "delete_links": True,
+                "delete_discord_invites": True,
+                "delete_social_media": True,
+                "delete_file_sharing": True,
+                "delete_all_links": False,
+                "allow_gifs": True,
+                "whitelisted_channels": [],
+                "protected_channels": [],
+            }
+        cur = self.guild_settings[guild_id].get("allow_gifs", True)
+        self.guild_settings[guild_id]["allow_gifs"] = not cur
+        save_guild_settings(guild_id, self.guild_settings[guild_id])
+        status = "🟢 ON" if self.guild_settings[guild_id]["allow_gifs"] else "🔴 OFF"
+        await ctx.send(
+            f"Allow GIFs in protected channels is now **{status}** "
+            f"(Tenor, Giphy, Discord GIF picker, `.gif` uploads)."
+        )
+
     @commands.command(name="test_link", help="Test if a link would be blocked")
     async def test_link(self, ctx, *, link: str):
         link_lower = link.lower()
+        if is_gif_url(link_lower):
+            await ctx.send(f"✅ GIF link — would **NOT** be blocked when **Allow GIFs** is on.")
+            return
         if is_whitelisted_domain(link_lower):
             await ctx.send(f"✅ `**{link}**` is whitelisted — would **NOT** be blocked.")
             return
@@ -1446,6 +1619,7 @@ class VelcorFeatures(commands.Cog):
             "`!velcor3 remove_protection` — Remove protection",
             "`!velcor3 settings` — Show settings",
             "`!velcor3 toggle_all` — Toggle all-link deletion",
+            "`!velcor3 toggle_gifs` — Allow/block GIFs in protected channels",
             "`!velcor3 whitelist_domain <domain>` — Add whitelist",
             "`!velcor3 list_domains` — List whitelist",
             "`!velcor3 test_link <link>` — Test link blocker",
