@@ -1398,9 +1398,9 @@ class VelcorFeatures(commands.Cog):
 
     # ── Commands ───────────────────────────────────────────────────────────
 
-    @commands.command(name="vping", help="Test Velcor features responsiveness")
+    @commands.command(name="vping", help="Test Velcor3 features responsiveness")
     async def vping(self, ctx):
-        await ctx.send(f"🏓 Velcor Pong! Latency: {round(self.bot.latency * 1000)}ms")
+        await ctx.send(f"🏓 Velcor3 Pong! Latency: {round(self.bot.latency * 1000)}ms")
 
     @commands.command(name="test_welcome", help="Manually trigger welcome + auto-role for a user (Admin only)")
     @commands.has_permissions(administrator=True)
@@ -1607,10 +1607,10 @@ class VelcorFeatures(commands.Cog):
         await ctx.send(f"✅ Scanned {limit} messages — deleted **{deleted}** containing links.")
 
 
-    @commands.command(name="velcor", help="Show all Velcor feature commands")
+    @commands.command(name="velcor", help="Show all Velcor3 feature commands")
     async def velcor_help(self, ctx):
         embed = discord.Embed(
-            title="🛡️ Velcor Features — Help",
+            title="🛡️ Velcor3 Features — Help",
             description="Community & moderation commands",
             color=discord.Color.blue(),
         )
