@@ -1334,6 +1334,51 @@ def _wallet_tracker_token_ids_field(
     return f"**#{token_id}**"
 
 
+# In-memory cache for direct Alchemy token-image calls (bypasses stale module cache)
+_eth_tracker_token_img_cache: Dict[str, tuple[str, float]] = {}
+_ETH_TRACKER_TOKEN_IMG_TTL = 24 * 3600
+
+
+async def _fetch_alchemy_token_image_direct(
+    session: aiohttp.ClientSession, contract: str, token_id: int
+) -> Optional[str]:
+    """Fetch per-token image directly from Alchemy — lives in eth_tracker.py to avoid sys.modules cache issues."""
+    key = (os.getenv("ALCHEMY_NFT_API_KEY") or "").strip()
+    if not key:
+        return None
+    cache_key = f"{contract.lower()}:{int(token_id)}"
+    now = time_module.time()
+    cached = _eth_tracker_token_img_cache.get(cache_key)
+    if cached and (now - cached[1]) < _ETH_TRACKER_TOKEN_IMG_TTL:
+        return cached[0] or None
+    url = f"https://eth-mainnet.g.alchemy.com/nft/v3/{key}/getNFTMetadata"
+    try:
+        async with session.get(
+            url,
+            params={"contractAddress": contract.lower(), "tokenId": str(token_id)},
+            timeout=aiohttp.ClientTimeout(total=8),
+        ) as r:
+            if r.status != 200:
+                return None
+            data = await r.json()
+            img = data.get("image") if isinstance(data.get("image"), dict) else {}
+            resolved = (
+                img.get("cachedUrl")
+                or img.get("thumbnailUrl")
+                or img.get("pngUrl")
+                or img.get("originalUrl")
+                or data.get("image")
+                or data.get("image_url")
+            )
+            if resolved and isinstance(resolved, str) and resolved.strip().startswith("http"):
+                _eth_tracker_token_img_cache[cache_key] = (resolved.strip(), now)
+                print(f"\033[92m[IMG]\033[0m Direct Alchemy token image for {contract[:10]}... #{token_id}")
+                return resolved.strip()
+    except Exception as e:
+        print(f"\033[91m[IMG]\033[0m Direct Alchemy error for {contract[:10]}... #{token_id}: {e}")
+    return None
+
+
 async def create_eth_nft_embed(
     action_type,
     wallet,
@@ -1481,9 +1526,16 @@ async def create_eth_nft_embed(
             
     # NOTE: Avoid per-embed HTTP price calls. We maintain _cached_eth_usd via refresh_eth_usd_price().
     info = await get_contract_info(contract)
-    from trackers.collection_image import fetch_collection_image, prepare_collection_thumbnail, fetch_token_image_enhanced
+    from trackers.collection_image import fetch_collection_image, prepare_collection_thumbnail
 
-    image_url = await fetch_token_image_enhanced(session, contract, token_id)
+    # Direct Alchemy fetch bypasses stale sys.modules cache from nftscan_live_feed.py import
+    image_url = await _fetch_alchemy_token_image_direct(session, contract, token_id)
+    if not image_url:
+        try:
+            from trackers.eth_live_mints import fetch_token_image
+            image_url = await fetch_token_image(contract, token_id)
+        except Exception:
+            pass
     col_name = info.get("name")
     
     # Fetch floor price (optional; can be API-heavy)
