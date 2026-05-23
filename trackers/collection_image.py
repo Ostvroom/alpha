@@ -252,11 +252,12 @@ async def _fetch_alchemy_token_image(
             timeout=aiohttp.ClientTimeout(total=8),
         ) as r:
             if r.status != 200:
+                print(f"\033[93m[IMG]\033[0m Alchemy getNFTMetadata status {r.status} for {contract[:10]}... #{token_id}")
                 return None
             data = await r.json()
             img = data.get("image") if isinstance(data.get("image"), dict) else {}
             # Prefer Alchemy CDN URLs (cached, fast, reliable for Discord)
-            return normalize_nft_image_url(
+            resolved = normalize_nft_image_url(
                 img.get("cachedUrl")
                 or img.get("thumbnailUrl")
                 or img.get("pngUrl")
@@ -264,7 +265,13 @@ async def _fetch_alchemy_token_image(
                 or data.get("image")
                 or data.get("image_url")
             )
-    except Exception:
+            if resolved:
+                print(f"\033[92m[IMG]\033[0m Alchemy token image: {resolved[:80]}... for {contract[:10]}... #{token_id}")
+            else:
+                print(f"\033[93m[IMG]\033[0m Alchemy getNFTMetadata returned no image for {contract[:10]}... #{token_id}")
+            return resolved
+    except Exception as e:
+        print(f"\033[91m[IMG]\033[0m Alchemy getNFTMetadata error for {contract[:10]}... #{token_id}: {e}")
         return None
 
 
@@ -363,6 +370,7 @@ async def fetch_token_image_enhanced(
 
     cached = _token_cache_get(contract_l, token_id)
     if cached:
+        print(f"\033[92m[IMG]\033[0m Token cache hit for {contract_l[:10]}... #{token_id}")
         return cached
 
     # 1. Alchemy getNFTMetadata (reliable CDN with paid plan)
@@ -378,8 +386,12 @@ async def fetch_token_image_enhanced(
         onchain_img = await fetch_token_image(contract_l, token_id)
         if onchain_img:
             _token_cache_set(contract_l, token_id, onchain_img)
+            print(f"\033[92m[IMG]\033[0m On-chain token image for {contract_l[:10]}... #{token_id}")
+        else:
+            print(f"\033[93m[IMG]\033[0m No token image found for {contract_l[:10]}... #{token_id}")
         return onchain_img
-    except Exception:
+    except Exception as e:
+        print(f"\033[91m[IMG]\033[0m On-chain token image error for {contract_l[:10]}... #{token_id}: {e}")
         return None
 
 
