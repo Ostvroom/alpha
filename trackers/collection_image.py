@@ -32,6 +32,28 @@ _CACHE_FILE = DATA_DIR / "collection_image_cache.json"
 _CACHE_TTL = int(os.getenv("COLLECTION_IMAGE_CACHE_TTL", str(7 * 24 * 3600)))
 _MEMORY: Dict[str, tuple[str, float]] = {}
 
+# Token-level image cache (in-memory only; tokens change less often than collections)
+_TOKEN_MEMORY: Dict[str, tuple[str, float]] = {}
+_TOKEN_CACHE_TTL = int(os.getenv("TOKEN_IMAGE_CACHE_TTL", str(24 * 3600)))
+
+
+def _token_cache_key(contract: str, token_id: int) -> str:
+    return f"{contract.lower()}:{int(token_id)}"
+
+
+def _token_cache_get(contract: str, token_id: int) -> Optional[str]:
+    key = _token_cache_key(contract, token_id)
+    mem = _TOKEN_MEMORY.get(key)
+    if mem and (time.time() - mem[1]) < _TOKEN_CACHE_TTL:
+        return mem[0] or None
+    return None
+
+
+def _token_cache_set(contract: str, token_id: int, url: Optional[str]) -> None:
+    key = _token_cache_key(contract, token_id)
+    clean = normalize_nft_image_url(url) or ""
+    _TOKEN_MEMORY[key] = (clean, time.time())
+
 _BAD_IMAGE_SUBSTRINGS = (
     "nftscan.com/images/og-img",
     "og-img/home.png",
@@ -211,6 +233,41 @@ async def _fetch_nftscan_logo(session: aiohttp.ClientSession, contract: str) -> 
     return None
 
 
+async def _fetch_alchemy_token_image(
+    session: aiohttp.ClientSession, contract: str, token_id: int
+) -> Optional[str]:
+    """Fetch per-token image via Alchemy getNFTMetadata (paid plan = reliable CDN URLs).
+
+    Uses image.cachedUrl > thumbnailUrl > pngUrl > originalUrl for best Discord compatibility.
+    Skips automatically when using a demo key to conserve quota.
+    """
+    key = _alchemy_key()
+    if key == "demo":
+        return None
+    url = f"https://eth-mainnet.g.alchemy.com/nft/v3/{key}/getNFTMetadata"
+    try:
+        async with session.get(
+            url,
+            params={"contractAddress": contract.lower(), "tokenId": str(token_id)},
+            timeout=aiohttp.ClientTimeout(total=8),
+        ) as r:
+            if r.status != 200:
+                return None
+            data = await r.json()
+            img = data.get("image") if isinstance(data.get("image"), dict) else {}
+            # Prefer Alchemy CDN URLs (cached, fast, reliable for Discord)
+            return normalize_nft_image_url(
+                img.get("cachedUrl")
+                or img.get("thumbnailUrl")
+                or img.get("pngUrl")
+                or img.get("originalUrl")
+                or data.get("image")
+                or data.get("image_url")
+            )
+    except Exception:
+        return None
+
+
 async def _fetch_alchemy_contract_image(
     session: aiohttp.ClientSession, contract: str, alchemy_data: Optional[Dict[str, Any]] = None
 ) -> Optional[str]:
@@ -291,6 +348,41 @@ async def _fetch_reservoir_image(session: aiohttp.ClientSession, contract: str) 
         return None
 
 
+async def fetch_token_image_enhanced(
+    session: aiohttp.ClientSession,
+    contract: str,
+    token_id: int = 1,
+) -> Optional[str]:
+    """Fetch per-token image: Alchemy getNFTMetadata first (paid plan), then on-chain tokenURI fallback.
+
+    Uses an in-memory LRU-style cache per (contract, token_id) to avoid repeat API calls.
+    """
+    contract_l = (contract or "").strip().lower()
+    if not contract_l.startswith("0x") or len(contract_l) < 10:
+        return None
+
+    cached = _token_cache_get(contract_l, token_id)
+    if cached:
+        return cached
+
+    # 1. Alchemy getNFTMetadata (reliable CDN with paid plan)
+    alchemy_img = await _fetch_alchemy_token_image(session, contract_l, token_id)
+    if alchemy_img:
+        _token_cache_set(contract_l, token_id, alchemy_img)
+        return alchemy_img
+
+    # 2. On-chain tokenURI fallback
+    try:
+        from trackers.eth_live_mints import fetch_token_image
+
+        onchain_img = await fetch_token_image(contract_l, token_id)
+        if onchain_img:
+            _token_cache_set(contract_l, token_id, onchain_img)
+        return onchain_img
+    except Exception:
+        return None
+
+
 async def fetch_collection_image(
     session: aiohttp.ClientSession,
     contract: str,
@@ -318,10 +410,22 @@ async def fetch_collection_image(
     if token_image_url:
         candidates.append(normalize_nft_image_url(token_image_url))
     else:
-        try:
-            candidates.append(await fetch_token_image(contract_l, int(token_id or 1)))
-        except Exception:
-            pass
+        # Priority 1: Alchemy getNFTMetadata (reliable CDN with paid plan)
+        alchemy_token_img = _token_cache_get(contract_l, token_id)
+        if not alchemy_token_img:
+            alchemy_token_img = await _fetch_alchemy_token_image(
+                session, contract_l, int(token_id or 1)
+            )
+            if alchemy_token_img:
+                _token_cache_set(contract_l, token_id, alchemy_token_img)
+        if alchemy_token_img:
+            candidates.append(alchemy_token_img)
+        else:
+            # Priority 2: On-chain tokenURI fallback
+            try:
+                candidates.append(await fetch_token_image(contract_l, int(token_id or 1)))
+            except Exception:
+                pass
 
     candidates.append(await _fetch_alchemy_contract_image(session, contract_l, alchemy_contract_data))
     candidates.append(await _fetch_coingecko_logo(session, contract_l))

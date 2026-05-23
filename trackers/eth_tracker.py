@@ -1481,9 +1481,9 @@ async def create_eth_nft_embed(
             
     # NOTE: Avoid per-embed HTTP price calls. We maintain _cached_eth_usd via refresh_eth_usd_price().
     info = await get_contract_info(contract)
-    from trackers.collection_image import fetch_collection_image, prepare_collection_thumbnail
+    from trackers.collection_image import fetch_collection_image, prepare_collection_thumbnail, fetch_token_image_enhanced
 
-    image_url = await fetch_token_image(contract, token_id)
+    image_url = await fetch_token_image_enhanced(session, contract, token_id)
     col_name = info.get("name")
     
     # Fetch floor price (optional; can be API-heavy)
@@ -1634,14 +1634,14 @@ async def create_eth_nft_embed(
         display_eth, price_source, is_floor=is_floor, action_word=action_word,
         source=source, floor_eth=floor_eth, usd_rate=_cached_eth_usd,
     )
-    embed.add_field(name="💰 Value", value=price_compact, inline=True)
     embed.add_field(name="🖼️ Amount", value=f"**{qty}** NFT{'s' if qty != 1 else ''}", inline=True)
     embed.add_field(name="🕒 Time", value=f"<t:{int(time.time())}:R>", inline=True)
     _embed_section_spacer(embed)
+    embed.add_field(name="💰 Value", value=price_compact, inline=True)
     embed.add_field(
         name="🔢 Token IDs",
         value=_wallet_tracker_token_ids_field(token_id, all_token_ids, bulk_qty),
-        inline=False,
+        inline=True,
     )
     _embed_section_spacer(embed)
     embed.add_field(

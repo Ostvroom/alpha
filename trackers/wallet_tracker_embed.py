@@ -121,7 +121,7 @@ def resolve_trader_name(wallet_label: str, profile_name: str) -> str:
 
 def _compact_wallet_row(ctx: NftWalletAlertContext, wallet_url: str) -> str:
     name = (ctx.trader_name or resolve_trader_name(ctx.wallet_label, ctx.display_name)).strip() or "Trader"
-    return f"👤 **Trader** · [**{name}**]({wallet_url})"
+    return f"👤 **Trader** · **`{name}`**"
 
 
 def _value_line(ctx: NftWalletAlertContext) -> str:
@@ -263,14 +263,14 @@ def build_premium_nft_wallet_embed(ctx: NftWalletAlertContext) -> discord.Embed:
         )[:1024],
         inline=False,
     )
-    embed.add_field(name="💰 Value", value=_value_line(ctx), inline=True)
     embed.add_field(
         name="📦 Amount",
         value=f"**{qty}** NFT{'s' if qty != 1 else ''}",
         inline=True,
     )
     embed.add_field(name="⏱ Time", value=f"<t:{int(time.time())}:R>", inline=True)
-    embed.add_field(name="🆔 Token", value=_token_ids_line(ctx), inline=False)
+    embed.add_field(name="💰 Value", value=_value_line(ctx), inline=True)
+    embed.add_field(name="🆔 Token", value=_token_ids_line(ctx), inline=True)
 
     links = f"[OpenSea]({opensea}) · [TX]({tx_url}) · [Contract]({contract_url})"
     embed.add_field(name="🔗", value=links, inline=False)
