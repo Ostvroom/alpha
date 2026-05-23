@@ -4,6 +4,7 @@ import logging
 import os
 import random
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -213,6 +214,36 @@ def _hard_reset_token_alerts_once() -> None:
 
 
 def main():
+    # ── Purge stale Python bytecode so updates always take effect ────────────
+    try:
+        project_root = Path(__file__).resolve().parent
+        for pyc_dir in project_root.rglob("__pycache__"):
+            if pyc_dir.is_dir():
+                for f in list(pyc_dir.iterdir()):
+                    try:
+                        f.unlink()
+                    except Exception:
+                        pass
+        print("[BOOT] Cleared __pycache__ to ensure fresh code.", flush=True)
+    except Exception:
+        pass
+
+    # ── Print exact git commit so you know what code is running ──────────────
+    try:
+        commit = (
+            subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=project_root)
+            .decode("utf-8")
+            .strip()
+        )
+        branch = (
+            subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=project_root)
+            .decode("utf-8")
+            .strip()
+        )
+        print(f"[BOOT] Running commit {commit} on branch '{branch}'", flush=True)
+    except Exception:
+        print("[BOOT] Could not read git commit.", flush=True)
+
     # Windows consoles often default to cp1252, which crashes on emoji logs.
     # Force UTF-8 with replacement to keep the bot running.
     try:

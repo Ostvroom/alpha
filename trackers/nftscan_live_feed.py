@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Set
 
@@ -379,8 +380,8 @@ class NftscanLiveFeed:
             to_send.append(payload)
             if tx:
                 self._seen_smart_buy_txs.add(tx)
-        if len(self._seen_smart_buy_txs) > 5000:
-            self._seen_smart_buy_txs.clear()
+        if len(self._seen_smart_buy_txs) > 50000:
+            self._seen_smart_buy_txs = set(random.sample(list(self._seen_smart_buy_txs), 25000))
         if not to_send:
             return
 
@@ -453,8 +454,8 @@ class NftscanLiveFeed:
                 self._alpha_alert_cooldown[contract] = now
                 if tx:
                     self._seen_alpha_txs.add(tx)
-                if len(self._seen_alpha_txs) > 5000:
-                    self._seen_alpha_txs.clear()
+                if len(self._seen_alpha_txs) > 50000:
+                    self._seen_alpha_txs = set(random.sample(list(self._seen_alpha_txs), 25000))
             except Exception as e:
                 logger.warning("X alpha alert send failed: %s", e)
 

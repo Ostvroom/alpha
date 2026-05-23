@@ -357,7 +357,7 @@ def _load_by_mint() -> Dict[str, Dict[str, Any]]:
         return {}
 
 
-def _save_by_mint(by_mint: Dict[str, Dict[str, Any]], max_mints: int = 1500) -> None:
+def _save_by_mint(by_mint: Dict[str, Dict[str, Any]], max_mints: int = 10000) -> None:
     if len(by_mint) > max_mints:
         # Keep most recently updated mints (by ref MC/ATH timestamp proxy: insertion + last seen).
         # Prefer recency from `last_seen_ts` if present, else fall back to insertion order.
