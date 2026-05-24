@@ -1260,7 +1260,7 @@ class VelcorFeatures(commands.Cog):
             if welcome_channel:
                 embed = discord.Embed(
                     title="✨ New Member Joined!",
-                    description=f"Welcome to **{guild.name}**, {member.mention}!\n\nWe're glad to have you here.",
+                    description=f"Welcome to **{guild.name}**, **{member.display_name}**!\n\nWe're glad to have you here.",
                     color=0x2F3136,
                     timestamp=datetime.now(timezone.utc),
                 )
@@ -1277,10 +1277,11 @@ class VelcorFeatures(commands.Cog):
                         embed.set_image(url="attachment://banner.jpg")
                         banner_set = True
                 try:
+                    # Send mention in content so user gets pinged; use display_name in embed
                     if file:
-                        await welcome_channel.send(file=file, embed=embed)
+                        await welcome_channel.send(content=member.mention, file=file, embed=embed)
                     else:
-                        await welcome_channel.send(embed=embed)
+                        await welcome_channel.send(content=member.mention, embed=embed)
                     print(f"[VelcorFeatures] Welcome message sent for {member.name} in #{welcome_channel.name}")
                 except discord.Forbidden:
                     print(f"[VelcorFeatures] No permission in welcome channel {WELCOME_CHANNEL_ID}")
