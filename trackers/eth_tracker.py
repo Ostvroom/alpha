@@ -1393,14 +1393,16 @@ async def _fetch_alchemy_token_image_direct(
 async def _fetch_opensea_token_image_direct(
     session: aiohttp.ClientSession, contract: str, token_id: int
 ) -> Optional[str]:
-    """Fetch per-token image from OpenSea v2 API (no API key = rate-limited, but often works)."""
-    url = f"https://api.opensea.io/api/v2/chain/ethereum/contract/{contract.lower()}/nfts/{token_id}"
-    headers = {"Accept": "application/json"}
+    """Fetch per-token image from OpenSea v2 API (requires API key for reliable access)."""
     okey = (os.getenv("OPENSEA_API_KEY") or "").strip()
-    if okey:
-        headers["X-API-KEY"] = okey
+    if not okey:
+        return None
+    url = f"https://api.opensea.io/api/v2/chain/ethereum/contract/{contract.lower()}/nfts/{token_id}"
     try:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as r:
+        async with session.get(
+            url, headers={"Accept": "application/json", "X-API-KEY": okey},
+            timeout=aiohttp.ClientTimeout(total=8)
+        ) as r:
             if r.status != 200:
                 return None
             data = await r.json()
@@ -1417,14 +1419,16 @@ async def _fetch_opensea_token_image_direct(
 async def _fetch_reservoir_token_image_direct(
     session: aiohttp.ClientSession, contract: str, token_id: int
 ) -> Optional[str]:
-    """Fetch per-token image from Reservoir tokens v7 API."""
-    url = f"https://api.reservoir.tools/tokens/v7?tokens={contract.lower()}%3A{token_id}"
-    headers = {"Accept": "application/json"}
+    """Fetch per-token image from Reservoir tokens v7 API (requires API key)."""
     rkey = (getattr(config, "RESERVOIR_API_KEY", None) or os.getenv("RESERVOIR_API_KEY") or "").strip()
-    if rkey:
-        headers["x-api-key"] = rkey
+    if not rkey:
+        return None
+    url = f"https://api.reservoir.tools/tokens/v7?tokens={contract.lower()}%3A{token_id}"
     try:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as r:
+        async with session.get(
+            url, headers={"Accept": "application/json", "x-api-key": rkey},
+            timeout=aiohttp.ClientTimeout(total=8)
+        ) as r:
             if r.status != 200:
                 return None
             data = await r.json()
@@ -1437,6 +1441,46 @@ async def _fetch_reservoir_token_image_direct(
                     return resolved.strip()
     except Exception:
         pass
+    return None
+
+
+async def _fetch_alchemy_token_image_with_refresh(
+    session: aiohttp.ClientSession, contract: str, token_id: int
+) -> Optional[str]:
+    """Force Alchemy to re-index metadata via refreshCache=true (costs more CUs, use as fallback)."""
+    key = (os.getenv("ALCHEMY_NFT_API_KEY") or "").strip()
+    if not key:
+        return None
+    url = f"https://eth-mainnet.g.alchemy.com/nft/v3/{key}/getNFTMetadata"
+    try:
+        print(f"\033[96m[IMG]\033[0m Alchemy refreshCache for {contract[:10]}... #{token_id}")
+        async with session.get(
+            url,
+            params={"contractAddress": contract.lower(), "tokenId": str(token_id), "refreshCache": "true"},
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as r:
+            if r.status != 200:
+                return None
+            data = await r.json()
+            img = data.get("image") if isinstance(data.get("image"), dict) else {}
+            resolved = (
+                img.get("cachedUrl")
+                or img.get("thumbnailUrl")
+                or img.get("pngUrl")
+                or img.get("originalUrl")
+            )
+            if not resolved:
+                raw = data.get("raw", {})
+                metadata = raw.get("metadata", {}) if isinstance(raw, dict) else {}
+                resolved = metadata.get("image") if isinstance(metadata, dict) else None
+            if not resolved:
+                resolved = data.get("image") or data.get("image_url")
+            if resolved and isinstance(resolved, str) and resolved.strip().startswith("http"):
+                print(f"\033[92m[IMG]\033[0m Alchemy REFRESHED token image for {contract[:10]}... #{token_id}: {resolved[:80]}...")
+                return resolved.strip()
+            print(f"\033[93m[IMG]\033[0m Alchemy refreshCache still NO image for {contract[:10]}... #{token_id}")
+    except Exception as e:
+        print(f"\033[91m[IMG]\033[0m Alchemy refreshCache error for {contract[:10]}... #{token_id}: {e}")
     return None
 
 
@@ -1589,12 +1633,19 @@ async def create_eth_nft_embed(
     info = await get_contract_info(contract)
     from trackers.collection_image import fetch_collection_image, prepare_collection_thumbnail
 
-    # ── Token image: multi-source cascade (Alchemy → OpenSea → Reservoir → on-chain) ──
+    # ── Token image: multi-source cascade ──
+    # 1. Alchemy (fast, cached)
     image_url = await _fetch_alchemy_token_image_direct(session, contract, token_id)
+    # 2. Alchemy force-refresh (re-indexes from chain, costs more CUs)
+    if not image_url:
+        image_url = await _fetch_alchemy_token_image_with_refresh(session, contract, token_id)
+    # 3. OpenSea (only if API key configured)
     if not image_url:
         image_url = await _fetch_opensea_token_image_direct(session, contract, token_id)
+    # 4. Reservoir (only if API key configured)
     if not image_url:
         image_url = await _fetch_reservoir_token_image_direct(session, contract, token_id)
+    # 5. On-chain tokenURI fallback
     if not image_url:
         try:
             from trackers.eth_live_mints import fetch_token_image
