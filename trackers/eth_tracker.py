@@ -1345,11 +1345,13 @@ async def _fetch_alchemy_token_image_direct(
     """Fetch per-token image directly from Alchemy — lives in eth_tracker.py to avoid sys.modules cache issues."""
     key = (os.getenv("ALCHEMY_NFT_API_KEY") or "").strip()
     if not key:
+        print(f"\033[93m[IMG]\033[0m No ALCHEMY_NFT_API_KEY set — skipping Alchemy token image for {contract[:10]}... #{token_id}")
         return None
     cache_key = f"{contract.lower()}:{int(token_id)}"
     now = time_module.time()
     cached = _eth_tracker_token_img_cache.get(cache_key)
     if cached and (now - cached[1]) < _ETH_TRACKER_TOKEN_IMG_TTL:
+        print(f"\033[92m[IMG]\033[0m Token cache hit for {contract[:10]}... #{token_id}")
         return cached[0] or None
     url = f"https://eth-mainnet.g.alchemy.com/nft/v3/{key}/getNFTMetadata"
     try:
@@ -1359,21 +1361,30 @@ async def _fetch_alchemy_token_image_direct(
             timeout=aiohttp.ClientTimeout(total=8),
         ) as r:
             if r.status != 200:
+                print(f"\033[93m[IMG]\033[0m Alchemy getNFTMetadata status {r.status} for {contract[:10]}... #{token_id}")
                 return None
             data = await r.json()
+            # Primary: Alchemy normalized image dict
             img = data.get("image") if isinstance(data.get("image"), dict) else {}
             resolved = (
                 img.get("cachedUrl")
                 or img.get("thumbnailUrl")
                 or img.get("pngUrl")
                 or img.get("originalUrl")
-                or data.get("image")
-                or data.get("image_url")
             )
+            # Fallback: raw metadata image field (often present when normalized image is missing)
+            if not resolved:
+                raw = data.get("raw", {})
+                metadata = raw.get("metadata", {}) if isinstance(raw, dict) else {}
+                resolved = metadata.get("image") if isinstance(metadata, dict) else None
+            # Legacy flat fields
+            if not resolved:
+                resolved = data.get("image") or data.get("image_url")
             if resolved and isinstance(resolved, str) and resolved.strip().startswith("http"):
                 _eth_tracker_token_img_cache[cache_key] = (resolved.strip(), now)
-                print(f"\033[92m[IMG]\033[0m Direct Alchemy token image for {contract[:10]}... #{token_id}")
+                print(f"\033[92m[IMG]\033[0m Direct Alchemy token image for {contract[:10]}... #{token_id}: {resolved[:80]}...")
                 return resolved.strip()
+            print(f"\033[93m[IMG]\033[0m Alchemy getNFTMetadata returned NO image for {contract[:10]}... #{token_id}")
     except Exception as e:
         print(f"\033[91m[IMG]\033[0m Direct Alchemy error for {contract[:10]}... #{token_id}: {e}")
     return None
@@ -1555,11 +1566,15 @@ async def create_eth_nft_embed(
             pass
 
     if alchemy_contract_data and (not col_name or col_name == "Unknown"):
-        c_name = alchemy_contract_data.get("name")
+        c_name = alchemy_contract_data.get("name") or (alchemy_contract_data.get("openSeaMetadata") or {}).get("collectionName")
         if c_name:
             col_name = c_name
+            print(f"\033[92m[NAME]\033[0m Alchemy contract name: {col_name} for {contract[:10]}...")
+        else:
+            print(f"\033[93m[NAME]\033[0m Alchemy contract metadata has NO name for {contract[:10]}...")
 
     if not col_name or col_name == "Unknown":
+        print(f"\033[93m[NAME]\033[0m No name from on-chain or Alchemy for {contract[:10]}... — trying OpenSea/Reservoir")
         # 2. Try OpenSea
         try:
             opensea_url = f"https://api.opensea.io/api/v2/chain/ethereum/contract/{contract.lower()}"
@@ -1572,6 +1587,7 @@ async def create_eth_nft_embed(
                     c_name = data.get("collection", {}).get("name") or data.get("name")
                     if c_name:
                         col_name = c_name
+                        print(f"\033[92m[NAME]\033[0m OpenSea name: {col_name} for {contract[:10]}...")
         except Exception:
             pass
 
@@ -1587,13 +1603,16 @@ async def create_eth_nft_embed(
                             c_name = collections[0].get("name")
                             if c_name:
                                 col_name = c_name
+                                print(f"\033[92m[NAME]\033[0m Reservoir name: {col_name} for {contract[:10]}...")
             except Exception:
                 pass
 
         if not col_name or col_name == "Unknown":
             col_name = "Collection"
+            print(f"\033[91m[NAME]\033[0m FAILED to resolve name for {contract[:10]}... — using 'Collection'")
 
     # Collection image: free chain (Alchemy → CoinGecko → NFTScan logo CDN → OpenSea → Reservoir)
+    print(f"\033[96m[IMG]\033[0m Resolving collection image for {contract[:10]}... token=#{token_id} (image_url={'SET' if image_url else 'NONE'})")
     project_image_url = await fetch_collection_image(
         session,
         contract,
@@ -1601,6 +1620,10 @@ async def create_eth_nft_embed(
         alchemy_contract_data=alchemy_contract_data,
         token_image_url=image_url,
     )
+    if project_image_url:
+        print(f"\033[92m[IMG]\033[0m Collection image resolved: {project_image_url[:80]}... for {contract[:10]}...")
+    else:
+        print(f"\033[93m[IMG]\033[0m No collection image found for {contract[:10]}...")
 
     # Smart label correction for older collections
     if action_word == "MINTED" and floor_eth > 0:
@@ -1627,6 +1650,7 @@ async def create_eth_nft_embed(
     display_name = profile_name if profile_name and profile_name.lower() != wallet_label.lower() else wallet_label
     col_display = (col_name or "Collection").strip()
     thumb_url = prepare_collection_thumbnail(image_url, project_image_url, files)
+    print(f"\033[96m[IMG]\033[0m Final thumbnail for {contract[:10]}...: {'SET ('+str(thumb_url)[:60]+'...)' if thumb_url else 'EMPTY'}")
 
     if getattr(config, "WALLET_TRACKER_LUXURY_MODE", True):
         from trackers.wallet_tracker_embed import (
