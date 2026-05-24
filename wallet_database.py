@@ -126,7 +126,7 @@ _ETH_WHALE_SEED: List[tuple] = [
     ("0xed2ab4948ba6a909a7751dec4f34f303eb8c7236", "FRANKLIN", None),
     ("0x2238c8b16c36628b8f1f36486675c1e2a30debf1", "SETH", "https://x.com/btcismyname"),
     ("0xd387a6e4e84a6c86bd90c158c6028a58cc8ac459", "PRANKSY", "https://x.com/pranksy"),
-    ("0xc6400a5584db71e41b0e5dfbdc769b54b91256cd", "PUNK6529", "https://x.com/punk6529"),
+    ("0xfd22004806a6846ea67ad883356be810f0428793", "PUNK6529", "https://x.com/punk6529"),
     ("0xdcae87821fa6caea05dbc2811126f4bc7ff73bd1", "OSF", "https://x.com/osf_rekt"),
     ("0x5ea9681c3ab9b5739810f8b91ae65ec47de62119", "GaryVee", "https://x.com/garyvee"),
     ("0x35860583266f6c6cad540ef07b4d36ec0d925916", "Fewocious", "https://x.com/fewocious"),
@@ -136,6 +136,13 @@ _ETH_WHALE_SEED: List[tuple] = [
     ("0x8e6804337f8d774ce3eb4d4c12bad9dfab2f56ad", "anon alt", None),
     ("0xdbd47f66aa2f00b3db03397f260ce9728298c495", "TMA", "https://x.com/tma_420?s=21"),
     ("0x94ef56efad3cf722cd385bd6d5178c3063b83d1a", "0x94ef...3d1a", None),
+    # New additions (ENS-resolved May 2025)
+    ("0x3d3e52831b31f3c35170a4a094685748b2f8ea39", "cozomo.eth", None),
+    ("0xc5f59709974262c4afacc5386287820bdbc7eb3a", "farokh.eth", "https://x.com/farokh"),
+    ("0xc46db2d89327d4c41eb81c43ed5e3dff111f9a8f", "deeze.eth", "https://x.com/deeze"),
+    ("0x17fef061ac9fc0cd662a9d759a328c3296e13c4e", "punk9059.eth", "https://x.com/punk9059"),
+    ("0xabf107de3e01c7c257e64e0a18d60a733aad395d", "beaniemaxi.eth", "https://x.com/beaniemaxi"),
+    ("0x9e3dd3f09cf1b9937294b2a3e19351f700ecb6fd", "0xquit.eth", "https://x.com/0xQuit"),
 ]
 
 
