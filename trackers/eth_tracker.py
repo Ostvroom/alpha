@@ -7,6 +7,7 @@ import json
 import os
 import re
 import time as time_module
+from pathlib import Path
 import discord
 from datetime import datetime, timezone
 from collections import defaultdict, deque
@@ -607,6 +608,14 @@ async def attach_wallet_pfp_for_embed(
                 return f"attachment://{fname}"
         except Exception:
             continue
+
+    # ── Final fallback: attach a local black PFP so Discord always shows an icon ──
+    fallback_path = Path(__file__).resolve().parent.parent / "assets" / "wt_collection_fallback_256.png"
+    if fallback_path.exists():
+        fname = "wt_pfp_fallback.png"
+        files.append(discord.File(str(fallback_path), filename=fname))
+        print(f"\033[93m[PFP]\033[0m Black PFP fallback attached for {wallet_lower[:10]}...")
+        return f"attachment://{fname}"
 
     return EFFIGY_AVATAR.format(address=wallet)
 
@@ -1838,7 +1847,7 @@ async def create_eth_nft_embed(
     embed.set_footer(text=f"{_BRAND_NAME} · Wallet Tracker")
     return embed, None, None, files
 
-async def create_eth_embed(action: str, wallet: str, contract: str, amount: float, session: aiohttp.ClientSession, tx_hash: str, is_nft: bool = False, token_id: int = None) -> Embed:
+async def create_eth_embed(action: str, wallet: str, contract: str, amount: float, session: aiohttp.ClientSession, tx_hash: str, is_nft: bool = False, token_id: int = None) -> Tuple[Embed, List[discord.File]]:
     """Create ETH Embed with Logo and Socials"""
     
     # 1. Fetch Info
@@ -1899,12 +1908,10 @@ async def create_eth_embed(action: str, wallet: str, contract: str, amount: floa
         url=f"https://etherscan.io/tx/{tx_hash}"
     )
     
-    files = []
+    files: List[discord.File] = []
     
-    # Fetch Trader PFP for Author Icon
-    avatar_url, pfp_local = await fetch_wallet_avatar(wallet, session)
-    if pfp_local:
-        files.append(discord.File(pfp_local, filename=f"pfp_{wallet.lower()}.{pfp_local.split('.')[-1]}"))
+    # Fetch Trader PFP for Author Icon (with black fallback)
+    avatar_url = await attach_wallet_pfp_for_embed(wallet, session, files)
         
     embed.set_author(name=f"{_BRAND_NAME} · ETH", icon_url=avatar_url)
     
