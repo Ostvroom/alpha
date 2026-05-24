@@ -1828,16 +1828,18 @@ async def create_eth_nft_embed(
         display_eth, price_source, is_floor=is_floor, action_word=action_word,
         source=source, floor_eth=floor_eth, usd_rate=_cached_eth_usd,
     )
+    # ── Row 1: Amount | Time | (spacer) ───────────────────────────────────────────
     embed.add_field(name="🖼️ Amount", value=f"**{qty}** NFT{'s' if qty != 1 else ''}", inline=True)
     embed.add_field(name="🕒 Time", value=f"<t:{int(time.time())}:R>", inline=True)
-    _embed_section_spacer(embed)
+    embed.add_field(name="\u200b", value="\u200b", inline=True)
+    # ── Row 2: Value | Token | (spacer) ───────────────────────────────────────────
     embed.add_field(name="💰 Value", value=price_compact, inline=True)
     embed.add_field(
         name="🔢 Token IDs",
         value=_wallet_tracker_token_ids_field(token_id, all_token_ids, bulk_qty),
         inline=True,
     )
-    _embed_section_spacer(embed)
+    embed.add_field(name="\u200b", value="\u200b", inline=True)
     embed.add_field(
         name="🔗 Links",
         value=f"[OpenSea]({opensea_asset_url}) · [Etherscan TX]({tx_url}) · [Contract](https://etherscan.io/address/{contract})",
