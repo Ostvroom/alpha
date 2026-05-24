@@ -62,6 +62,13 @@ class NftWalletAlertContext:
     trader_name: str = ""
     x_url: str = ""
     opensea_profile_url: str = ""
+    # HVA / Smart Wallet enrichment
+    hva_handle: str = ""          # e.g. "garyvee"
+    hva_tier: str = ""            # "tier1", "tier2", "tier3"
+    hva_badge: str = ""           # formatted badge string
+    collection_smart_intel: str = ""  # recent smart wallet activity on this collection
+    collection_hva_count: int = 0     # HVAs that recently engaged with this collection
+    token_rarity_score: Optional[float] = None  # Alchemy rarity (optional)
 
 
 def _cfg_flag(name: str, default: str = "1") -> bool:
@@ -149,8 +156,11 @@ def _token_ids_line(ctx: NftWalletAlertContext) -> str:
         line = " · ".join(parts)
         if len(ctx.all_token_ids) > 20:
             line += f" · +{len(ctx.all_token_ids) - 20} more"
-        return line
-    return f"`#{ctx.token_id}`"
+    else:
+        line = f"`#{ctx.token_id}`"
+    if ctx.token_rarity_score and ctx.token_rarity_score > 0:
+        line += f"\n🏆 Rarity: **{ctx.token_rarity_score:,.0f}**"
+    return line
 
 
 def _usd_value(ctx: NftWalletAlertContext) -> float:
@@ -221,6 +231,91 @@ def _alpha_signal(ctx: NftWalletAlertContext) -> bool:
     return free_mint and early_wallet and ctx.action_word in ("MINTED", "CLAIMED", "BOUGHT")
 
 
+# ── HVA detection helpers ────────────────────────────────────────────────────
+
+def _x_url_to_handle(x_url: str) -> str:
+    """Extract 'garyvee' from 'https://x.com/garyvee' or similar."""
+    u = (x_url or "").strip().rstrip("/")
+    if "/" not in u:
+        return u.lstrip("@").lower()
+    parts = u.split("/")
+    return parts[-1].lstrip("@").lower()
+
+
+def _resolve_hva_tier(handle: str) -> str:
+    """Return tier1/tier2/tier3/'' for an X handle."""
+    h = (handle or "").strip().lstrip("@").lower()
+    if not h:
+        return ""
+    try:
+        t1 = {str(x or "").strip().lstrip("@").lower() for x in (getattr(config, "TIER_1_HVAs", []) or [])}
+        if h in t1:
+            return "tier1"
+        # Tier 2 = in HVA_LIST but not tier1
+        hva = {str(x or "").strip().lstrip("@").lower() for x in (getattr(config, "HVA_LIST", []) or [])}
+        if h in hva:
+            return "tier2"
+    except Exception:
+        pass
+    return ""
+
+
+def resolve_wallet_hva_badge(x_url: str, wallet_label: str = "") -> tuple[str, str, str]:
+    """Returns (handle, tier, badge_str) for a wallet's X URL."""
+    handle = _x_url_to_handle(x_url)
+    if not handle:
+        # Fallback: check if wallet label matches an HVA handle
+        label = (wallet_label or "").strip().lstrip("@").lower()
+        if label:
+            tier = _resolve_hva_tier(label)
+            if tier:
+                handle = label
+    if not handle:
+        return "", "", ""
+    tier = _resolve_hva_tier(handle)
+    if not tier:
+        return handle, "", ""
+    badge = {"tier1": "⭐ Tier 1 HVA", "tier2": "🔥 HVA", "tier3": "✨ Hunter"}.get(tier, "")
+    return handle, tier, badge
+
+
+# ── Collection smart-wallet intel helpers ────────────────────────────────────
+
+def _get_collection_smart_intel(contract: str, window_seconds: int = 1800) -> str:
+    """Query mint_wallet_intel for recent smart-wallet activity on this collection."""
+    try:
+        from trackers.mint_wallet_intel import (
+            _CONTRACT_ACTIVITY,
+            buyers_in_window,
+            minters_in_window,
+        )
+        contract = (contract or "").lower()
+        if not contract:
+            return ""
+        buyers = buyers_in_window(_CONTRACT_ACTIVITY, contract, window_seconds)
+        minters = minters_in_window(_CONTRACT_ACTIVITY, contract, window_seconds)
+        parts: List[str] = []
+        if buyers:
+            names = ", ".join(
+                f"`{(b.get('label') or '?'):.10}`" for b in buyers[:3]
+            )
+            extra = len(buyers) - 3
+            if extra > 0:
+                names += f" +{extra} more"
+            parts.append(f"🛒 **{len(buyers)} smart buy{'s' if len(buyers) != 1 else ''}** · {names}")
+        if minters:
+            names = ", ".join(
+                f"`{(m.get('label') or '?'):.10}`" for m in minters[:3]
+            )
+            extra = len(minters) - 3
+            if extra > 0:
+                names += f" +{extra} more"
+            parts.append(f"⚡ **{len(minters)} smart mint{'s' if len(minters) != 1 else ''}** · {names}")
+        return "\n".join(parts)
+    except Exception:
+        return ""
+
+
 def build_premium_nft_wallet_embed(ctx: NftWalletAlertContext) -> discord.Embed:
     """Single rich embed — luxury on-chain intelligence layout."""
     title, color = _title_and_color(ctx)
@@ -232,14 +327,23 @@ def build_premium_nft_wallet_embed(ctx: NftWalletAlertContext) -> discord.Embed:
     wallet_url = f"https://etherscan.io/address/{ctx.wallet}"
     contract_url = f"https://etherscan.io/address/{ctx.contract}"
 
+    # Override color for HVA tier 1 activity
+    if ctx.hva_tier == "tier1":
+        color = _COLOR_GOLD
+
     embed = discord.Embed(
         title=title[:256],
         url=opensea,
         color=color,
         timestamp=datetime.now(timezone.utc),
     )
+
+    # HVA-aware author name
+    author_name = f"{_BRAND} · Wallet Tracker v1"
+    if ctx.hva_badge:
+        author_name = f"{_BRAND} · {ctx.hva_badge}"
     embed.set_author(
-        name=f"{_BRAND} · Wallet Tracker v1",
+        name=author_name,
         icon_url=ctx.avatar_url,
         url=wallet_url,
     )
@@ -253,16 +357,21 @@ def build_premium_nft_wallet_embed(ctx: NftWalletAlertContext) -> discord.Embed:
         "TRANSFERRED": "Transferred",
     }.get(ctx.action_word, ctx.action_word.title())
 
+    # ── Trader row with HVA badge ────────────────────────────────────────────────
+    trader_lines = [_compact_wallet_row(ctx, wallet_url)]
+    if ctx.hva_badge:
+        trader_lines.append(f"{ctx.hva_badge} · [@{ctx.hva_handle}]({ctx.x_url})")
+    wallet_class = _wallet_classification(ctx)
+    if wallet_class:
+        trader_lines.append(f"🏷️ **{wallet_class}**")
+    trader_lines.append(f"🎯 **Action** · **{action_display}**")
+
     embed.add_field(
         name="\u200b",
-        value="\n".join(
-            [
-                _compact_wallet_row(ctx, wallet_url),
-                f"🎯 **Action** · **{action_display}**",
-            ]
-        )[:1024],
+        value="\n".join(trader_lines)[:1024],
         inline=False,
     )
+
     # ── Row 1: Amount | Time | (spacer for alignment) ────────────────────────────
     embed.add_field(
         name="📦 Amount",
@@ -276,6 +385,22 @@ def build_premium_nft_wallet_embed(ctx: NftWalletAlertContext) -> discord.Embed:
     embed.add_field(name="💰 Value", value=_value_line(ctx), inline=True)
     embed.add_field(name="🆔 Token", value=_token_ids_line(ctx), inline=True)
     embed.add_field(name="\u200b", value="\u200b", inline=True)  # spacer keeps row 2 width consistent
+
+    # ── Collection smart-wallet intel (if any) ────────────────────────────────────
+    if ctx.collection_smart_intel:
+        embed.add_field(
+            name="🧠 Collection Intel",
+            value=ctx.collection_smart_intel[:1024],
+            inline=False,
+        )
+
+    # ── HVA collection context ────────────────────────────────────────────────────
+    if ctx.collection_hva_count > 0:
+        embed.add_field(
+            name="🔥 HVA Activity",
+            value=f"**{ctx.collection_hva_count}** HVAs engaged with this collection (24h)",
+            inline=False,
+        )
 
     links = f"[OpenSea]({opensea}) · [TX]({tx_url}) · [Contract]({contract_url})"
     embed.add_field(name="🔗", value=links, inline=False)

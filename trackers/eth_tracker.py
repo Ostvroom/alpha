@@ -467,6 +467,41 @@ async def fetch_collection_floor_price(session: aiohttp.ClientSession, contract:
     _floor_price_cache[contract_lower] = (0.0, time_module.time())
     return 0.0
 
+
+# Alchemy rarity cache: contract:token_id -> (rarity_data, timestamp)
+_rarity_cache: Dict[str, tuple] = {}
+_RARITY_CACHE_TTL = 3600  # 1 hour
+
+
+async def fetch_alchemy_nft_rarity(session: aiohttp.ClientSession, contract: str, token_id: int) -> Optional[Dict[str, Any]]:
+    """Fetch token rarity via Alchemy computeRarity v3 API.
+    Returns dict with 'rank', 'score', 'totalTokens', 'traitRarity' etc."""
+    if not ALCHEMY_API_KEY:
+        return None
+    cache_key = f"{contract.lower()}:{int(token_id)}"
+    now = time_module.time()
+    cached = _rarity_cache.get(cache_key)
+    if cached and (now - cached[1]) < _RARITY_CACHE_TTL:
+        return cached[0]
+
+    url = f"https://eth-mainnet.g.alchemy.com/nft/v3/{ALCHEMY_API_KEY}/computeRarity"
+    params = {"contractAddress": contract.lower(), "tokenId": str(token_id)}
+    try:
+        async with session.get(url, params=params, timeout=8) as r:
+            if r.status != 200:
+                if r.status == 429:
+                    print(f"\033[93m[ALCHEMY]\033[0m computeRarity rate limited (429)")
+                return None
+            data = await r.json()
+            if data and isinstance(data, dict):
+                _rarity_cache[cache_key] = (data, now)
+                print(f"\033[92m[RARITY]\033[0m Rank {data.get('rank', '?')} / {data.get('totalTokens', '?')} for {contract[:10]}... #{token_id}")
+                return data
+    except Exception as e:
+        print(f"\033[93m[RARITY]\033[0m Alchemy computeRarity error: {e}")
+    return None
+
+
 async def refresh_eth_usd_price(session: aiohttp.ClientSession):
     """Background task to keep ETH/USD price fresh."""
     global _cached_eth_usd
@@ -1775,11 +1810,48 @@ async def create_eth_nft_embed(
             NftWalletAlertContext,
             build_premium_nft_wallet_embed_async,
             resolve_trader_name,
+            resolve_wallet_hva_badge,
+            _get_collection_smart_intel,
         )
 
         os_profile_url = str(wallet_profile.get("opensea_url") or "").strip()
         trader_x = wallet_database.get_x_url(wallet) or ""
         trader_name = resolve_trader_name(wallet_label, profile_name)
+
+        # ── HVA detection ────────────────────────────────────────────────────────
+        hva_handle, hva_tier, hva_badge = resolve_wallet_hva_badge(trader_x, wallet_label)
+
+        # ── Collection smart-wallet intel ────────────────────────────────────────
+        collection_smart_intel = _get_collection_smart_intel(contract, window_seconds=1800)
+
+        # ── HVA collection engagement count (from block_brain.db) ────────────────
+        collection_hva_count = 0
+        try:
+            import database as _db
+            conn = _db._connect()
+            cursor = conn.cursor()
+            # Count unique HVAs that interacted with projects in the last 24h
+            # (best-effort since there's no direct contract→project mapping)
+            cursor.execute(
+                """
+                SELECT COUNT(DISTINCT hva_id) FROM follows
+                WHERE followed_at >= datetime('now', '-1 day')
+                """
+            )
+            row = cursor.fetchone()
+            if row:
+                collection_hva_count = int(row[0] or 0)
+            conn.close()
+        except Exception:
+            pass
+
+        # ── Alchemy rarity (optional, paid API) ──────────────────────────────────
+        rarity_data = None
+        if getattr(config, "WALLET_TRACKER_SHOW_RARITY", False) and ALCHEMY_API_KEY:
+            try:
+                rarity_data = await fetch_alchemy_nft_rarity(session, contract, token_id)
+            except Exception:
+                pass
 
         alert_ctx = NftWalletAlertContext(
             action_word=action_word,
@@ -1809,6 +1881,12 @@ async def create_eth_nft_embed(
             trader_name=trader_name,
             x_url=trader_x,
             opensea_profile_url=os_profile_url,
+            hva_handle=hva_handle,
+            hva_tier=hva_tier,
+            hva_badge=hva_badge,
+            collection_smart_intel=collection_smart_intel,
+            collection_hva_count=collection_hva_count,
+            token_rarity_score=float(rarity_data.get("score", 0)) if rarity_data and rarity_data.get("score") else None,
         )
         embed = await build_premium_nft_wallet_embed_async(alert_ctx, session)
         return embed, None, None, files
