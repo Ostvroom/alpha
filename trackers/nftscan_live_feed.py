@@ -10,7 +10,8 @@ import logging
 import os
 import random
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Set
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple
 
 import discord
 
@@ -566,17 +567,29 @@ class NftscanLiveFeed:
                 e.to_dict().get("thumbnail", {}).get("url") == f"attachment://{fallback_name}"
                 for e in chunk
             )
-            files: List[discord.File] = []
+            # Build list of (path, filename) tuples so we can recreate discord.File on each retry
+            file_specs: List[Tuple[str, str]] = []
             if needs_fallback:
-                path = ensure_black_collection_fallback_path()
-                files.append(discord.File(str(path), filename=fallback_name))
+                file_specs.append((str(ensure_black_collection_fallback_path()), fallback_name))
             for bf in collect_embed_attachment_files(chunk):
-                if not any(getattr(f, "filename", None) == bf.filename for f in files):
-                    files.append(bf)
-            kwargs: Dict = {}
-            if files:
-                kwargs["files"] = files
+                if not any(fname == bf.filename for _, fname in file_specs):
+                    # discord.File from path can be recreated; from buffer we need to re-read
+                    if hasattr(bf, '_fp') and hasattr(bf._fp, 'name') and isinstance(bf._fp.name, str):
+                        file_specs.append((bf._fp.name, bf.filename))
+                    elif hasattr(bf, '_filename') and isinstance(bf._filename, str):
+                        file_specs.append((bf._filename, bf.filename))
+                    else:
+                        # Buffer-based files can't be recreated easily; skip on retry
+                        pass
+
             for d_attempt in range(3):
+                files: List[discord.File] = []
+                for path, fname in file_specs:
+                    if Path(path).is_file():
+                        files.append(discord.File(path, filename=fname))
+                kwargs: Dict = {}
+                if files:
+                    kwargs["files"] = files
                 try:
                     await channel.send(embeds=chunk, **kwargs)
                     break
