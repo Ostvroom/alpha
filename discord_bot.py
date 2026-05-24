@@ -1,3 +1,37 @@
+import subprocess
+import sys
+from pathlib import Path
+
+# ── Purge stale Python bytecode BEFORE any project imports ─────────────────
+try:
+    _project_root = Path(__file__).resolve().parent
+    for _pyc_dir in _project_root.rglob("__pycache__"):
+        if _pyc_dir.is_dir():
+            for _f in list(_pyc_dir.iterdir()):
+                try:
+                    _f.unlink()
+                except Exception:
+                    pass
+    print("[BOOT] Cleared __pycache__ to ensure fresh code.", flush=True)
+except Exception:
+    pass
+
+# ── Print exact git commit so you know what code is running ────────────────
+try:
+    _commit = (
+        subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=_project_root)
+        .decode("utf-8")
+        .strip()
+    )
+    _branch = (
+        subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=_project_root)
+        .decode("utf-8")
+        .strip()
+    )
+    print(f"[BOOT] Running commit {_commit} on branch '{_branch}'", flush=True)
+except Exception:
+    print("[BOOT] Could not read git commit.", flush=True)
+
 import discord
 from discord.ext import commands, tasks
 import config
