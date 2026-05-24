@@ -263,14 +263,19 @@ def build_premium_nft_wallet_embed(ctx: NftWalletAlertContext) -> discord.Embed:
         )[:1024],
         inline=False,
     )
+    # ── Row 1: Amount | Time | (spacer for alignment) ────────────────────────────
     embed.add_field(
         name="📦 Amount",
         value=f"**{qty}** NFT{'s' if qty != 1 else ''}",
         inline=True,
     )
     embed.add_field(name="⏱ Time", value=f"<t:{int(time.time())}:R>", inline=True)
+    embed.add_field(name="\u200b", value="\u200b", inline=True)  # spacer forces new row
+
+    # ── Row 2: Value | Token | (spacer for alignment) ─────────────────────────────
     embed.add_field(name="💰 Value", value=_value_line(ctx), inline=True)
     embed.add_field(name="🆔 Token", value=_token_ids_line(ctx), inline=True)
+    embed.add_field(name="\u200b", value="\u200b", inline=True)  # spacer keeps row 2 width consistent
 
     links = f"[OpenSea]({opensea}) · [TX]({tx_url}) · [Contract]({contract_url})"
     embed.add_field(name="🔗", value=links, inline=False)
