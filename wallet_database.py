@@ -143,6 +143,7 @@ _ETH_WHALE_SEED: List[tuple] = [
     ("0x17fef061ac9fc0cd662a9d759a328c3296e13c4e", "punk9059.eth", "https://x.com/punk9059"),
     ("0xabf107de3e01c7c257e64e0a18d60a733aad395d", "beaniemaxi.eth", "https://x.com/beaniemaxi"),
     ("0x9e3dd3f09cf1b9937294b2a3e19351f700ecb6fd", "0xquit.eth", "https://x.com/0xQuit"),
+    ("0x250dc85178fb6859e9ee02c925d46aab946a55e7", "AdamWeitsman", None),
 ]
 
 
