@@ -169,6 +169,86 @@ async def _send_verification_log(
     await ch.send(embed=e)
 
 
+def _holder_role_id() -> int:
+    return int(getattr(config, "HOLDER_VERIFIED_ROLE_ID", 0) or 0)
+
+
+def _holder_welcome_enabled() -> bool:
+    return bool(getattr(config, "ENABLE_HOLDER_WELCOME", True))
+
+
+def _build_holder_welcome_message(member: discord.Member) -> str:
+    claim_ch_id = int(getattr(config, "HOLDER_CLAIM_ROLES_CHANNEL_ID", 0) or 0)
+    claim_mention = f"<#{claim_ch_id}>" if claim_ch_id else "#claim-roles"
+    template = getattr(
+        config,
+        "HOLDER_WELCOME_MESSAGE",
+        "Welcome, {mention} to the Velcorians family!\n\n"
+        "Head over to {claim_roles_channel} and claim your roles.\n\n"
+        "Get ready to cook with us!",
+    )
+    return str(template).format(
+        mention=member.mention,
+        name=member.display_name,
+        claim_roles_channel=claim_mention,
+    )
+
+
+async def send_holder_welcome(
+    client: discord.Client,
+    member: discord.Member,
+) -> bool:
+    """Post public welcome when a member receives the holder-verified role."""
+    if not _holder_welcome_enabled():
+        return False
+    role_id = _holder_role_id()
+    channel_id = int(getattr(config, "HOLDER_WELCOME_CHANNEL_ID", 0) or 0)
+    if not role_id or not channel_id:
+        return False
+    if member.bot:
+        return False
+
+    role = member.guild.get_role(role_id)
+    if role is None or role not in member.roles:
+        return False
+
+    ch = client.get_channel(channel_id)
+    if ch is None:
+        try:
+            ch = await client.fetch_channel(channel_id)
+        except Exception:
+            ch = None
+    if not isinstance(ch, discord.TextChannel):
+        print(f"[HolderWelcome] Channel {channel_id} not found or not a text channel.")
+        return False
+
+    perms = ch.permissions_for(member.guild.me)
+    if not perms.send_messages:
+        print(f"[HolderWelcome] Missing Send Messages in #{getattr(ch, 'name', channel_id)}")
+        return False
+
+    try:
+        await ch.send(_build_holder_welcome_message(member))
+        print(
+            f"[HolderWelcome] Welcomed {member} in #{ch.name} "
+            f"(role {role_id})"
+        )
+        return True
+    except discord.Forbidden:
+        print(f"[HolderWelcome] Forbidden sending to channel {channel_id}")
+    except Exception as e:
+        print(f"[HolderWelcome] Error: {e}")
+    return False
+
+
+def member_gained_role(before: discord.Member, after: discord.Member, role_id: int) -> bool:
+    if not role_id:
+        return False
+    before_ids = {r.id for r in before.roles}
+    after_ids = {r.id for r in after.roles}
+    return role_id in after_ids and role_id not in before_ids
+
+
 async def _payment_embed(session: aiohttp.ClientSession) -> Embed:
     notes = getattr(
         config,
@@ -438,3 +518,12 @@ class PanelCommands(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         await post_claim_roles_to_channel(ch)
         await interaction.followup.send(f"Posted claim-roles panel in {ch.mention}.", ephemeral=True)
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        if after.bot or not _holder_welcome_enabled():
+            return
+        role_id = _holder_role_id()
+        if not role_id or not member_gained_role(before, after, role_id):
+            return
+        await send_holder_welcome(self.bot, after)

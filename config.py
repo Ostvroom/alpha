@@ -658,6 +658,21 @@ VERIFICATION_RULES_TEXT = os.getenv(
     "VERIFICATION_RULES_TEXT",
     "Welcome. Please read our rules, then verify below to access the server.",
 )
+# NFT / holder verification — welcome when member receives the holder role (any assign path)
+ENABLE_HOLDER_WELCOME = _env_flag("ENABLE_HOLDER_WELCOME", "1")
+HOLDER_VERIFIED_ROLE_ID = _env_int("HOLDER_VERIFIED_ROLE_ID", 1506380353877577738)
+HOLDER_WELCOME_CHANNEL_ID = parse_channel_id(
+    "HOLDER_WELCOME_CHANNEL_ID", default=1052854063257096196
+)
+HOLDER_CLAIM_ROLES_CHANNEL_ID = parse_channel_id(
+    "HOLDER_CLAIM_ROLES_CHANNEL_ID", default=1506343782948405378
+)
+HOLDER_WELCOME_MESSAGE = os.getenv(
+    "HOLDER_WELCOME_MESSAGE",
+    "Welcome, {mention} to the Velcorians family!\n\n"
+    "Head over to {claim_roles_channel} and claim your roles.\n\n"
+    "Get ready to cook with us!",
+)
 _DEFAULT_ETH_TREASURY = "0xDB673105123c54611043144f18e8f145AFE052Df"
 _DEFAULT_SOL_TREASURY = "CoNzMiAKSqZBUGu5XgEXRpiE3ByiP32wW3fJB76sf1p2"
 CRYPTO_ETH_ADDRESS = (os.getenv("CRYPTO_ETH_ADDRESS", _DEFAULT_ETH_TREASURY) or "").strip()
