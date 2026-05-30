@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import re
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+import aiohttp
 import discord
 from discord.ext import commands
 
@@ -167,6 +169,16 @@ def _fmt_account_age(age_days: Optional[int], created_at=None) -> str:
         return "today"
     if days == 1:
         return "1 day"
+    if days >= 365:
+        years = days // 365
+        rem = days % 365
+        if years == 1 and rem < 45:
+            return "1 year"
+        if rem < 30:
+            return f"{years} years"
+        return f"{years}y {rem // 30}mo"
+    if days >= 60:
+        return f"{days // 30} months"
     return f"{days} days"
 
 
@@ -179,23 +191,75 @@ def _normalize_pfp_url(url: Optional[str]) -> Optional[str]:
     return u
 
 
-def _apply_profile_art(embed: discord.Embed, profile: Dict[str, Any], *, handle: str) -> None:
-    """Thumbnail = PFP, main image = X banner (same layout as discovery)."""
+async def _download_image_attachment(
+    url: str,
+    filename_stem: str,
+    existing_files: List[discord.File],
+) -> Optional[str]:
+    """Download image and return attachment:// URL for embed (Discord-safe)."""
+    u = str(url or "").strip()
+    if not u.startswith(("http://", "https://")):
+        return None
+    stem = re.sub(r"[^a-zA-Z0-9_]", "_", filename_stem)[:40] or "wl_img"
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; Velcor3Bot/1.0)"}
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(
+                u, timeout=aiohttp.ClientTimeout(total=18), allow_redirects=True
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.read()
+                if len(data) < 400:
+                    return None
+                ctype = (resp.headers.get("content-type") or "").lower()
+                ext = "png"
+                if "jpeg" in ctype or "jpg" in ctype:
+                    ext = "jpg"
+                elif "webp" in ctype:
+                    ext = "webp"
+                elif "gif" in ctype:
+                    ext = "gif"
+                fname = f"{stem}.{ext}"
+                if any(getattr(f, "filename", None) == fname for f in existing_files):
+                    return f"attachment://{fname}"
+                existing_files.append(discord.File(io.BytesIO(data), filename=fname))
+                return f"attachment://{fname}"
+    except Exception as e:
+        logger.debug("wl_request image download %s: %s", u[:60], e)
+    return None
+
+
+async def hydrate_wl_embed_art(
+    embed: discord.Embed,
+    profile: Dict[str, Any],
+    handle: str,
+    *,
+    files: Optional[List[discord.File]] = None,
+) -> Tuple[discord.Embed, List[discord.File]]:
+    """Attach PFP + banner as files so Discord always displays them."""
+    out_files: List[discord.File] = list(files or [])
     h = str(handle or profile.get("handle") or "").strip().lstrip("@").lower()
-    pfp = _normalize_pfp_url(profile.get("pfp_url"))
-    if not pfp and h:
-        pfp = f"https://unavatar.io/twitter/{h}"
-    banner = str(profile.get("banner_url") or "").strip() or None
-    if pfp:
+    pfp_url = _normalize_pfp_url(profile.get("pfp_url")) or (
+        f"https://unavatar.io/twitter/{h}" if h else None
+    )
+    banner_url = str(profile.get("banner_url") or "").strip() or None
+
+    if pfp_url:
+        att = await _download_image_attachment(pfp_url, f"wl_pfp_{h}", out_files)
         try:
-            embed.set_thumbnail(url=pfp)
+            embed.set_thumbnail(url=att or pfp_url)
         except Exception:
             pass
-    if banner:
+
+    if banner_url:
+        att = await _download_image_attachment(banner_url, f"wl_banner_{h}", out_files)
         try:
-            embed.set_image(url=banner)
+            embed.set_image(url=att or banner_url)
         except Exception:
             pass
+
+    return embed, out_files
 
 
 async def _enrich_profile_art(bot, handle: str, profile: Dict[str, Any]) -> None:
@@ -464,14 +528,11 @@ async def fetch_live_profile(bot, handle: str) -> Dict[str, Any]:
         if banner:
             out["banner_url"] = str(banner).strip()
         created = getattr(acc, "created_at", None)
-        if created:
-            try:
-                if created.tzinfo is None:
-                    created = created.replace(tzinfo=timezone.utc)
-                age_d = (datetime.now(timezone.utc) - created).days
+        if created is not None:
+            out["created_at"] = created
+            age_d = _account_age_days(created)
+            if age_d is not None:
                 out["age_days"] = age_d
-            except Exception:
-                pass
     except Exception as e:
         logger.debug("wl_request profile fetch @%s: %s", handle, e)
     return out
@@ -492,7 +553,6 @@ def build_loading_embed(*, submitter: discord.abc.User, handle: str) -> discord.
         embed.set_author(name=f"{_BRAND_DISPLAY} · WL Request", icon_url=icon)
     embed.add_field(name="Submitted by", value=submitter.mention, inline=False)
     embed.set_footer(text=f"{_BRAND_DISPLAY} · Please wait a few seconds…")
-    _apply_profile_art(embed, {"handle": handle, "pfp_url": f"https://unavatar.io/twitter/{handle}"}, handle=handle)
     return embed
 
 
@@ -528,7 +588,10 @@ async def _assemble_wl_request(
         profile["created_at"] = row[4]
         profile["age_days"] = _account_age_days(row[4])
         profile["followers_count"] = live.get("followers_count") or row[8]
-        if profile.get("age_days") is None:
+        if live.get("age_days") is not None:
+            profile["age_days"] = live.get("age_days")
+            profile["created_at"] = live.get("created_at") or profile.get("created_at")
+        elif profile.get("age_days") is None:
             profile["age_days"] = live.get("age_days")
     else:
         profile.update(live)
@@ -590,7 +653,6 @@ def build_wl_request_embed(
         inline=False,
     )
     embed.set_footer(text=f"{_BRAND_DISPLAY} · Staff: review → #wl-giveaways")
-    _apply_profile_art(embed, profile, handle=handle)
     return embed
 
 
@@ -669,8 +731,17 @@ class WlRequestHandler(commands.Cog):
                 logger.debug("[WlRequest] delete user msg: %s", e)
 
         loading = build_loading_embed(submitter=message.author, handle=handle)
+        loading_files: List[discord.File] = []
+        loading, loading_files = await hydrate_wl_embed_art(
+            loading,
+            {"handle": handle, "pfp_url": f"https://unavatar.io/twitter/{handle}"},
+            handle,
+            files=loading_files,
+        )
         try:
-            posted = await ch.send(embed=loading)
+            posted = await ch.send(
+                embed=loading, files=loading_files if loading_files else None
+            )
         except discord.Forbidden:
             logger.warning("[WlRequest] Cannot send in channel %s", ch.id)
             return
@@ -689,7 +760,14 @@ class WlRequestHandler(commands.Cog):
                 profile=profile,
                 research_text=research_text,
             )
-            await posted.edit(embed=embed)
+            art_files: List[discord.File] = []
+            embed, art_files = await hydrate_wl_embed_art(
+                embed, profile, handle, files=art_files
+            )
+            if art_files:
+                await posted.edit(embed=embed, attachments=art_files)
+            else:
+                await posted.edit(embed=embed)
         except Exception as e:
             logger.warning("[WlRequest] build/edit failed @%s: %s", handle, e)
             try:
