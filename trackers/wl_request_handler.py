@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import re
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import discord
@@ -130,27 +130,61 @@ def _fmt_followers(n: Optional[int]) -> str:
     return f"{v:,}"
 
 
-def _recent_duplicate(
-    guild_id: int, channel_id: int, handle: str, hours: float
+def _prior_wl_request(
+    guild_id: int, channel_id: int, handle: str
 ) -> Optional[Tuple[int, int]]:
+    """Latest WL card for this handle in this channel (message_id, channel_id)."""
     init_db()
-    since = datetime.now(timezone.utc) - timedelta(hours=hours)
-    since_s = since.strftime("%Y-%m-%d %H:%M:%S")
     conn = _conn()
     cur = conn.cursor()
     cur.execute(
         """
         SELECT message_id, channel_id FROM wl_requests
-        WHERE guild_id = ? AND channel_id = ? AND handle = ? AND created_at >= ?
+        WHERE guild_id = ? AND channel_id = ? AND handle = ?
         ORDER BY id DESC LIMIT 1
         """,
-        (int(guild_id), int(channel_id), handle.lower(), since_s),
+        (int(guild_id), int(channel_id), handle.lower()),
     )
     row = cur.fetchone()
     conn.close()
     if not row:
         return None
     return int(row[0]), int(row[1])
+
+
+def _prior_request_jump(guild_id: int, prior: Tuple[int, int]) -> str:
+    mid, cid = prior
+    return f"https://discord.com/channels/{int(guild_id)}/{int(cid)}/{int(mid)}"
+
+
+async def _notify_duplicate_request(
+    message: discord.Message,
+    *,
+    prior: Tuple[int, int],
+    handle: str,
+) -> None:
+    """Tell the submitter their project was already requested; link to the existing card."""
+    url = _prior_request_jump(message.guild.id, prior)
+    text = (
+        f"**Note**\n"
+        f"**@{handle}** was already requested in this channel — "
+        f"[see prior request]({url})"
+    )
+    embed = discord.Embed(
+        description=(
+            f"This project was requested recently — "
+            f"[see prior request]({url})"
+        ),
+        color=0x9B59B6,
+    )
+    embed.set_author(name=f"{_BRAND_DISPLAY} · WL Request")
+    try:
+        await message.reply(embed=embed, mention_author=True, delete_after=45)
+    except Exception:
+        try:
+            await message.reply(text, mention_author=True, delete_after=45)
+        except Exception as e:
+            logger.debug("[WlRequest] duplicate notify: %s", e)
 
 
 def record_request(
@@ -333,7 +367,6 @@ def build_wl_request_embed(
     note: str,
     profile: Dict[str, Any],
     research_text: str,
-    duplicate_jump: Optional[Tuple[int, int, int]] = None,
 ) -> discord.Embed:
     name = profile.get("name") or handle
     url = f"https://x.com/{handle}"
@@ -372,17 +405,6 @@ def build_wl_request_embed(
 
     if note:
         embed.add_field(name="Why collab (submitter)", value=note[:1024], inline=False)
-
-    if duplicate_jump:
-        gid, cid, mid = duplicate_jump
-        embed.add_field(
-            name="Note",
-            value=(
-                "This project was requested recently — "
-                f"[see prior request](https://discord.com/channels/{gid}/{cid}/{mid})."
-            ),
-            inline=False,
-        )
 
     vote_thumbs = getattr(config, "WL_REQUEST_VOTE_THUMBS", _VOTE_THUMBS) or _VOTE_THUMBS
     vote_fire = getattr(config, "WL_REQUEST_VOTE_FIRE", _VOTE_FIRE) or _VOTE_FIRE
@@ -446,8 +468,19 @@ class WlRequestHandler(commands.Cog):
         if not me:
             return
 
-        dedupe_h = float(getattr(config, "WL_REQUEST_DEDUPE_HOURS", 168) or 168)
-        dup = _recent_duplicate(message.guild.id, ch.id, handle, dedupe_h)
+        prior = _prior_wl_request(message.guild.id, ch.id, handle)
+        if prior and getattr(config, "WL_REQUEST_BLOCK_DUPLICATES", True):
+            await _notify_duplicate_request(message, prior=prior, handle=handle)
+            if me.guild_permissions.manage_messages:
+                try:
+                    await message.delete()
+                except discord.NotFound:
+                    pass
+                except Exception as e:
+                    logger.debug("[WlRequest] delete dup user msg: %s", e)
+            logger.info("[WlRequest] duplicate @%s from %s → prior msg %s", handle, message.author, prior[0])
+            return
+
         note = _strip_link_from_text(message.content or "", handle)
 
         alert_link = await resolve_first_alert_link(self.bot, handle)
@@ -469,9 +502,6 @@ class WlRequestHandler(commands.Cog):
             note=note,
             profile=profile,
             research_text=research_text,
-            duplicate_jump=(
-                (message.guild.id, dup[1], dup[0]) if dup else None
-            ),
         )
 
         try:
@@ -520,7 +550,7 @@ class WlRequestHandler(commands.Cog):
             handle,
             message.author,
             posted.id,
-            bool(dup),
+            False,
         )
 
 
