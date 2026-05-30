@@ -116,6 +116,58 @@ def _strip_link_from_text(text: str, handle: str) -> str:
     return t[:500] if len(t) > 15 else ""
 
 
+def _parse_twitter_created_at(created_at) -> Optional[datetime]:
+    if created_at is None:
+        return None
+    if isinstance(created_at, datetime):
+        dt = created_at
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    s = str(created_at).strip()
+    if not s:
+        return None
+    if s.endswith("Z") and "T" in s:
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except ValueError:
+        pass
+    try:
+        return datetime.strptime(s, "%a %b %d %H:%M:%S %z %Y")
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+        try:
+            return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def _account_age_days(created_at) -> Optional[int]:
+    dt = _parse_twitter_created_at(created_at)
+    if not dt:
+        return None
+    return max(0, (datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).days)
+
+
+def _fmt_account_age(age_days: Optional[int], created_at=None) -> str:
+    days = age_days
+    if days is None and created_at is not None:
+        days = _account_age_days(created_at)
+    if days is None:
+        return "—"
+    if days == 0:
+        return "today"
+    if days == 1:
+        return "1 day"
+    return f"{days} days"
+
+
 def _fmt_followers(n: Optional[int]) -> str:
     if n is None:
         return "—"
@@ -310,8 +362,6 @@ def _research_block(handle: str, *, alert_link: Optional[str] = None) -> Tuple[s
         alert_followers = get_followers_at_alert(db_handle or handle)
         if alert_followers is not None:
             lines.append(f"**Followers at alert:** {_fmt_followers(alert_followers)}")
-        elif followers is not None:
-            lines.append(f"**Followers at alert:** {_fmt_followers(followers)}")
     if cat:
         lines.append(f"**Category:** {cat}")
     if summary:
@@ -386,14 +436,13 @@ def build_wl_request_embed(
         inline=True,
     )
     embed.add_field(
-        name="Followers",
+        name="Followers (now)",
         value=_fmt_followers(profile.get("followers_count")),
         inline=True,
     )
-    age = profile.get("age_days")
     embed.add_field(
         name="Account age",
-        value=f"{age}d" if age is not None else "—",
+        value=_fmt_account_age(profile.get("age_days"), profile.get("created_at")),
         inline=True,
     )
 
@@ -488,12 +537,16 @@ class WlRequestHandler(commands.Cog):
         profile: Dict[str, Any] = {"handle": handle, "description": ""}
 
         row = database.get_project_by_handle(handle)
+        live = await fetch_live_profile(self.bot, handle)
         if row:
             profile["name"] = row[2]
             profile["description"] = (row[3] or "")[:300]
-            profile["followers_count"] = row[8]
+            profile["created_at"] = row[4]
+            profile["age_days"] = _account_age_days(row[4])
+            profile["followers_count"] = live.get("followers_count") or row[8]
+            if profile.get("age_days") is None:
+                profile["age_days"] = live.get("age_days")
         else:
-            live = await fetch_live_profile(self.bot, handle)
             profile.update(live)
 
         embed = build_wl_request_embed(

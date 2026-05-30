@@ -91,7 +91,11 @@ def init_db():
         cursor.execute("ALTER TABLE projects ADD COLUMN followers_count INTEGER")
     except Exception:
         pass
-    
+    try:
+        cursor.execute("ALTER TABLE projects ADD COLUMN followers_at_alert INTEGER")
+    except Exception:
+        pass
+
     # Track signal alerts for new-accs-signal feature
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS signal_alerts (
@@ -930,13 +934,19 @@ def update_project_followers_count(twitter_id, followers_count) -> None:
     conn.close()
 
 
-def mark_alerted(project_id):
+def mark_alerted(project_id, followers_at_alert=None):
     """
     Mark a project as alerted.
 
     IMPORTANT: `alerted_at` should represent the *first time* we alerted on the project.
     Escalations/momentum updates should not move a project into today's Daily Finds.
     """
+    fat = None
+    if followers_at_alert is not None:
+        try:
+            fat = int(followers_at_alert)
+        except (TypeError, ValueError):
+            fat = None
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
@@ -944,13 +954,34 @@ def mark_alerted(project_id):
         UPDATE projects
         SET
             alerted_at = COALESCE(alerted_at, CURRENT_TIMESTAMP),
-            alerted_discord = 1
+            alerted_discord = 1,
+            followers_at_alert = COALESCE(followers_at_alert, ?)
         WHERE twitter_id = ?
         """,
-        (project_id,),
+        (fat, project_id),
     )
     conn.commit()
     conn.close()
+
+
+def get_project_followers_at_alert(handle: str) -> Optional[int]:
+    h = str(handle or "").strip().lstrip("@").lower()
+    if not h:
+        return None
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT followers_at_alert FROM projects WHERE lower(handle) = ? LIMIT 1",
+        (h,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if not row or row[0] is None:
+        return None
+    try:
+        return int(row[0])
+    except (TypeError, ValueError):
+        return None
 
 def get_recent_follows(project_id, hours=24):
     """Get follows within the last X hours for velocity detection."""

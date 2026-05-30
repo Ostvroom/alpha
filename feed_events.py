@@ -490,6 +490,22 @@ def list_alert_events_for_handle(handle: str, *, limit: int = 30) -> List[Dict[s
     return out
 
 
+def get_followers_at_first_alert(handle: str) -> Optional[int]:
+    """Follower count logged on our first discovery feed event (matches discovery embed)."""
+    ev = get_first_alert_for_handle(handle)
+    if not ev:
+        return None
+    extra = ev.get("extra") or {}
+    raw = extra.get("followers")
+    if raw is None:
+        return None
+    try:
+        n = int(raw)
+        return n if n >= 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
 def get_first_alert_for_handle(handle: str) -> Optional[Dict[str, Any]]:
     """Oldest discovery/escalation feed event for this X handle (exact handle match)."""
     events = list_alert_events_for_handle(handle, limit=1)

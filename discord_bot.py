@@ -1070,6 +1070,22 @@ class BlockBrainBot(commands.Bot):
         self._fill_account_from_legacy_payload(account)
         return account
 
+    async def _refresh_account_followers(self, account) -> None:
+        """Refresh follower count before discovery embed so the first alert number is accurate."""
+        if not account:
+            return
+        uid = getattr(account, "id", None)
+        if not uid or not self.twitter:
+            return
+        try:
+            full = await self.twitter.get_user_info(
+                uid, handle=getattr(account, "screen_name", None)
+            )
+            if full is not None and getattr(full, "followers_count", None) is not None:
+                account.followers_count = int(full.followers_count)
+        except Exception:
+            pass
+
     def is_personal_profile(self, account, extra_text: str = ""):
         """Checks if an account is likely a personal profile/worker instead of a project."""
         text = f"{getattr(account, 'name', '')} {getattr(account, 'description', '') or ''} {extra_text or ''}".lower()
@@ -2466,6 +2482,7 @@ class BlockBrainBot(commands.Bot):
 
     async def process_discovery(self, account, hva_handle, interaction_type, channels):
         account = await self._hydrate_account_profile(account)
+        await self._refresh_account_followers(account)
         # VERBOSE: Log every account we check
         age = self.get_account_age_days(account.created_at)
         bio_preview = (account.description or "")[:40].replace("\n", " ")
@@ -2769,7 +2786,10 @@ class BlockBrainBot(commands.Bot):
                     except Exception as e:
                         print(f"      ❌ Failed to send Discord alert: {e}")
                 if sent_any:
-                    database.mark_alerted(account.id)  # only mark after successful Discord post
+                    database.mark_alerted(
+                        account.id,
+                        followers_at_alert=getattr(account, "followers_count", None),
+                    )  # only mark after successful Discord post
                     if feed_events is not None:
                         try:
                             pfp = (

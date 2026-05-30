@@ -107,10 +107,26 @@ def get_first_alert_jump(handle: str) -> Optional[str]:
 
 
 def get_followers_at_alert(handle: str) -> Optional[int]:
-    """Follower count stored when we first alerted this X handle (discovery/escalation)."""
+    """Follower count at first alert — feed log, snapshot, or DB (never current followers_count)."""
     h = str(handle or "").strip().lstrip("@").lower()
     if not h:
         return None
+    try:
+        import feed_events
+
+        n = feed_events.get_followers_at_first_alert(h)
+        if n is not None:
+            return n
+    except Exception:
+        pass
+    try:
+        import database
+
+        n = database.get_project_followers_at_alert(h)
+        if n is not None:
+            return n
+    except Exception:
+        pass
     init_db()
     conn = _conn()
     cur = conn.cursor()
