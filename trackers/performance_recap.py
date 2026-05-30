@@ -4,8 +4,11 @@ Daily Velcor Performance Recap — one Discord message with sections (24h outcom
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+from collections import Counter
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import discord
@@ -15,9 +18,14 @@ import alert_snapshots
 import config
 import database
 import feed_events
+from app_paths import DATA_DIR, ensure_dirs
 from brand_assets import brand_name
 
 logger = logging.getLogger(__name__)
+
+ensure_dirs()
+_STATE_PATH = Path(DATA_DIR) / "performance_recap_state.json"
+_post_lock = asyncio.Lock()
 
 
 def _fmt_followers(n: Optional[int]) -> str:
@@ -229,6 +237,54 @@ async def measure_pending_snapshots(bot, twitter_client=None) -> int:
     return measured
 
 
+def _load_recap_state() -> Dict[str, Any]:
+    try:
+        if _STATE_PATH.is_file():
+            return json.loads(_STATE_PATH.read_text(encoding="utf-8")) or {}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_recap_state(state: Dict[str, Any]) -> None:
+    try:
+        _STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.debug("recap state save: %s", e)
+
+
+def _parse_recap_ts(ts: Optional[str]) -> Optional[datetime]:
+    if not ts:
+        return None
+    try:
+        s = str(ts).replace("Z", "+00:00")
+        if "T" not in s and " " in s:
+            s = s.replace(" ", "T", 1)
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def recap_posted_within_cooldown() -> bool:
+    """True if we already posted a recap within the cooldown window."""
+    last = _parse_recap_ts(_load_recap_state().get("last_posted_at"))
+    if not last:
+        return False
+    hours = float(getattr(config, "PERFORMANCE_RECAP_COOLDOWN_HOURS", 23) or 23)
+    return datetime.now(timezone.utc) - last < timedelta(hours=hours)
+
+
+def mark_recap_posted(*, channel_id: int = 0, message_id: int = 0) -> None:
+    st = _load_recap_state()
+    st["last_posted_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    st["channel_id"] = int(channel_id or 0)
+    st["message_id"] = int(message_id or 0)
+    _save_recap_state(st)
+
+
 def _feed_counts_24h() -> Dict[str, int]:
     feed_events.init_db()
     events = feed_events.list_events(limit=500)
@@ -252,25 +308,92 @@ def _feed_counts_24h() -> Dict[str, int]:
     return counts
 
 
-def _wallet_recap_lines(events: List[Dict[str, Any]], limit: int = 6) -> List[str]:
-    lines = []
-    for ev in events:
-        if ev.get("kind") != "wallet_nft":
+def _wallet_performance_section(
+    events: List[Dict[str, Any]],
+    measured: List[Dict[str, Any]],
+    *,
+    limit: int = 6,
+) -> Tuple[str, int]:
+    """
+    Wallet recap focused on what performed / stood out — not a raw alert dump.
+    """
+    wallet_events = [e for e in events if e.get("kind") == "wallet_nft"]
+    total = len(wallet_events)
+
+    standout_measured: List[str] = []
+    for m in measured:
+        if m.get("kind") != "wallet_nft":
             continue
-        extra = ev.get("extra") or {}
-        title = (ev.get("title") or "Wallet move")[:80]
-        contract = (extra.get("contract") or "")[:10]
-        lines.append(f"• {title}" + (f" · `{contract}…`" if contract else ""))
-        if len(lines) >= limit:
+        if m.get("outcome") not in ("winner", "flat"):
+            continue
+        label = (m.get("ref_label") or m.get("ref") or "Wallet")[:48]
+        detail = (m.get("outcome_detail") or "").strip()
+        if m.get("outcome") == "winner" or (detail and detail != "Tracked (no 24h metric)"):
+            line = f"• **{label}**"
+            if detail and detail != "Tracked (no 24h metric)":
+                line += f" — {detail[:72]}"
+            standout_measured.append(line)
+        if len(standout_measured) >= limit:
             break
-    return lines
+
+    if standout_measured:
+        head = f"**{total}** wallet alerts (24h) · **highlights after our ping:**\n"
+        return (head + "\n".join(standout_measured))[:1024], total
+
+    coll_counter: Counter[str] = Counter()
+    buy_lines: List[str] = []
+    seen_buy: set[str] = set()
+
+    for ev in wallet_events:
+        extra = ev.get("extra") or {}
+        title = (ev.get("title") or "").strip()
+        title_l = title.lower()
+        contract = (extra.get("contract") or "").lower()
+        if contract:
+            coll_counter[contract] += 1
+
+        is_buy = any(
+            w in title_l
+            for w in (" buy", " bought", " mint", " snipe", " sweep", " picked up")
+        ) or title_l.startswith("buy ")
+        is_bulk = "bulk" in title_l or " x" in title_l
+        if not is_buy and not is_bulk:
+            continue
+        short = title[:78] if title else "Wallet buy"
+        key = f"{contract}:{short[:40]}"
+        if key in seen_buy:
+            continue
+        seen_buy.add(key)
+        buy_lines.append(f"• {short}")
+        if len(buy_lines) >= limit:
+            break
+
+    lines: List[str] = [f"**{total}** wallet alerts in the last 24h."]
+    top_coll = coll_counter.most_common(3)
+    if top_coll:
+        lines.append("**Collections whales hit most:**")
+        for contract, n in top_coll:
+            lines.append(f"• `{contract[:10]}…` — **{n}** alerts")
+    if buy_lines:
+        lines.append("**Notable buys (24h):**")
+        lines.extend(buy_lines)
+    elif total:
+        lines.append(
+            "_Whale moves logged — we highlight **buys** and **repeat collection hits** here "
+            "(not every raw ping)._"
+        )
+    else:
+        lines.append("_No wallet alerts in this window._")
+
+    return "\n".join(lines)[:1024], total
 
 
 def build_performance_recap_embed(
     measured: List[Dict[str, Any]],
     feed_counts: Dict[str, int],
     snap_counts: Dict[str, int],
-    wallet_lines: List[str],
+    wallet_section: str,
+    wallet_total: int,
 ) -> Embed:
     brand = brand_name()
     ts = datetime.now(timezone.utc)
@@ -296,6 +419,8 @@ def build_performance_recap_embed(
         elif kind in ("live_mint", "hot_mint"):
             winners.append(f"• **{label}** — {detail}")
         elif kind == "token_alert":
+            winners.append(f"• **{label}** — {detail}")
+        elif kind == "wallet_nft" and m.get("outcome") == "winner":
             winners.append(f"• **{label}** — {detail}")
         if len(winners) >= 8:
             break
@@ -338,11 +463,9 @@ def build_performance_recap_embed(
         inline=False,
     )
 
-    w_text = "\n".join(wallet_lines) if wallet_lines else "_No wallet tracker events in the last 24h._"
-    w_total = feed_counts.get("wallet_nft", 0)
     embed.add_field(
-        name=f"🧠 Wallet tracker (last 24h · {w_total} alerts)",
-        value=w_text[:1024],
+        name=f"💎 Wallet alerts — what performed (24h · {wallet_total})",
+        value=wallet_section[:1024],
         inline=False,
     )
 
@@ -364,9 +487,12 @@ def build_performance_recap_embed(
 
 
 async def run_daily_performance_recap(bot) -> Tuple[bool, str]:
-    """Measure pending snapshots and post recap embed."""
+    """Measure pending snapshots and post recap embed (at most once per cooldown window)."""
     if not getattr(config, "ENABLE_PERFORMANCE_RECAP", True):
         return False, "disabled"
+
+    if recap_posted_within_cooldown():
+        return False, "already posted within cooldown (once per ~24h)"
 
     ch_id = int(getattr(config, "PERFORMANCE_RECAP_CHANNEL_ID", 0) or 0)
     if not ch_id:
@@ -404,9 +530,11 @@ async def run_daily_performance_recap(bot) -> Tuple[bool, str]:
                 wallet_events.append(ev)
         except Exception:
             continue
-    wallet_lines = _wallet_recap_lines(wallet_events)
+    wallet_section, wallet_total = _wallet_performance_section(wallet_events, measured)
 
-    embed = build_performance_recap_embed(measured, feed_counts, snap_counts, wallet_lines)
+    embed = build_performance_recap_embed(
+        measured, feed_counts, snap_counts, wallet_section, wallet_total
+    )
 
     ch = bot.get_channel(ch_id)
     if ch is None:
@@ -416,10 +544,15 @@ async def run_daily_performance_recap(bot) -> Tuple[bool, str]:
             return False, f"channel {ch_id}: {e}"
 
     try:
-        if hasattr(bot, "safe_send"):
-            await bot.safe_send(ch, embed=embed)
-        else:
-            await ch.send(embed=embed)
+        async with _post_lock:
+            if recap_posted_within_cooldown():
+                return False, "already posted within cooldown (race)"
+            if hasattr(bot, "safe_send"):
+                msg = await bot.safe_send(ch, embed=embed)
+            else:
+                msg = await ch.send(embed=embed)
+            mid = int(getattr(msg, "id", 0) or 0)
+            mark_recap_posted(channel_id=ch_id, message_id=mid)
     except Exception as e:
         return False, str(e)
 

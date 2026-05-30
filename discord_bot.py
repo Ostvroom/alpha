@@ -841,16 +841,7 @@ class BlockBrainBot(commands.Bot):
             self._escalation_daily_boot = True
             asyncio.create_task(self._run_escalation_daily_top_post())
 
-        if (
-            getattr(config, "ENABLE_PERFORMANCE_RECAP", True)
-            and not self._performance_recap_boot
-        ):
-            recap_ch = int(getattr(config, "PERFORMANCE_RECAP_CHANNEL_ID", 0) or 0) or int(
-                getattr(config, "ESCALATION_DAILY_TOP_MOVERS_CHANNEL_ID", 0) or 0
-            )
-            if recap_ch:
-                self._performance_recap_boot = True
-                asyncio.create_task(self._run_performance_recap_post())
+        # Performance recap: scheduled once daily only (no boot post — avoids duplicate on restarts)
 
         # Boot-post daily mints once on startup (scheduled loop runs at configured UTC time)
         if (

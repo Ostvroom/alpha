@@ -388,56 +388,19 @@ def get_event(event_id: int) -> Optional[Dict[str, Any]]:
     }
 
 
-def get_first_alert_for_handle(handle: str) -> Optional[Dict[str, Any]]:
-    """
-    Oldest discovery/escalation feed event for this X handle (our first logged alert).
-    """
+def _x_profile_urls(handle: str) -> Tuple[str, ...]:
     h = str(handle or "").strip().lstrip("@").lower()
     if not h:
-        return None
-    init_db()
-    row = None
-    if _use_pg():
-        conn = _conn_pg()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT id, ts::text, kind, guild_id, channel_id, title, body, url,
-                   COALESCE(extra_json::text, '')
-            FROM feed_events
-            WHERE kind IN ('discovery', 'escalation')
-              AND (
-                lower(COALESCE(extra_json->>'handle', '')) = %s
-                OR lower(url) LIKE %s
-              )
-            ORDER BY id ASC
-            LIMIT 1
-            """,
-            (h, f"%/{h}%"),
-        )
-        row = cur.fetchone()
-        conn.close()
-    else:
-        conn = _conn_sqlite()
-        c = conn.cursor()
-        c.execute(
-            """
-            SELECT id, ts, kind, guild_id, channel_id, title, body, url, extra_json
-            FROM feed_events
-            WHERE kind IN ('discovery', 'escalation')
-              AND (
-                lower(json_extract(extra_json, '$.handle')) = ?
-                OR lower(url) LIKE ?
-              )
-            ORDER BY id ASC
-            LIMIT 1
-            """,
-            (h, f"%/{h}%"),
-        )
-        row = c.fetchone()
-        conn.close()
-    if not row:
-        return None
+        return ()
+    return (
+        f"https://x.com/{h}",
+        f"https://www.x.com/{h}",
+        f"https://twitter.com/{h}",
+        f"https://www.twitter.com/{h}",
+    )
+
+
+def _row_to_feed_event(row) -> Dict[str, Any]:
     _id, ts, kind, gid, cid, title, body, url, extra_json = row
     extra = {}
     if extra_json:
@@ -458,6 +421,81 @@ def get_first_alert_for_handle(handle: str) -> Optional[Dict[str, Any]]:
     }
 
 
+def _event_matches_handle(ev: Dict[str, Any], handle: str) -> bool:
+    h = str(handle or "").strip().lstrip("@").lower()
+    if not h:
+        return False
+    extra = ev.get("extra") or {}
+    eh = str(extra.get("handle") or "").strip().lstrip("@").lower()
+    if eh == h:
+        return True
+    url = str(ev.get("url") or "").strip().lower().rstrip("/")
+    return url in _x_profile_urls(h)
+
+
+def list_alert_events_for_handle(handle: str, *, limit: int = 30) -> List[Dict[str, Any]]:
+    """
+    Discovery/escalation events for this handle (exact match on handle or profile URL).
+    Discovery first, then oldest id.
+    """
+    h = str(handle or "").strip().lstrip("@").lower()
+    if not h:
+        return []
+    init_db()
+    lim = max(5, min(80, int(limit or 30)))
+    rows: List[tuple] = []
+    if _use_pg():
+        conn = _conn_pg()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, ts::text, kind, guild_id, channel_id, title, body, url,
+                   COALESCE(extra_json::text, '')
+            FROM feed_events
+            WHERE kind IN ('discovery', 'escalation')
+            ORDER BY
+              CASE kind WHEN 'discovery' THEN 0 ELSE 1 END,
+              id ASC
+            LIMIT %s
+            """,
+            (lim * 40,),
+        )
+        rows = list(cur.fetchall() or [])
+        conn.close()
+    else:
+        conn = _conn_sqlite()
+        c = conn.cursor()
+        c.execute(
+            """
+            SELECT id, ts, kind, guild_id, channel_id, title, body, url, extra_json
+            FROM feed_events
+            WHERE kind IN ('discovery', 'escalation')
+            ORDER BY
+              CASE kind WHEN 'discovery' THEN 0 ELSE 1 END,
+              id ASC
+            LIMIT ?
+            """,
+            (lim * 40,),
+        )
+        rows = c.fetchall() or []
+        conn.close()
+
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        ev = _row_to_feed_event(row)
+        if _event_matches_handle(ev, h):
+            out.append(ev)
+        if len(out) >= lim:
+            break
+    return out
+
+
+def get_first_alert_for_handle(handle: str) -> Optional[Dict[str, Any]]:
+    """Oldest discovery/escalation feed event for this X handle (exact handle match)."""
+    events = list_alert_events_for_handle(handle, limit=1)
+    return events[0] if events else None
+
+
 def discord_jump_url(
     *,
     guild_id: int = 0,
@@ -467,40 +505,58 @@ def discord_jump_url(
     gid, cid, mid = int(guild_id or 0), int(channel_id or 0), int(message_id or 0)
     if gid and cid and mid:
         return f"https://discord.com/channels/{gid}/{cid}/{mid}"
-    if gid and cid:
-        return f"https://discord.com/channels/{gid}/{cid}"
     return ""
 
 
+def is_discord_message_url(url: str) -> bool:
+    """True if URL points to a specific message (not a channel overview)."""
+    u = (url or "").strip().rstrip("/")
+    parts = u.split("/")
+    if len(parts) < 2:
+        return False
+    try:
+        int(parts[-1])
+        int(parts[-2])
+        int(parts[-3])
+        return "discord.com" in u and "channels" in u
+    except (TypeError, ValueError):
+        return False
+
+
 def get_first_alert_link(handle: str) -> Optional[str]:
-    """Best jump URL to our first Discord alert for this project (message > channel)."""
-    ev = get_first_alert_for_handle(handle)
-    if ev:
+    """
+    Jump URL to our first Discord alert for this project.
+    Requires a message id — never returns a bare channel link (misleading).
+    """
+    for ev in list_alert_events_for_handle(handle, limit=20):
         extra = ev.get("extra") or {}
-        mid = 0
         try:
             mid = int(extra.get("message_id") or 0)
         except (TypeError, ValueError):
             mid = 0
-        url = discord_jump_url(
-            guild_id=int(ev.get("guild_id") or 0),
-            channel_id=int(ev.get("channel_id") or 0),
-            message_id=mid,
-        )
-        if url:
-            return url
-        site = (os.getenv("WEBSITE_PUBLIC_URL") or os.getenv("PUBLIC_WEBSITE_URL") or "").strip().rstrip("/")
-        if site and ev.get("id"):
-            return f"{site}/alert/{int(ev['id'])}"
+        if mid:
+            url = discord_jump_url(
+                guild_id=int(ev.get("guild_id") or 0),
+                channel_id=int(ev.get("channel_id") or 0),
+                message_id=mid,
+            )
+            if url:
+                return url
 
     try:
         import alert_snapshots
 
         snap = alert_snapshots.get_first_alert_jump(handle)
-        if snap:
+        if snap and is_discord_message_url(snap):
             return snap
     except Exception:
         pass
+
+    ev = get_first_alert_for_handle(handle)
+    if ev:
+        site = (os.getenv("WEBSITE_PUBLIC_URL") or os.getenv("PUBLIC_WEBSITE_URL") or "").strip().rstrip("/")
+        if site and ev.get("id"):
+            return f"{site}/alert/{int(ev['id'])}"
     return None
 
 

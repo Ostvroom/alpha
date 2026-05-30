@@ -102,9 +102,6 @@ def get_first_alert_jump(handle: str) -> Optional[str]:
         if gid and cid and mid:
             conn.close()
             return f"https://discord.com/channels/{gid}/{cid}/{mid}"
-        if gid and cid:
-            conn.close()
-            return f"https://discord.com/channels/{gid}/{cid}"
     conn.close()
     return None
 

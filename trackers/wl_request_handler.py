@@ -16,7 +16,12 @@ import config
 import database
 from app_paths import DATA_DIR, ensure_dirs
 from alert_snapshots import get_followers_at_alert
-from feed_events import get_first_alert_link
+from feed_events import (
+    discord_jump_url,
+    get_first_alert_link,
+    is_discord_message_url,
+    list_alert_events_for_handle,
+)
 from brand_assets import brand_logo_embed_icon
 
 logger = logging.getLogger(__name__)
@@ -170,7 +175,71 @@ def record_request(
     conn.close()
 
 
-def _research_block(handle: str) -> Tuple[str, Dict[str, Any]]:
+def _embed_text_blob(embed: discord.Embed) -> str:
+    parts: List[str] = [
+        embed.title or "",
+        embed.description or "",
+    ]
+    if embed.author and embed.author.name:
+        parts.append(embed.author.name)
+    for f in embed.fields:
+        parts.append(f.name or "")
+        parts.append(f.value or "")
+    return "\n".join(parts).lower()
+
+
+async def resolve_first_alert_link(bot, handle: str) -> Optional[str]:
+    """
+    Exact jump link to our first discovery embed for this handle.
+    Falls back to scanning the alert channel history when message_id was not logged.
+    """
+    link = get_first_alert_link(handle)
+    if link and is_discord_message_url(link):
+        return link
+
+    h = str(handle or "").strip().lstrip("@").lower()
+    if not h or not bot:
+        return link
+
+    needles = (
+        f"x.com/{h}",
+        f"twitter.com/{h}",
+        f"@{h}",
+    )
+
+    for ev in list_alert_events_for_handle(h, limit=8):
+        if str(ev.get("kind") or "") != "discovery":
+            continue
+        gid = int(ev.get("guild_id") or 0)
+        cid = int(ev.get("channel_id") or 0)
+        if not gid or not cid:
+            continue
+        ch = bot.get_channel(cid)
+        if ch is None:
+            try:
+                ch = await bot.fetch_channel(cid)
+            except Exception:
+                continue
+        try:
+            async for msg in ch.history(limit=350):
+                if not msg.embeds:
+                    continue
+                for emb in msg.embeds:
+                    blob = _embed_text_blob(emb)
+                    if not any(n in blob for n in needles):
+                        continue
+                    title_l = (emb.title or "").lower()
+                    if "discovery" not in title_l and f"x.com/{h}" not in blob:
+                        continue
+                    jump = discord_jump_url(guild_id=gid, channel_id=cid, message_id=int(msg.id))
+                    if jump:
+                        return jump
+        except Exception as e:
+            logger.debug("wl_request history scan #%s: %s", cid, e)
+    return None
+
+
+def _research_block(handle: str, *, alert_link: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
     """VELCOR3 DB + HVA signals for this handle."""
     meta: Dict[str, Any] = {"in_db": False}
     row = database.get_project_by_handle(handle)
@@ -202,7 +271,6 @@ def _research_block(handle: str) -> Tuple[str, Dict[str, Any]]:
     lines = [f"**In {_BRAND_DISPLAY} research** ✅"]
     if alerted_at:
         lines.append(f"**Alerted:** {alerted_at}")
-        alert_link = get_first_alert_link(db_handle or handle)
         if alert_link:
             lines.append(f"**First alert:** [Open in Discord]({alert_link})")
         alert_followers = get_followers_at_alert(db_handle or handle)
@@ -382,7 +450,8 @@ class WlRequestHandler(commands.Cog):
         dup = _recent_duplicate(message.guild.id, ch.id, handle, dedupe_h)
         note = _strip_link_from_text(message.content or "", handle)
 
-        research_text, meta = _research_block(handle)
+        alert_link = await resolve_first_alert_link(self.bot, handle)
+        research_text, meta = _research_block(handle, alert_link=alert_link)
         profile: Dict[str, Any] = {"handle": handle, "description": ""}
 
         row = database.get_project_by_handle(handle)
