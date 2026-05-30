@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import sqlite3
@@ -410,6 +411,64 @@ async def fetch_live_profile(bot, handle: str) -> Dict[str, Any]:
     return out
 
 
+def build_loading_embed(*, submitter: discord.abc.User, handle: str) -> discord.Embed:
+    """Instant placeholder while X profile / alert link are fetched."""
+    embed = discord.Embed(
+        title=f"🗳️ WL collab request · @{handle}",
+        description=(
+            f"⏳ **Building request card** for [@{handle}](https://x.com/{handle})…\n\n"
+            "Fetching X profile · VELCOR3 research · alert link"
+        ),
+        color=0x7F8C8D,
+    )
+    icon = brand_logo_embed_icon()
+    if icon:
+        embed.set_author(name=f"{_BRAND_DISPLAY} · WL Request", icon_url=icon)
+    embed.add_field(name="Submitted by", value=submitter.mention, inline=False)
+    embed.set_footer(text=f"{_BRAND_DISPLAY} · Please wait a few seconds…")
+    return embed
+
+
+def build_error_embed(*, submitter: discord.abc.User, handle: str, detail: str) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"🗳️ WL collab request · @{handle}",
+        description=f"Could not finish this request card.\n\n_{detail[:400]}_",
+        color=0xE74C3C,
+    )
+    embed.add_field(name="Submitted by", value=submitter.mention, inline=False)
+    embed.set_footer(text=f"{_BRAND_DISPLAY} · Try again in a moment")
+    return embed
+
+
+async def _assemble_wl_request(
+    bot,
+    *,
+    handle: str,
+    note: str,
+) -> Tuple[Dict[str, Any], Dict[str, Any], str]:
+    """Slow path: X API + alert link + DB research."""
+    alert_link_task = asyncio.create_task(resolve_first_alert_link(bot, handle))
+    live_task = asyncio.create_task(fetch_live_profile(bot, handle))
+    alert_link, live = await asyncio.gather(alert_link_task, live_task)
+
+    research_text, meta = _research_block(handle, alert_link=alert_link)
+    profile: Dict[str, Any] = {"handle": handle, "description": ""}
+
+    row = database.get_project_by_handle(handle)
+    if row:
+        profile["name"] = row[2]
+        profile["description"] = (row[3] or "")[:300]
+        profile["created_at"] = row[4]
+        profile["age_days"] = _account_age_days(row[4])
+        profile["followers_count"] = live.get("followers_count") or row[8]
+        if profile.get("age_days") is None:
+            profile["age_days"] = live.get("age_days")
+    else:
+        profile.update(live)
+
+    return meta, profile, research_text
+
+
 def build_wl_request_embed(
     *,
     submitter: discord.abc.User,
@@ -532,38 +591,48 @@ class WlRequestHandler(commands.Cog):
 
         note = _strip_link_from_text(message.content or "", handle)
 
-        alert_link = await resolve_first_alert_link(self.bot, handle)
-        research_text, meta = _research_block(handle, alert_link=alert_link)
-        profile: Dict[str, Any] = {"handle": handle, "description": ""}
+        if me.guild_permissions.manage_messages:
+            try:
+                await message.delete()
+            except discord.NotFound:
+                pass
+            except Exception as e:
+                logger.debug("[WlRequest] delete user msg: %s", e)
 
-        row = database.get_project_by_handle(handle)
-        live = await fetch_live_profile(self.bot, handle)
-        if row:
-            profile["name"] = row[2]
-            profile["description"] = (row[3] or "")[:300]
-            profile["created_at"] = row[4]
-            profile["age_days"] = _account_age_days(row[4])
-            profile["followers_count"] = live.get("followers_count") or row[8]
-            if profile.get("age_days") is None:
-                profile["age_days"] = live.get("age_days")
-        else:
-            profile.update(live)
-
-        embed = build_wl_request_embed(
-            submitter=message.author,
-            handle=handle,
-            note=note,
-            profile=profile,
-            research_text=research_text,
-        )
-
+        loading = build_loading_embed(submitter=message.author, handle=handle)
         try:
-            posted = await ch.send(embed=embed)
+            posted = await ch.send(embed=loading)
         except discord.Forbidden:
             logger.warning("[WlRequest] Cannot send in channel %s", ch.id)
             return
         except Exception as e:
             logger.warning("[WlRequest] send failed: %s", e)
+            return
+
+        try:
+            _meta, profile, research_text = await _assemble_wl_request(
+                self.bot, handle=handle, note=note
+            )
+            embed = build_wl_request_embed(
+                submitter=message.author,
+                handle=handle,
+                note=note,
+                profile=profile,
+                research_text=research_text,
+            )
+            await posted.edit(embed=embed)
+        except Exception as e:
+            logger.warning("[WlRequest] build/edit failed @%s: %s", handle, e)
+            try:
+                await posted.edit(
+                    embed=build_error_embed(
+                        submitter=message.author,
+                        handle=handle,
+                        detail="Something went wrong while fetching project data.",
+                    )
+                )
+            except Exception:
+                pass
             return
 
         vote_thumbs = getattr(config, "WL_REQUEST_VOTE_THUMBS", _VOTE_THUMBS) or _VOTE_THUMBS
@@ -582,28 +651,21 @@ class WlRequestHandler(commands.Cog):
             handle=handle,
         )
 
-        if me.guild_permissions.manage_messages:
+        if not me.guild_permissions.manage_messages:
             try:
-                await message.delete()
-            except discord.NotFound:
-                pass
-            except Exception as e:
-                logger.debug("[WlRequest] delete user msg: %s", e)
-        else:
-            try:
-                await message.reply(
-                    "✅ Request logged above. (I need **Manage Messages** to remove link posts.)",
-                    delete_after=15,
+                await ch.send(
+                    f"{message.author.mention} ✅ Request logged. "
+                    "(Give the bot **Manage Messages** to auto-remove link posts.)",
+                    delete_after=12,
                 )
             except Exception:
                 pass
 
         logger.info(
-            "[WlRequest] @%s from %s → msg %s (dup=%s)",
+            "[WlRequest] @%s from %s → msg %s",
             handle,
             message.author,
             posted.id,
-            False,
         )
 
 
