@@ -366,6 +366,7 @@ class BlockBrainBot(commands.Bot):
         self._kolfi_leaderboard_boot: bool = False
         self._kolfi_top_movers_boot: bool = False
         self._escalation_daily_boot: bool = False
+        self._performance_recap_boot: bool = False
         self._daily_mints_boot: bool = False
         self._invite_cache: Dict[int, Dict[str, int]] = {}
         self._telegram_calls_task: Optional[asyncio.Task] = None
@@ -455,6 +456,12 @@ class BlockBrainBot(commands.Bot):
 
     async def setup_hook(self):
         database.init_db()
+        try:
+            import alert_snapshots
+
+            alert_snapshots.init_db()
+        except Exception:
+            pass
         database.seed_x_project_search_keywords_if_empty()
         database.seed_x_project_search_keywords_baseline()
         payment_database.init_db()
@@ -507,6 +514,8 @@ class BlockBrainBot(commands.Bot):
         if config.ENABLE_ESCALATION_DAILY_TOP_MOVERS and config.ESCALATION_DAILY_TOP_MOVERS_CHANNEL_ID:
             # Daily finds digest now runs on a fixed interval (every 8 hours).
             self.escalation_daily_interval.start()
+        if getattr(config, "ENABLE_PERFORMANCE_RECAP", True):
+            self.performance_recap_daily.start()
         if config.ENABLE_MINTS_OVERVIEW and config.MINTS_OVERVIEW_CHANNEL_ID:
             self.mints_overview_feed.start()
 
@@ -769,6 +778,17 @@ class BlockBrainBot(commands.Bot):
             )
         elif config.ENABLE_ESCALATION_DAILY_TOP_MOVERS and not config.ESCALATION_DAILY_TOP_MOVERS_CHANNEL_ID:
             print("   ⚠️ ENABLE_ESCALATION_DAILY_TOP_MOVERS=1 but ESCALATION_DAILY_TOP_MOVERS_CHANNEL_ID is not set")
+        if getattr(config, "ENABLE_PERFORMANCE_RECAP", True):
+            recap_ch = int(getattr(config, "PERFORMANCE_RECAP_CHANNEL_ID", 0) or 0) or int(
+                getattr(config, "ESCALATION_DAILY_TOP_MOVERS_CHANNEL_ID", 0) or 0
+            )
+            if recap_ch:
+                print(
+                    f"   📊 Performance recap (24h outcomes): {config.PERFORMANCE_RECAP_TIME_UTC} UTC "
+                    f"→ channel {recap_ch}"
+                )
+            else:
+                print("   ⚠️ ENABLE_PERFORMANCE_RECAP=1 but no recap channel configured")
         if config.ENABLE_MINTS_OVERVIEW and config.MINTS_OVERVIEW_CHANNEL_ID:
             print(
                 f"   📊 Mints Overview: every {config.MINTS_OVERVIEW_POLL_MINUTES}m "
@@ -820,6 +840,17 @@ class BlockBrainBot(commands.Bot):
         ):
             self._escalation_daily_boot = True
             asyncio.create_task(self._run_escalation_daily_top_post())
+
+        if (
+            getattr(config, "ENABLE_PERFORMANCE_RECAP", True)
+            and not self._performance_recap_boot
+        ):
+            recap_ch = int(getattr(config, "PERFORMANCE_RECAP_CHANNEL_ID", 0) or 0) or int(
+                getattr(config, "ESCALATION_DAILY_TOP_MOVERS_CHANNEL_ID", 0) or 0
+            )
+            if recap_ch:
+                self._performance_recap_boot = True
+                asyncio.create_task(self._run_performance_recap_post())
 
         # Boot-post daily mints once on startup (scheduled loop runs at configured UTC time)
         if (
@@ -1991,6 +2022,27 @@ class BlockBrainBot(commands.Bot):
     async def before_escalation_daily_top_movers(self):
         await self.wait_until_ready()
 
+    async def _run_performance_recap_post(self):
+        from trackers.performance_recap import run_daily_performance_recap
+
+        pfx = self._get_log_prefix()
+        try:
+            ok, msg = await run_daily_performance_recap(self)
+            if ok:
+                print(f"{pfx} [Performance recap] {msg}")
+            else:
+                print(f"{pfx} [Performance recap] skipped: {msg}")
+        except Exception as e:
+            print(f"{pfx} [Performance recap] Error: {e}")
+
+    @tasks.loop(time=config.PERFORMANCE_RECAP_TIME_UTC)
+    async def performance_recap_daily(self):
+        await self._run_performance_recap_post()
+
+    @performance_recap_daily.before_loop
+    async def before_performance_recap_daily(self):
+        await self.wait_until_ready()
+
     @tasks.loop(time=config.KOLFI_LEADERBOARD_TIME_UTC)
     async def kolfi_leaderboard_daily(self):
         await self._run_kolfi_leaderboard_post()
@@ -3046,6 +3098,7 @@ class BrainCommands(commands.Cog):
             "`/collection`": "One-shot intel card for an NFT contract (supply, HVA, smart wallets).",
             "`/watch add|remove|list`": "Personal watchlist — DM alerts when a collection moves.",
             "**Cook score**": "React 🔥 on live mint alerts; community picks can boost to hot channel.",
+            "**Performance recap**": "Daily 24h digest: project follower growth, mint outcomes, wallet summary.",
             "`/verification_panel`": "Post verification UI (slash).",
             "`/crypto_payment_panel`": "Post crypto payment UI (slash).",
             "`/alerts`": "Multi-server: `activate` (license key) → `setup` (create channels) → feeds.",

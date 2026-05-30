@@ -515,6 +515,21 @@ class NftscanLiveFeed:
                 attach_hot_mint_wallet_intel(mint, self._contract_wallet_activity, win)
             embed = build_hot_mint_embed(mint, hot["count"], config.HOT_MINT_WINDOW)
             await self._send_embeds(ch, [embed])
+            try:
+                import alert_snapshots
+
+                c = (mint.get("contract_address") or "").lower()
+                if c:
+                    alert_snapshots.record_snapshot(
+                        kind="hot_mint",
+                        ref=c,
+                        ref_label=(mint.get("contract_name") or c)[:200],
+                        supply_at=mint.get("total_supply"),
+                        max_supply_at=mint.get("max_supply"),
+                        extra={"contract": c, "hot_count": hot["count"]},
+                    )
+            except Exception:
+                pass
             mint["hot_mint_count"] = hot["count"]
             c = (mint.get("contract_address") or "").lower()
             if c:
@@ -590,6 +605,26 @@ class NftscanLiveFeed:
             if contract and guild_id:
                 cook_score.register_live_message(msg.id, msg.channel.id, guild_id, contract)
                 await cook_score.add_fire_reactions(msg)
+            try:
+                import alert_snapshots
+
+                alert_snapshots.record_snapshot(
+                    kind="live_mint",
+                    ref=contract,
+                    ref_label=(mint.get("contract_name") or contract)[:200],
+                    guild_id=guild_id,
+                    channel_id=int(msg.channel.id),
+                    message_id=int(msg.id),
+                    supply_at=mint.get("total_supply"),
+                    max_supply_at=mint.get("max_supply"),
+                    extra={
+                        "contract": contract,
+                        "name": mint.get("contract_name"),
+                        "tx": mint.get("tx_hash") or mint.get("hash"),
+                    },
+                )
+            except Exception:
+                pass
 
     async def _send_single_embed(self, channel_id: int, embed: discord.Embed) -> Optional[discord.Message]:
         if not self._validate_embed(embed):

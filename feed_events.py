@@ -167,6 +167,19 @@ def add_event(
         )
         conn.commit()
         conn.close()
+        try:
+            import alert_snapshots
+
+            alert_snapshots.record_from_feed_event(
+                kind=kind,
+                guild_id=int(guild_id or 0),
+                channel_id=int(channel_id or 0),
+                title=title_s,
+                url=url_s,
+                extra=extra_obj,
+            )
+        except Exception:
+            pass
         return
 
     conn = _conn_sqlite()
@@ -211,6 +224,20 @@ def add_event(
     )
     conn.commit()
     conn.close()
+
+    try:
+        import alert_snapshots
+
+        alert_snapshots.record_from_feed_event(
+            kind=kind,
+            guild_id=int(guild_id or 0),
+            channel_id=int(channel_id or 0),
+            title=title_s,
+            url=url_s,
+            extra=extra_obj,
+        )
+    except Exception:
+        pass
 
 
 def list_events(
