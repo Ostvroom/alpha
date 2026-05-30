@@ -684,6 +684,17 @@ ENABLE_COOK_SCORE = _env_flag("ENABLE_COOK_SCORE", "1")
 COOK_SCORE_FIRE_EMOJI = (os.getenv("COOK_SCORE_FIRE_EMOJI") or "🔥").strip()
 COOK_SCORE_HOT_THRESHOLD = max(2, min(50, _env_int("COOK_SCORE_HOT_THRESHOLD", 5)))
 
+# #wl-request: holder posts X profile → bot intel embed + votes, deletes raw message
+ENABLE_WL_REQUEST_HANDLER = _env_flag("ENABLE_WL_REQUEST_HANDLER", "1")
+WL_REQUEST_CHANNEL_ID = parse_channel_id("WL_REQUEST_CHANNEL_ID", default=0)
+WL_REQUEST_CHANNEL_IDS = parse_channel_ids("WL_REQUEST_CHANNEL_ID") or (
+    [WL_REQUEST_CHANNEL_ID] if WL_REQUEST_CHANNEL_ID else []
+)
+WL_REQUEST_REQUIRE_HOLDER = _env_flag("WL_REQUEST_REQUIRE_HOLDER", "1")
+WL_REQUEST_DEDUPE_HOURS = max(1, _env_float("WL_REQUEST_DEDUPE_HOURS", 168))
+WL_REQUEST_VOTE_THUMBS = (os.getenv("WL_REQUEST_VOTE_THUMBS") or "👍").strip()
+WL_REQUEST_VOTE_FIRE = (os.getenv("WL_REQUEST_VOTE_FIRE") or "🔥").strip()
+
 # Unified 24h performance recap (one Discord message with sections)
 ENABLE_PERFORMANCE_RECAP = _env_flag("ENABLE_PERFORMANCE_RECAP", "1")
 PERFORMANCE_RECAP_CHANNEL_ID = parse_channel_id(

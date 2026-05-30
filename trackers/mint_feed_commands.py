@@ -379,3 +379,7 @@ async def setup(bot: commands.Bot):
         from trackers.community_mint import setup as setup_community_mint
 
         await setup_community_mint(bot)
+    if getattr(config, "ENABLE_WL_REQUEST_HANDLER", True):
+        from trackers.wl_request_handler import setup as setup_wl_request
+
+        await setup_wl_request(bot)
