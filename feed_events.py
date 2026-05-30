@@ -490,6 +490,17 @@ def list_alert_events_for_handle(handle: str, *, limit: int = 30) -> List[Dict[s
     return out
 
 
+def get_profile_art_from_first_alert(handle: str) -> Tuple[Optional[str], Optional[str]]:
+    """PFP + banner URLs stored on our first discovery feed event."""
+    ev = get_first_alert_for_handle(handle)
+    if not ev:
+        return None, None
+    extra = ev.get("extra") or {}
+    pfp = str(extra.get("pfp_url") or "").strip() or None
+    banner = str(extra.get("banner_url") or "").strip() or None
+    return pfp, banner
+
+
 def get_followers_at_first_alert(handle: str) -> Optional[int]:
     """Follower count logged on our first discovery feed event (matches discovery embed)."""
     ev = get_first_alert_for_handle(handle)

@@ -20,6 +20,7 @@ from alert_snapshots import get_followers_at_alert
 from feed_events import (
     discord_jump_url,
     get_first_alert_link,
+    get_profile_art_from_first_alert,
     is_discord_message_url,
     list_alert_events_for_handle,
 )
@@ -167,6 +168,61 @@ def _fmt_account_age(age_days: Optional[int], created_at=None) -> str:
     if days == 1:
         return "1 day"
     return f"{days} days"
+
+
+def _normalize_pfp_url(url: Optional[str]) -> Optional[str]:
+    u = str(url or "").strip()
+    if not u:
+        return None
+    if "_normal" in u:
+        u = u.replace("_normal", "_400x400")
+    return u
+
+
+def _apply_profile_art(embed: discord.Embed, profile: Dict[str, Any], *, handle: str) -> None:
+    """Thumbnail = PFP, main image = X banner (same layout as discovery)."""
+    h = str(handle or profile.get("handle") or "").strip().lstrip("@").lower()
+    pfp = _normalize_pfp_url(profile.get("pfp_url"))
+    if not pfp and h:
+        pfp = f"https://unavatar.io/twitter/{h}"
+    banner = str(profile.get("banner_url") or "").strip() or None
+    if pfp:
+        try:
+            embed.set_thumbnail(url=pfp)
+        except Exception:
+            pass
+    if banner:
+        try:
+            embed.set_image(url=banner)
+        except Exception:
+            pass
+
+
+async def _enrich_profile_art(bot, handle: str, profile: Dict[str, Any]) -> None:
+    """Resolve PFP + banner from feed log, live X lookup, or unavatar fallback."""
+    h = str(handle or "").strip().lstrip("@").lower()
+    if not h:
+        return
+
+    feed_pfp, feed_banner = get_profile_art_from_first_alert(h)
+    if feed_pfp and not profile.get("pfp_url"):
+        profile["pfp_url"] = feed_pfp
+    if feed_banner and not profile.get("banner_url"):
+        profile["banner_url"] = feed_banner
+
+    twitter = getattr(bot, "twitter", None)
+    if twitter and (not profile.get("pfp_url") or not profile.get("banner_url")):
+        try:
+            ap, ab = await twitter.get_x_profile_art(h)
+            if ap and not profile.get("pfp_url"):
+                profile["pfp_url"] = ap
+            if ab and not profile.get("banner_url"):
+                profile["banner_url"] = ab
+        except Exception as e:
+            logger.debug("wl_request art @%s: %s", h, e)
+
+    if not profile.get("pfp_url"):
+        profile["pfp_url"] = f"https://unavatar.io/twitter/{h}"
 
 
 def _fmt_followers(n: Optional[int]) -> str:
@@ -397,6 +453,16 @@ async def fetch_live_profile(bot, handle: str) -> Dict[str, Any]:
         out["description"] = (getattr(acc, "description", None) or "")[:300]
         out["name"] = getattr(acc, "name", None) or getattr(acc, "screen_name", handle)
         out["twitter_id"] = str(uid)
+        pfp = (
+            getattr(acc, "profile_image_url_https", None)
+            or getattr(acc, "profile_image_url", None)
+            or ""
+        )
+        if pfp:
+            out["pfp_url"] = _normalize_pfp_url(str(pfp))
+        banner = getattr(acc, "profile_banner_url", None) or ""
+        if banner:
+            out["banner_url"] = str(banner).strip()
         created = getattr(acc, "created_at", None)
         if created:
             try:
@@ -426,6 +492,7 @@ def build_loading_embed(*, submitter: discord.abc.User, handle: str) -> discord.
         embed.set_author(name=f"{_BRAND_DISPLAY} · WL Request", icon_url=icon)
     embed.add_field(name="Submitted by", value=submitter.mention, inline=False)
     embed.set_footer(text=f"{_BRAND_DISPLAY} · Please wait a few seconds…")
+    _apply_profile_art(embed, {"handle": handle, "pfp_url": f"https://unavatar.io/twitter/{handle}"}, handle=handle)
     return embed
 
 
@@ -466,6 +533,7 @@ async def _assemble_wl_request(
     else:
         profile.update(live)
 
+    await _enrich_profile_art(bot, handle, profile)
     return meta, profile, research_text
 
 
@@ -522,6 +590,7 @@ def build_wl_request_embed(
         inline=False,
     )
     embed.set_footer(text=f"{_BRAND_DISPLAY} · Staff: review → #wl-giveaways")
+    _apply_profile_art(embed, profile, handle=handle)
     return embed
 
 
