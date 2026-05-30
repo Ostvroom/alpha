@@ -15,9 +15,13 @@ from discord.ext import commands
 import config
 import database
 from app_paths import DATA_DIR, ensure_dirs
-from brand_assets import brand_logo_embed_icon, brand_name
+from alert_snapshots import get_followers_at_alert
+from feed_events import get_first_alert_link
+from brand_assets import brand_logo_embed_icon
 
 logger = logging.getLogger(__name__)
+
+_BRAND_DISPLAY = "VELCOR3"
 
 ensure_dirs()
 DB_PATH = DATA_DIR / "wl_requests.db"
@@ -167,16 +171,16 @@ def record_request(
 
 
 def _research_block(handle: str) -> Tuple[str, Dict[str, Any]]:
-    """Velcor DB + HVA signals for this handle."""
+    """VELCOR3 DB + HVA signals for this handle."""
     meta: Dict[str, Any] = {"in_db": False}
     row = database.get_project_by_handle(handle)
     if not row:
         return (
-            "Not in Velcor research yet — first community request for this project.",
+            f"Not in {_BRAND_DISPLAY} research yet — first community request for this project.",
             meta,
         )
     meta["in_db"] = True
-    tid, db_handle, name, desc, created_at, alerted_at, cat, summary, followers, smarts = row
+    tid, db_handle, name, desc, created_at, alerted_at, cat, summary, followers, posted_hvas = row
     meta["twitter_id"] = tid
     meta["name"] = name
     sf = database.calculate_project_smart_followers_v2(str(tid))
@@ -195,19 +199,27 @@ def _research_block(handle: str) -> Tuple[str, Dict[str, Any]]:
         if len(hva_lines) >= 5:
             break
 
-    lines = ["**In Velcor research** ✅"]
+    lines = [f"**In {_BRAND_DISPLAY} research** ✅"]
     if alerted_at:
         lines.append(f"**Alerted:** {alerted_at}")
+        alert_link = get_first_alert_link(db_handle or handle)
+        if alert_link:
+            lines.append(f"**First alert:** [Open in Discord]({alert_link})")
+        alert_followers = get_followers_at_alert(db_handle or handle)
+        if alert_followers is not None:
+            lines.append(f"**Followers at alert:** {_fmt_followers(alert_followers)}")
+        elif followers is not None:
+            lines.append(f"**Followers at alert:** {_fmt_followers(followers)}")
     if cat:
         lines.append(f"**Category:** {cat}")
     if summary:
         lines.append(f"**AI summary:** {str(summary)[:200]}")
     lines.append(
-        f"**Smart signal:** {sf.get('unique_hvas', 0)} HVAs · "
+        f"**HVA signal:** {sf.get('unique_hvas', 0)} HVAs · "
         f"{sf.get('hvas_24h', 0)} (24h) · {sf.get('hvas_7d', 0)} (7d)"
     )
-    if smarts:
-        lines.append(f"**Posted smarts:** {smarts}")
+    if posted_hvas:
+        lines.append(f"**Posted HVAs:** {posted_hvas}")
     if hva_lines:
         lines.append("**Recent HVA activity:**\n" + "\n".join(hva_lines))
     else:
@@ -255,7 +267,6 @@ def build_wl_request_embed(
     research_text: str,
     duplicate_jump: Optional[Tuple[int, int, int]] = None,
 ) -> discord.Embed:
-    brand = brand_name()
     name = profile.get("name") or handle
     url = f"https://x.com/{handle}"
     embed = discord.Embed(
@@ -266,7 +277,7 @@ def build_wl_request_embed(
     )
     icon = brand_logo_embed_icon()
     if icon:
-        embed.set_author(name=f"{brand} · WL Request", icon_url=icon)
+        embed.set_author(name=f"{_BRAND_DISPLAY} · WL Request", icon_url=icon)
 
     embed.add_field(
         name="Submitted by",
@@ -289,7 +300,7 @@ def build_wl_request_embed(
     if bio:
         embed.add_field(name="Bio", value=bio[:1024], inline=False)
 
-    embed.add_field(name="Velcor research", value=research_text[:1024], inline=False)
+    embed.add_field(name=f"{_BRAND_DISPLAY} research", value=research_text[:1024], inline=False)
 
     if note:
         embed.add_field(name="Why collab (submitter)", value=note[:1024], inline=False)
@@ -312,7 +323,7 @@ def build_wl_request_embed(
         value=f"{vote_thumbs} = I want this WL\n{vote_fire} = Strong yes",
         inline=False,
     )
-    embed.set_footer(text=f"{brand} · Staff: review → #wl-giveaways")
+    embed.set_footer(text=f"{_BRAND_DISPLAY} · Staff: review → #wl-giveaways")
     return embed
 
 

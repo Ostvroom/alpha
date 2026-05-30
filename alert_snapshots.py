@@ -78,6 +78,65 @@ def _parse_ts(ts: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def get_first_alert_jump(handle: str) -> Optional[str]:
+    """Discord jump URL from earliest alert snapshot with channel/message ids."""
+    h = str(handle or "").strip().lstrip("@").lower()
+    if not h:
+        return None
+    init_db()
+    conn = _conn()
+    cur = conn.cursor()
+    for kind in ("discovery", "escalation"):
+        cur.execute(
+            """
+            SELECT guild_id, channel_id, message_id FROM alert_snapshots
+            WHERE kind = ? AND ref = ?
+            ORDER BY id ASC LIMIT 1
+            """,
+            (kind, h),
+        )
+        row = cur.fetchone()
+        if not row:
+            continue
+        gid, cid, mid = int(row[0] or 0), int(row[1] or 0), int(row[2] or 0)
+        if gid and cid and mid:
+            conn.close()
+            return f"https://discord.com/channels/{gid}/{cid}/{mid}"
+        if gid and cid:
+            conn.close()
+            return f"https://discord.com/channels/{gid}/{cid}"
+    conn.close()
+    return None
+
+
+def get_followers_at_alert(handle: str) -> Optional[int]:
+    """Follower count stored when we first alerted this X handle (discovery/escalation)."""
+    h = str(handle or "").strip().lstrip("@").lower()
+    if not h:
+        return None
+    init_db()
+    conn = _conn()
+    cur = conn.cursor()
+    for kind in ("discovery", "escalation"):
+        cur.execute(
+            """
+            SELECT followers_at FROM alert_snapshots
+            WHERE kind = ? AND ref = ? AND followers_at IS NOT NULL
+            ORDER BY id ASC LIMIT 1
+            """,
+            (kind, h),
+        )
+        row = cur.fetchone()
+        if row and row[0] is not None:
+            conn.close()
+            try:
+                return int(row[0])
+            except (TypeError, ValueError):
+                return None
+    conn.close()
+    return None
+
+
 def _recent_duplicate(kind: str, ref: str) -> bool:
     conn = _conn()
     cur = conn.cursor()
@@ -219,12 +278,19 @@ def record_from_feed_event(
     if not ref:
         return
 
+    message_id = 0
+    try:
+        message_id = int(extra.get("message_id") or 0)
+    except (TypeError, ValueError):
+        message_id = 0
+
     record_snapshot(
         kind=kind,
         ref=ref,
         ref_label=ref_label,
         guild_id=guild_id,
         channel_id=channel_id,
+        message_id=message_id,
         followers_at=followers_at,
         supply_at=supply_at,
         max_supply_at=max_supply_at,

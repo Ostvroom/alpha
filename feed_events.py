@@ -388,6 +388,122 @@ def get_event(event_id: int) -> Optional[Dict[str, Any]]:
     }
 
 
+def get_first_alert_for_handle(handle: str) -> Optional[Dict[str, Any]]:
+    """
+    Oldest discovery/escalation feed event for this X handle (our first logged alert).
+    """
+    h = str(handle or "").strip().lstrip("@").lower()
+    if not h:
+        return None
+    init_db()
+    row = None
+    if _use_pg():
+        conn = _conn_pg()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, ts::text, kind, guild_id, channel_id, title, body, url,
+                   COALESCE(extra_json::text, '')
+            FROM feed_events
+            WHERE kind IN ('discovery', 'escalation')
+              AND (
+                lower(COALESCE(extra_json->>'handle', '')) = %s
+                OR lower(url) LIKE %s
+              )
+            ORDER BY id ASC
+            LIMIT 1
+            """,
+            (h, f"%/{h}%"),
+        )
+        row = cur.fetchone()
+        conn.close()
+    else:
+        conn = _conn_sqlite()
+        c = conn.cursor()
+        c.execute(
+            """
+            SELECT id, ts, kind, guild_id, channel_id, title, body, url, extra_json
+            FROM feed_events
+            WHERE kind IN ('discovery', 'escalation')
+              AND (
+                lower(json_extract(extra_json, '$.handle')) = ?
+                OR lower(url) LIKE ?
+              )
+            ORDER BY id ASC
+            LIMIT 1
+            """,
+            (h, f"%/{h}%"),
+        )
+        row = c.fetchone()
+        conn.close()
+    if not row:
+        return None
+    _id, ts, kind, gid, cid, title, body, url, extra_json = row
+    extra = {}
+    if extra_json:
+        try:
+            extra = json.loads(extra_json) or {}
+        except Exception:
+            extra = {}
+    return {
+        "id": int(_id),
+        "ts": ts,
+        "kind": kind,
+        "guild_id": int(gid or 0),
+        "channel_id": int(cid or 0),
+        "title": title or "",
+        "body": body or "",
+        "url": url or "",
+        "extra": extra,
+    }
+
+
+def discord_jump_url(
+    *,
+    guild_id: int = 0,
+    channel_id: int = 0,
+    message_id: int = 0,
+) -> str:
+    gid, cid, mid = int(guild_id or 0), int(channel_id or 0), int(message_id or 0)
+    if gid and cid and mid:
+        return f"https://discord.com/channels/{gid}/{cid}/{mid}"
+    if gid and cid:
+        return f"https://discord.com/channels/{gid}/{cid}"
+    return ""
+
+
+def get_first_alert_link(handle: str) -> Optional[str]:
+    """Best jump URL to our first Discord alert for this project (message > channel)."""
+    ev = get_first_alert_for_handle(handle)
+    if ev:
+        extra = ev.get("extra") or {}
+        mid = 0
+        try:
+            mid = int(extra.get("message_id") or 0)
+        except (TypeError, ValueError):
+            mid = 0
+        url = discord_jump_url(
+            guild_id=int(ev.get("guild_id") or 0),
+            channel_id=int(ev.get("channel_id") or 0),
+            message_id=mid,
+        )
+        if url:
+            return url
+        site = (os.getenv("WEBSITE_PUBLIC_URL") or os.getenv("PUBLIC_WEBSITE_URL") or "").strip().rstrip("/")
+        if site and ev.get("id"):
+            return f"{site}/alert/{int(ev['id'])}"
+
+    try:
+        import alert_snapshots
+
+        snap = alert_snapshots.get_first_alert_jump(handle)
+        if snap:
+            return snap
+    except Exception:
+        pass
+    return None
+
+
 def delete_events_by_kind(kind: str) -> int:
     """Delete all events of one kind; returns deleted row count."""
     k = str(kind or "").strip()[:48]

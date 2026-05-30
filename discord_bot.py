@@ -2754,6 +2754,8 @@ class BlockBrainBot(commands.Bot):
             if target_channels:
                 print(f"      → Routing to {age_label} channels")
                 sent_any = False
+                _first_alert_msg = None
+                _first_alert_ch = None
                 for ch in target_channels:
                     try:
                         res = self.create_embed(account, hva_handle, interaction_type, ai_data=ai_data)
@@ -2765,10 +2767,13 @@ class BlockBrainBot(commands.Bot):
                         if isinstance(res, tuple):
                             files.append(res[1]) # The banner.jpg
                             emb0, files = self._with_brand_banner_fallback(res[0], files)
-                            await self.safe_send(ch, embed=emb0, files=files)
+                            sent_msg = await self.safe_send(ch, embed=emb0, files=files)
                         else:
                             emb0, files = self._with_brand_banner_fallback(res, files)
-                            await self.safe_send(ch, embed=emb0, files=files)
+                            sent_msg = await self.safe_send(ch, embed=emb0, files=files)
+                        if sent_msg and _first_alert_msg is None:
+                            _first_alert_msg = sent_msg
+                            _first_alert_ch = ch
                         sent_any = True
                     except Exception as e:
                         print(f"      ❌ Failed to send Discord alert: {e}")
@@ -2792,10 +2797,11 @@ class BlockBrainBot(commands.Bot):
                                 embed_payload = emb0.to_dict() if emb0 else {}
                             except Exception:
                                 embed_payload = {}
+                            _log_ch = _first_alert_ch or ch
                             feed_events.add_event(
                                 kind="discovery",
-                                guild_id=int(getattr(getattr(ch, "guild", None), "id", 0) or 0),
-                                channel_id=int(getattr(ch, "id", 0) or 0),
+                                guild_id=int(getattr(getattr(_log_ch, "guild", None), "id", 0) or 0),
+                                channel_id=int(getattr(_log_ch, "id", 0) or 0),
                                 title=f"@{account.screen_name} · {ai_category or 'Project'}",
                                 body=(ai_summary or account.description or "")[:1500],
                                 url=f"https://x.com/{account.screen_name}",
@@ -2808,6 +2814,7 @@ class BlockBrainBot(commands.Bot):
                                     "pfp_url": str(pfp or ""),
                                     "banner_url": str(ban or ""),
                                     "embed": embed_payload,
+                                    "message_id": int(getattr(_first_alert_msg, "id", 0) or 0),
                                 },
                             )
                         except Exception:
@@ -2868,6 +2875,7 @@ class BlockBrainBot(commands.Bot):
                             sent_any = False
                             _first_sent_ch = None
                             _first_sent_emb0 = None
+                            _first_esc_msg = None
                             for ch in targets:
                                 try:
                                     res = self.create_embed(account, hva_handle, interaction_type, is_escalation=True, is_velocity=is_velocity, ai_data=ai_data)
@@ -2879,14 +2887,15 @@ class BlockBrainBot(commands.Bot):
                                     if isinstance(res, tuple):
                                         files.append(res[1]) # The banner.jpg
                                         emb0, files = self._with_brand_banner_fallback(res[0], files)
-                                        await self.safe_send(ch, embed=emb0, files=files)
+                                        sent_msg = await self.safe_send(ch, embed=emb0, files=files)
                                     else:
                                         emb0, files = self._with_brand_banner_fallback(res, files)
-                                        await self.safe_send(ch, embed=emb0, files=files)
+                                        sent_msg = await self.safe_send(ch, embed=emb0, files=files)
                                     sent_any = True
                                     if _first_sent_ch is None:
                                         _first_sent_ch = ch
                                         _first_sent_emb0 = emb0
+                                        _first_esc_msg = sent_msg
                                 except Exception as e:
                                     print(f"      ❌ Failed to send escalation alert: {e}")
                             
@@ -2925,6 +2934,7 @@ class BlockBrainBot(commands.Bot):
                                                 "pfp_url": str(pfp or ""),
                                                 "banner_url": str(ban or ""),
                                                 "embed": embed_payload,
+                                                "message_id": int(getattr(_first_esc_msg, "id", 0) or 0),
                                             },
                                         )
                                     except Exception:
