@@ -375,3 +375,7 @@ class MintFeedCommands(commands.Cog):
 async def setup(bot: commands.Bot):
     if getattr(config, "ENABLE_NFTSCAN_LIVE_MINTS", True):
         await bot.add_cog(MintFeedCommands(bot))
+    if getattr(config, "ENABLE_COMMUNITY_MINT_TOOLS", True):
+        from trackers.community_mint import setup as setup_community_mint
+
+        await setup_community_mint(bot)

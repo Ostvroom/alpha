@@ -343,7 +343,14 @@ class NftscanLiveFeed:
         if new_mints and config.LIVE_MINT_CHANNEL_ID:
             embeds = build_live_mint_embeds(new_mints)
             logger.info("[LiveMints] Sending %s live mint embed(s) to channel %s", len(embeds), config.LIVE_MINT_CHANNEL_ID)
-            await self._send_embeds(config.LIVE_MINT_CHANNEL_ID, embeds)
+            if getattr(config, "ENABLE_COOK_SCORE", True):
+                await self._send_live_mints_with_cook(new_mints, embeds)
+            else:
+                await self._send_embeds(config.LIVE_MINT_CHANNEL_ID, embeds)
+            for m in new_mints:
+                c = (m.get("contract_address") or "").lower()
+                if c:
+                    self._schedule_watchlist_notify(c, m, "live")
 
         if new_mints:
             await self._process_x_alpha_alerts(new_mints, "live", intel_on)
@@ -394,6 +401,10 @@ class NftscanLiveFeed:
 
         embeds = [build_smart_wallet_buy_embed(ev) for ev in to_send]
         await self._send_embeds(ch, embeds)
+        for ev in to_send:
+            c = (ev.get("contract_address") or "").lower()
+            if c:
+                self._schedule_watchlist_notify(c, ev, "smart_buy")
 
     async def _process_x_alpha_alerts(
         self,
@@ -504,10 +515,127 @@ class NftscanLiveFeed:
                 attach_hot_mint_wallet_intel(mint, self._contract_wallet_activity, win)
             embed = build_hot_mint_embed(mint, hot["count"], config.HOT_MINT_WINDOW)
             await self._send_embeds(ch, [embed])
-
             mint["hot_mint_count"] = hot["count"]
+            c = (mint.get("contract_address") or "").lower()
+            if c:
+                self._schedule_watchlist_notify(c, mint, "hot")
             mint["hot_mint_window"] = config.HOT_MINT_WINDOW
             await self._process_x_alpha_alerts([mint], "hot", intel_on)
+
+    def _schedule_watchlist_notify(self, contract: str, mint: Dict, alert_type: str) -> None:
+        if not getattr(config, "ENABLE_USER_WATCHLIST", True):
+            return
+        try:
+            from trackers.watchlist_notify import notify_watchlist_users
+
+            asyncio.create_task(notify_watchlist_users(self.bot, contract, mint, alert_type))
+        except Exception as e:
+            logger.debug("watchlist notify schedule failed: %s", e)
+
+    async def post_community_hot_pick(self, contract: str, fire_count: int) -> None:
+        """Hot-channel alert when live mint message hits cook-score threshold."""
+        ch = int(getattr(config, "HOT_MINT_CHANNEL_ID", 0) or 0)
+        if not ch:
+            return
+        contract = (contract or "").lower()
+        if not contract or contract in self._muted_contracts:
+            return
+
+        mint: Dict = {
+            "contract_address": contract,
+            "token_id": "1",
+            "community_fire": fire_count,
+        }
+        if self.enricher:
+            try:
+                mint = await self.enricher.enrich(mint)
+            except Exception as e:
+                logger.debug("community pick enrich: %s", e)
+        if self.social_fetcher and not mint.get("social_links"):
+            try:
+                socials = await self.social_fetcher.fetch(contract, mint.get("contract_name", ""))
+                if socials:
+                    mint["social_links"] = socials
+            except Exception:
+                pass
+
+        win = self._engagement_window()
+        attach_hot_mint_wallet_intel(mint, self._contract_wallet_activity, win)
+        count = max(self._hot_mint_volume_in_window(contract), 1)
+        embed = build_hot_mint_embed(mint, count, config.HOT_MINT_WINDOW)
+        embed.insert_field_at(
+            0,
+            name="🔥 Community pick",
+            value=f"**{fire_count}** {getattr(config, 'COOK_SCORE_FIRE_EMOJI', '🔥')} reactions on live mint alerts",
+            inline=False,
+        )
+        await self._send_embeds(ch, [embed])
+        self._schedule_watchlist_notify(contract, mint, "community_hot")
+        logger.info("[CookScore] Community hot pick for %s (%s fires)", contract[:10], fire_count)
+
+    async def _send_live_mints_with_cook(self, mints: List[Dict], embeds: List[discord.Embed]) -> None:
+        """One message per live mint so cook-score reactions map to a single contract."""
+        from trackers import cook_score
+
+        ch_id = config.LIVE_MINT_CHANNEL_ID
+        if not ch_id:
+            return
+        pairs = list(zip(embeds, mints[: len(embeds)]))
+        for embed, mint in pairs:
+            msg = await self._send_single_embed(ch_id, embed)
+            if msg is None:
+                continue
+            contract = (mint.get("contract_address") or "").lower()
+            guild_id = int(getattr(msg.guild, "id", 0) or 0)
+            if contract and guild_id:
+                cook_score.register_live_message(msg.id, msg.channel.id, guild_id, contract)
+                await cook_score.add_fire_reactions(msg)
+
+    async def _send_single_embed(self, channel_id: int, embed: discord.Embed) -> Optional[discord.Message]:
+        if not self._validate_embed(embed):
+            return None
+        channel = self.bot.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(channel_id)
+            except Exception:
+                return None
+        fallback_name = COLLECTION_FALLBACK_FILENAME
+        ensure_black_collection_fallback_path()
+        needs_fallback = (
+            embed.to_dict().get("thumbnail", {}).get("url") == f"attachment://{fallback_name}"
+        )
+        file_specs: List[Tuple[str, str]] = []
+        if needs_fallback:
+            file_specs.append((str(ensure_black_collection_fallback_path()), fallback_name))
+        for bf in collect_embed_attachment_files([embed]):
+            if not any(fname == bf.filename for _, fname in file_specs):
+                if hasattr(bf, "_filename") and isinstance(bf._filename, str):
+                    file_specs.append((bf._filename, bf.filename))
+        for attempt in range(3):
+            files: List[discord.File] = []
+            for path, fname in file_specs:
+                if Path(path).is_file():
+                    files.append(discord.File(path, filename=fname))
+            kwargs: Dict = {}
+            if files:
+                kwargs["files"] = files
+            try:
+                return await channel.send(embed=embed, **kwargs)
+            except discord.HTTPException as e:
+                status = int(getattr(e, "status", 0) or 0)
+                if status == 429:
+                    await asyncio.sleep(float(getattr(e, "retry_after", 1.0) or 1.0) + 0.5)
+                    continue
+                if status >= 500:
+                    await asyncio.sleep(2.0 * (2**attempt))
+                    continue
+                logger.error("send single embed %s: %s", channel_id, e)
+                break
+            except Exception as e:
+                logger.error("send single embed %s: %s", channel_id, e)
+                break
+        return None
 
     def _is_spam_name(self, name: str) -> bool:
         if not name:

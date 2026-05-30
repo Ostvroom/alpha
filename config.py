@@ -673,6 +673,16 @@ HOLDER_WELCOME_MESSAGE = os.getenv(
     "Head over to {claim_roles_channel} and claim your roles.\n\n"
     "Get ready to cook with us!",
 )
+
+# Community tools: /collection, /watch, cook-score on live mints
+ENABLE_COMMUNITY_MINT_TOOLS = _env_flag("ENABLE_COMMUNITY_MINT_TOOLS", "1")
+ENABLE_USER_WATCHLIST = _env_flag("ENABLE_USER_WATCHLIST", "1")
+WATCHLIST_MAX_PER_USER = max(1, min(50, _env_int("WATCHLIST_MAX_PER_USER", 15)))
+WATCHLIST_DM_COOLDOWN_SEC = max(60, _env_int("WATCHLIST_DM_COOLDOWN_SEC", 600))
+WATCHLIST_DM_DELAY_SEC = max(0.5, _env_float("WATCHLIST_DM_DELAY_SEC", 1.0))
+ENABLE_COOK_SCORE = _env_flag("ENABLE_COOK_SCORE", "1")
+COOK_SCORE_FIRE_EMOJI = (os.getenv("COOK_SCORE_FIRE_EMOJI") or "🔥").strip()
+COOK_SCORE_HOT_THRESHOLD = max(2, min(50, _env_int("COOK_SCORE_HOT_THRESHOLD", 5)))
 _DEFAULT_ETH_TREASURY = "0xDB673105123c54611043144f18e8f145AFE052Df"
 _DEFAULT_SOL_TREASURY = "CoNzMiAKSqZBUGu5XgEXRpiE3ByiP32wW3fJB76sf1p2"
 CRYPTO_ETH_ADDRESS = (os.getenv("CRYPTO_ETH_ADDRESS", _DEFAULT_ETH_TREASURY) or "").strip()
