@@ -108,13 +108,31 @@ def _build_tweet_embed(tweet: Any, user: Any) -> Embed:
     embed.set_author(name=name, icon_url=pfp or "", url=f"https://x.com/{handle}")
     embed.description = text[:4000] if text else "*(no text)*"
 
-    # Media attachment indicator
-    media = getattr(tweet, "media", []) or getattr(tweet, "extended_entities", {}).get("media", [])
-    if media:
-        embed.add_field(name="🖼️ Media", value=f"{len(media)} attachment(s)", inline=False)
+    # Media attachment indicator (twikit returns Media objects, Scweet returns dicts)
+    media = getattr(tweet, "media", None)
+    if not media:
+        ext = getattr(tweet, "extended_entities", None)
+        if isinstance(ext, dict):
+            media = ext.get("media") or []
+    media = media or []
+    try:
+        media_count = len(media)
+    except Exception:
+        media_count = 0
+    if media_count:
+        embed.add_field(name="🖼️ Media", value=f"{media_count} attachment(s)", inline=False)
         # Try to use first image as embed image
         for m in media:
-            media_url = m.get("media_url_https") or m.get("media_url") or ""
+            if isinstance(m, dict):
+                media_url = m.get("media_url_https") or m.get("media_url") or ""
+            else:
+                # twikit Media object: pull common attrs
+                media_url = (
+                    getattr(m, "media_url_https", "")
+                    or getattr(m, "media_url", "")
+                    or getattr(m, "url", "")
+                    or ""
+                )
             if media_url and (".jpg" in media_url or ".png" in media_url):
                 embed.set_image(url=media_url)
                 break
