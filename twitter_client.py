@@ -1420,12 +1420,19 @@ class TwitterClient:
             wrapped = [_ScweetTweet(t) for t in tweets]
             self._timeline_log(f"      ✔ Fetched {len(wrapped)} timeline items")
             self._reset_soft_429(session)
+            if not wrapped:
+                # Scweet sometimes silently returns [] for accounts that do have tweets
+                # (rate limit, graph reshape, etc). Try twikit before giving up.
+                tw = await self._get_user_timeline_twikit(user_id, count, _retry_depth)
+                if tw:
+                    return tw
             return wrapped
         except Exception as e:
             err_msg = _scweet_error_to_str(e)
             if "'value'" in err_msg or "'entries'" in err_msg:
-                self._timeline_log("      ℹ️ Timeline: No tweets / empty graph (0 tweets, restricted, or API shape)")
-                return []
+                self._timeline_log("      ℹ️ Timeline: Scweet empty graph — falling back to twikit")
+                tw = await self._get_user_timeline_twikit(user_id, count, _retry_depth)
+                return tw or []
             if not err_msg:
                 err_msg = f"Empty {type(e).__name__}"
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
