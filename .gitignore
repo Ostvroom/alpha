@@ -21,3 +21,5 @@ kolfi_*_watchlist.json
 backups/
 scweet_pkg/
 *.backup_*
+sibyl_source.sol
+sibyl_transfers.json
