@@ -211,6 +211,16 @@ def init_db():
     except Exception:
         pass
 
+    # Tweet watcher state (per-account last seen tweet)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tweet_watcher_state (
+            handle TEXT PRIMARY KEY,
+            twitter_id TEXT,
+            last_seen_tweet_id TEXT,
+            last_checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -1892,6 +1902,63 @@ def get_inactive_hva_analysis():
         'stale_scanned': stale_scanned,  # Scanned 3+ times, found nothing - safe to remove
         'scanned_no_results': scanned_no_results
     }
+
+# ── Tweet Watcher Helpers ────────────────────────────────────────────────────
+
+def get_tweet_watcher_state(handle: str) -> Optional[dict]:
+    """Return last_seen_tweet_id and last_checked_at for a watched handle."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT twitter_id, last_seen_tweet_id, last_checked_at FROM tweet_watcher_state WHERE handle = ?",
+        (handle.lower(),),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {"twitter_id": row[0], "last_seen_tweet_id": row[1], "last_checked_at": row[2]}
+    return None
+
+
+def upsert_tweet_watcher_state(handle: str, twitter_id: str, last_seen_tweet_id: str) -> None:
+    """Update or insert watcher state for a handle."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO tweet_watcher_state (handle, twitter_id, last_seen_tweet_id, last_checked_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(handle) DO UPDATE SET
+            twitter_id=excluded.twitter_id,
+            last_seen_tweet_id=excluded.last_seen_tweet_id,
+            last_checked_at=CURRENT_TIMESTAMP
+        """,
+        (handle.lower(), twitter_id, last_seen_tweet_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def remove_tweet_watcher_state(handle: str) -> None:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM tweet_watcher_state WHERE handle = ?", (handle.lower(),))
+    conn.commit()
+    conn.close()
+
+
+def list_tweet_watcher_handles() -> list[dict]:
+    """Return all watched handles with their state."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT handle, twitter_id, last_seen_tweet_id, last_checked_at FROM tweet_watcher_state")
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {"handle": r[0], "twitter_id": r[1], "last_seen_tweet_id": r[2], "last_checked_at": r[3]}
+        for r in rows
+    ]
+
 
 if __name__ == "__main__":
     init_db()

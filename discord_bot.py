@@ -518,6 +518,8 @@ class BlockBrainBot(commands.Bot):
             self.performance_recap_daily.start()
         if config.ENABLE_MINTS_OVERVIEW and config.MINTS_OVERVIEW_CHANNEL_ID:
             self.mints_overview_feed.start()
+        if getattr(config, "TWEET_WATCHER_ENABLED", False) and config.TWEET_WATCHER_CHANNEL_ID:
+            self.tweet_watcher_task.start()
 
         # Telegram calls bridge (user session; no bot)
         if getattr(config, "ENABLE_TELEGRAM_CALLS", False):
@@ -2185,6 +2187,27 @@ class BlockBrainBot(commands.Bot):
         await self.twitter.verify_all_sessions()
 
     # ─────────────────────────────────────────────────────────────────────────
+    # TWEET WATCHER  (monitor specific X accounts → auto-post to Discord)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @tasks.loop(minutes=config.TWEET_WATCHER_INTERVAL_MIN)
+    async def tweet_watcher_task(self):
+        """Poll watched X accounts and post new tweets to Discord."""
+        if not getattr(config, "TWEET_WATCHER_ENABLED", False) or not config.TWEET_WATCHER_CHANNEL_ID:
+            return
+        try:
+            from trackers.tweet_watcher import check_watched_accounts
+            posted = await check_watched_accounts(self, self.twitter)
+            if posted:
+                print(f"[TweetWatcher] Posted {posted} new tweet(s)")
+        except Exception as e:
+            print(f"[TweetWatcher] Error in watcher loop: {e}")
+
+    @tweet_watcher_task.before_loop
+    async def before_tweet_watcher(self):
+        await self.wait_until_ready()
+
+    # ─────────────────────────────────────────────────────────────────────────
     # CT DOMAIN WATCHER  (certificate transparency → new crypto domains)
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -3568,6 +3591,60 @@ class WalletCommands(commands.Cog):
             await interaction.response.send_message(f"🗑️ Removed `{address}` from tracking.")
         else:
             await interaction.response.send_message(f"❌ Wallet `{address}` not found in database.")
+
+    # ── Tweet Watcher Commands ────────────────────────────────────────────────
+
+    @app_commands.command(name="watch_x", description="Add an X account to the tweet watcher")
+    @app_commands.describe(handle="The X handle to watch (e.g. elonmusk)")
+    async def watch_x(self, interaction: Interaction, handle: str):
+        await interaction.response.defer(thinking=True)
+        try:
+            from trackers.tweet_watcher import add_watched_handle
+            ok, msg = await add_watched_handle(handle)
+            if ok:
+                await interaction.followup.send(msg)
+            else:
+                await interaction.followup.send(f"❌ {msg}", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+    @app_commands.command(name="unwatch_x", description="Remove an X account from the tweet watcher")
+    @app_commands.describe(handle="The X handle to stop watching")
+    async def unwatch_x(self, interaction: Interaction, handle: str):
+        try:
+            from trackers.tweet_watcher import remove_watched_handle
+            ok, msg = await remove_watched_handle(handle)
+            await interaction.response.send_message(msg)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
+
+    @app_commands.command(name="list_watched_x", description="List all X accounts being watched")
+    async def list_watched_x(self, interaction: Interaction):
+        try:
+            from trackers.tweet_watcher import list_watched_handles
+            watched = list_watched_handles()
+            if not watched:
+                await interaction.response.send_message("📭 No X accounts are being watched.")
+                return
+            lines = []
+            for w in watched:
+                ts = w.get("last_checked_at", "never")
+                tid = w.get("last_seen_tweet_id", "none")
+                lines.append(f"• `@{w['handle']}` — last check: {ts}  — last tweet: {tid[:12] if tid else 'none'}...")
+            embed = Embed(title="🐦 Tweet Watcher — Watched Accounts", description="\n".join(lines), color=0x1DA1F2)
+            await interaction.response.send_message(embed=embed)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
+
+    @app_commands.command(name="force_check_x", description="Manually trigger a tweet watcher check now")
+    async def force_check_x(self, interaction: Interaction):
+        await interaction.response.defer(thinking=True)
+        try:
+            from trackers.tweet_watcher import check_watched_accounts
+            posted = await check_watched_accounts(self.bot, self.bot.twitter)
+            await interaction.followup.send(f"✅ Check complete. Posted {posted} new tweet(s).")
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
 
 if __name__ == "__main__":
     BlockBrainBot().run(config.DISCORD_TOKEN)
