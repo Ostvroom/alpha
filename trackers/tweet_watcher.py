@@ -6,14 +6,108 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 
 import discord
 from discord import Embed
+from discord.ui import View, Button
 
 import config
 import database
+
+
+# Match t.co short URLs Twitter appends to tweet text (we hide them — image
+# is rendered via set_image, and the “Engage” button carries the canonical URL)
+_TCO_RE = re.compile(r"https?://t\.co/\S+", re.IGNORECASE)
+_TWITTER_BLUE = 0x1D9BF0
+
+
+def _fmt_count(n: Any) -> str:
+    try:
+        n = int(n or 0)
+    except Exception:
+        return "0"
+    if n >= 1_000_000:
+        return f"{n/1_000_000:.1f}M".replace(".0M", "M")
+    if n >= 1_000:
+        return f"{n/1_000:.1f}K".replace(".0K", "K")
+    return f"{n:,}"
+
+
+def _parse_created_at(raw: Any) -> Optional[datetime]:
+    if not raw:
+        return None
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+    s = str(raw)
+    # Twitter classic format: "Wed Oct 10 20:19:24 +0000 2018"
+    try:
+        return datetime.strptime(s, "%a %b %d %H:%M:%S %z %Y")
+    except Exception:
+        pass
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
+    return None
+
+
+def _classify_tweet(tweet: Any) -> Tuple[str, str]:
+    """Returns (kind_label, emoji) — e.g. ('Reply', '💬'), ('Retweet', '🔁')."""
+    if getattr(tweet, "retweeted_tweet", None) or getattr(tweet, "retweeted_status", None):
+        return ("Retweet", "🔁")
+    if getattr(tweet, "quoted_tweet", None) or getattr(tweet, "quoted_status", None) or getattr(tweet, "is_quote_status", False):
+        return ("Quote", "💬")
+    in_reply = (
+        getattr(tweet, "in_reply_to_status_id", None)
+        or getattr(tweet, "in_reply_to_tweet_id", None)
+        or getattr(tweet, "replied_to", None)
+    )
+    if in_reply:
+        return ("Reply", "↩️")
+    return ("New post", "🐦")
+
+
+def _extract_media(tweet: Any) -> List[Any]:
+    media = getattr(tweet, "media", None)
+    if not media:
+        ext = getattr(tweet, "extended_entities", None)
+        if isinstance(ext, dict):
+            media = ext.get("media") or []
+    return list(media or [])
+
+
+def _media_url(m: Any) -> str:
+    if isinstance(m, dict):
+        return m.get("media_url_https") or m.get("media_url") or ""
+    return (
+        getattr(m, "media_url_https", "")
+        or getattr(m, "media_url", "")
+        or getattr(m, "url", "")
+        or ""
+    )
+
+
+def _media_type(m: Any) -> str:
+    if isinstance(m, dict):
+        return (m.get("type") or "").lower()
+    return str(getattr(m, "type", "") or "").lower()
+
+
+def _build_engage_view(tweet_url: str) -> Optional[View]:
+    """Single 🚀 Engage link-button that opens the tweet on X."""
+    if not tweet_url:
+        return None
+    try:
+        view = View(timeout=None)
+        view.add_item(Button(style=discord.ButtonStyle.link, label="🚀 Engage on X", url=tweet_url))
+        return view
+    except Exception:
+        return None
 
 # ── Config (read directly from os.getenv to avoid ALL module caches) ─────────
 def _channel_id() -> int:
@@ -90,63 +184,138 @@ async def _fetch_recent_tweets(twitter_client, handle: str, count: int = 10) -> 
         return []
 
 
-def _build_tweet_embed(tweet: Any, user: Any) -> Embed:
-    """Build a Discord embed from a tweet object."""
-    handle = getattr(user, "screen_name", "") or getattr(user, "username", "") or "unknown"
+def _build_tweet_embed(tweet: Any, user: Any) -> Tuple[Embed, str]:
+    """Build a Discord embed from a tweet object. Returns (embed, tweet_url)."""
+    handle = (
+        getattr(user, "screen_name", "")
+        or getattr(user, "username", "")
+        or "unknown"
+    )
     name = getattr(user, "name", "") or handle
-    text = getattr(tweet, "full_text", "") or getattr(tweet, "text", "") or ""
+    text_raw = getattr(tweet, "full_text", "") or getattr(tweet, "text", "") or ""
     tweet_id = getattr(tweet, "id", "") or getattr(tweet, "tweet_id", "")
-    created_at = getattr(tweet, "created_at", "")
-    pfp = getattr(user, "profile_image_url", "") or getattr(user, "profile_image_url_https", "")
+    pfp = (
+        getattr(user, "profile_image_url_https", "")
+        or getattr(user, "profile_image_url", "")
+        or ""
+    )
+    verified = bool(getattr(user, "verified", False) or getattr(user, "is_blue_verified", False))
+
+    tweet_url = f"https://x.com/{handle}/status/{tweet_id}" if tweet_id else f"https://x.com/{handle}"
+
+    # Clean text — strip Twitter's t.co short URLs so the body is readable.
+    cleaned_text = _TCO_RE.sub("", text_raw).strip()
+    cleaned_text = re.sub(r"\n{3,}", "\n\n", cleaned_text)
+
+    kind_label, kind_emoji = _classify_tweet(tweet)
 
     embed = Embed(
-        title=f"🐦 New Tweet from @{handle}",
-        url=f"https://x.com/{handle}/status/{tweet_id}",
-        color=0x1DA1F2,
+        color=_TWITTER_BLUE,
         timestamp=datetime.now(timezone.utc),
     )
-    embed.set_author(name=name, icon_url=pfp or "", url=f"https://x.com/{handle}")
-    embed.description = text[:4000] if text else "*(no text)*"
+    author_name = f"{name} (@{handle})" + (" ✓" if verified else "")
+    author_kwargs = {"name": author_name[:256], "url": f"https://x.com/{handle}"}
+    if pfp:
+        author_kwargs["icon_url"] = pfp
+    embed.set_author(**author_kwargs)
 
-    # Media attachment indicator (twikit returns Media objects, Scweet returns dicts)
-    media = getattr(tweet, "media", None)
-    if not media:
-        ext = getattr(tweet, "extended_entities", None)
-        if isinstance(ext, dict):
-            media = ext.get("media") or []
-    media = media or []
-    try:
-        media_count = len(media)
-    except Exception:
-        media_count = 0
-    if media_count:
-        embed.add_field(name="🖼️ Media", value=f"{media_count} attachment(s)", inline=False)
-        # Try to use first image as embed image
-        for m in media:
-            if isinstance(m, dict):
-                media_url = m.get("media_url_https") or m.get("media_url") or ""
-            else:
-                # twikit Media object: pull common attrs
-                media_url = (
-                    getattr(m, "media_url_https", "")
-                    or getattr(m, "media_url", "")
-                    or getattr(m, "url", "")
-                    or ""
-                )
-            if media_url and (".jpg" in media_url or ".png" in media_url):
-                embed.set_image(url=media_url)
-                break
+    # Headline + body
+    body_lines: List[str] = [f"### {kind_emoji} {kind_label}"]
+    if cleaned_text:
+        body_lines.append(cleaned_text)
+    else:
+        body_lines.append("*(no text)*")
+    embed.description = "\n".join(body_lines)[:4000]
 
-    # Stats
-    likes = getattr(tweet, "favorite_count", None) or getattr(tweet, "like_count", 0)
+    # Quoted tweet preview
+    q = getattr(tweet, "quoted_tweet", None) or getattr(tweet, "quoted_status", None)
+    if q:
+        q_user = getattr(q, "user", None)
+        q_handle = (
+            getattr(q_user, "screen_name", "")
+            or getattr(q_user, "username", "")
+            or "unknown"
+        )
+        q_text = getattr(q, "full_text", "") or getattr(q, "text", "") or ""
+        q_text = _TCO_RE.sub("", q_text).strip()
+        if q_text:
+            embed.add_field(
+                name=f"💬 Quoting @{q_handle}",
+                value=q_text[:1020],
+                inline=False,
+            )
+
+    # Media preview
+    media = _extract_media(tweet)
+    photo_set = False
+    video_count = 0
+    photo_count = 0
+    for m in media:
+        mtype = _media_type(m)
+        if mtype in ("video", "animated_gif"):
+            video_count += 1
+        else:
+            photo_count += 1
+        if not photo_set:
+            url = _media_url(m)
+            if url and any(ext in url.lower() for ext in (".jpg", ".jpeg", ".png", ".webp")):
+                try:
+                    embed.set_image(url=url)
+                    photo_set = True
+                except Exception:
+                    pass
+
+    # Stats row (inline)
+    likes = getattr(tweet, "favorite_count", None)
+    if likes is None:
+        likes = getattr(tweet, "like_count", 0)
     retweets = getattr(tweet, "retweet_count", 0)
     replies = getattr(tweet, "reply_count", 0)
-    if likes or retweets or replies:
-        stats = f"❤️ {likes:,}  ·  🔁 {retweets:,}  ·  💬 {replies:,}"
-        embed.add_field(name="Stats", value=stats, inline=False)
+    quotes = getattr(tweet, "quote_count", 0)
+    views = getattr(tweet, "view_count", None) or getattr(tweet, "views", None) or 0
+    bookmarks = getattr(tweet, "bookmark_count", 0)
 
-    embed.set_footer(text="Tweet Watcher · X")
-    return embed
+    embed.add_field(name="❤️ Likes", value=_fmt_count(likes), inline=True)
+    embed.add_field(name="🔁 Reposts", value=_fmt_count(retweets), inline=True)
+    embed.add_field(name="💬 Replies", value=_fmt_count(replies), inline=True)
+    if quotes or bookmarks or views:
+        if views:
+            embed.add_field(name="👁️ Views", value=_fmt_count(views), inline=True)
+        if quotes:
+            embed.add_field(name="🗣️ Quotes", value=_fmt_count(quotes), inline=True)
+        if bookmarks:
+            embed.add_field(name="🔖 Bookmarks", value=_fmt_count(bookmarks), inline=True)
+
+    # Media + post metadata row
+    meta_bits: List[str] = []
+    if photo_count or video_count:
+        m_bits = []
+        if photo_count:
+            m_bits.append(f"🖼️ {photo_count} photo{'s' if photo_count != 1 else ''}")
+        if video_count:
+            m_bits.append(f"🎬 {video_count} video{'s' if video_count != 1 else ''}")
+        meta_bits.append(" · ".join(m_bits))
+    lang = getattr(tweet, "lang", None)
+    if lang and isinstance(lang, str) and lang != "und":
+        meta_bits.append(f"🌐 `{lang}`")
+    posted_dt = _parse_created_at(getattr(tweet, "created_at", None))
+    if posted_dt:
+        ts = int(posted_dt.timestamp())
+        meta_bits.append(f"🕒 <t:{ts}:R>")
+    if meta_bits:
+        embed.add_field(name="​", value="  ·  ".join(meta_bits), inline=False)
+
+    # Author context (followers, name, handle)
+    followers = (
+        getattr(user, "followers_count", None)
+        or getattr(user, "followers", None)
+        or getattr(user, "follower_count", None)
+    )
+    if followers:
+        embed.add_field(name="👥 Followers", value=_fmt_count(followers), inline=True)
+
+    embed.set_footer(text=f"Tweet Watcher · X · @{handle}")
+    return embed, tweet_url
 
 
 async def check_watched_accounts(
@@ -234,16 +403,20 @@ async def check_watched_accounts(
         for tweet in new_tweets:
             tid = str(getattr(tweet, "id", "") or getattr(tweet, "tweet_id", ""))
             try:
-                embed = _build_tweet_embed(tweet, user)
+                embed, tweet_url = _build_tweet_embed(tweet, user)
+                view = _build_engage_view(tweet_url)
                 content = None
                 r_id = _role_id()
                 if r_id:
                     content = f"<@&{r_id}>"
 
                 if hasattr(bot, "safe_send"):
-                    await bot.safe_send(channel, content=content, embed=embed)
+                    await bot.safe_send(channel, content=content, embed=embed, view=view)
                 else:
-                    await channel.send(content=content, embed=embed)
+                    if view is not None:
+                        await channel.send(content=content, embed=embed, view=view)
+                    else:
+                        await channel.send(content=content, embed=embed)
 
                 posted += 1
                 print(f"[TweetWatcher] Posted tweet {tid} from @{handle}")
