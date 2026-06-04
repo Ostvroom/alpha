@@ -377,8 +377,34 @@ class BlockBrainBot(commands.Bot):
         self.active_escalation_channels = []
         self._slash_tree_synced = False
 
+    @staticmethod
+    def _sanitize_embed(embed):
+        """Defensively clamp embed fields/description to Discord's hard limits
+        so a stray oversize value can never trigger a 50035 Invalid Form Body."""
+        if embed is None:
+            return embed
+        try:
+            if getattr(embed, "description", None) and len(embed.description) > 4096:
+                embed.description = embed.description[:4093] + "…"
+            if getattr(embed, "title", None) and len(embed.title) > 256:
+                embed.title = embed.title[:253] + "…"
+            fields = list(getattr(embed, "fields", []) or [])
+            for idx, f in enumerate(fields):
+                name = f.name or "​"
+                value = f.value if f.value is not None else "​"
+                if len(name) > 256:
+                    name = name[:253] + "…"
+                if len(value) > 1024:
+                    value = value[:1021] + "…"
+                if name != f.name or value != f.value:
+                    embed.set_field_at(idx, name=name, value=value, inline=f.inline)
+        except Exception:
+            pass
+        return embed
+
     async def safe_send(self, target, *, embed=None, content=None, view=None, files=None):
         """Shared Discord sender with global 429 backoff handling."""
+        embed = self._sanitize_embed(embed)
         max_retries = 4
         for attempt in range(max_retries):
             now = time.time()
