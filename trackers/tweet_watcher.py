@@ -126,12 +126,22 @@ async def check_watched_accounts(
         except Exception:
             tweets_sorted = tweets
 
+        # First-time watch: just record the newest tweet ID, don't flood the channel
+        if not last_seen:
+            newest_tid = str(getattr(tweets_sorted[-1], "id", "") or getattr(tweets_sorted[-1], "tweet_id", "")) if tweets_sorted else ""
+            if newest_tid:
+                user_id = getattr(tweets_sorted[-1], "user", None)
+                uid = getattr(user_id, "id", "") if user_id else ""
+                database.upsert_tweet_watcher_state(handle, str(uid), newest_tid)
+                print(f"[TweetWatcher] First check for @{handle} — baseline set to {newest_tid}")
+            continue
+
         new_tweets: List[Any] = []
         for t in tweets_sorted:
             tid = str(getattr(t, "id", "") or getattr(t, "tweet_id", ""))
             if not tid:
                 continue
-            if last_seen and tid <= last_seen:
+            if tid <= last_seen:
                 continue
             new_tweets.append(t)
             if len(new_tweets) >= _WATCHER_MAX_TWEETS_PER_CHECK:
@@ -186,19 +196,10 @@ async def add_watched_handle(handle: str) -> tuple[bool, str]:
     if existing:
         return False, f"@{handle} is already being watched."
 
-    # Verify the handle exists on X before adding
-    try:
-        # Lazy import to avoid circulars
-        from twitter_client import TwitterClient
-        tc = TwitterClient()
-        user = await tc.get_user_by_handle(handle)
-        if not user:
-            return False, f"@{handle} not found on X."
-        user_id = getattr(user, "id", "") or getattr(user, "user_id", "")
-        database.upsert_tweet_watcher_state(handle, str(user_id), "")
-        return True, f"✅ Now watching @{handle}. New tweets will be posted to <#{_WATCHER_CHANNEL_ID}>"
-    except Exception as e:
-        return False, f"Error verifying @{handle}: {e}"
+    # Add directly — the watcher loop will resolve the user ID on first check
+    database.upsert_tweet_watcher_state(handle, "", "")
+    return True, f"✅ Now watching @{handle}. New tweets will be posted to <#{_WATCHER_CHANNEL_ID}>"
+
 
 
 async def remove_watched_handle(handle: str) -> tuple[bool, str]:
