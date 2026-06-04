@@ -907,6 +907,15 @@ async def fetch_tokens_overview(
     return items, None
 
 
+def _fv(value: str, limit: int = 1024) -> str:
+    """Truncate embed field value to Discord limit safely."""
+    if not value:
+        return value
+    if len(value) <= limit:
+        return value
+    return value[: limit - 1] + "…"
+
+
 def build_token_embed(
     item: Dict[str, Any],
     bucket_key: str,
@@ -973,7 +982,7 @@ def build_token_embed(
         embed.description = desc[:4096]
 
         snap = f"**MC** {mc_s}  ·  **ATH** {ath_s}  ·  **Vol** {v_s}  ·  **5m** {chg_s}"
-        embed.add_field(name="Snapshot", value=snap, inline=False)
+        embed.add_field(name="Snapshot", value=_fv(snap), inline=False)
 
         if our_alert_utc_iso:
             dt_alert = _parse_message_ts(our_alert_utc_iso)
@@ -982,7 +991,7 @@ def build_token_embed(
                 if dt_alert
                 else str(our_alert_utc_iso)[:32]
             )
-            embed.add_field(name="Our alert (UTC)", value=human, inline=False)
+            embed.add_field(name="Our alert (UTC)", value=_fv(human), inline=False)
 
         link_parts: List[str] = []
         if tw:
@@ -1000,12 +1009,12 @@ def build_token_embed(
         if dex:
             link_parts.append(f"[Dex]({dex})")
         if link_parts:
-            embed.add_field(name="Links", value=" · ".join(link_parts), inline=False)
+            embed.add_field(name="Links", value=_fv(" · ".join(link_parts)), inline=False)
 
         kol_line = _format_earliest_kol_call_line(item)
         embed.add_field(
             name="Earliest caller",
-            value=kol_line if kol_line else "_No caller history._",
+            value=_fv(kol_line) if kol_line else "_No caller history._",
             inline=False,
         )
 
@@ -1019,10 +1028,10 @@ def build_token_embed(
         desc += f"\n\n`{mint}`"
     embed.description = desc[:4096]
 
-    embed.add_field(name="Market Cap", value=mc_s, inline=True)
-    embed.add_field(name="ATH", value=ath_s, inline=True)
-    embed.add_field(name="Volume", value=v_s, inline=True)
-    embed.add_field(name="5m Move", value=chg_s, inline=True)
+    embed.add_field(name="Market Cap", value=_fv(mc_s), inline=True)
+    embed.add_field(name="ATH", value=_fv(ath_s), inline=True)
+    embed.add_field(name="Volume", value=_fv(v_s), inline=True)
+    embed.add_field(name="5m Move", value=_fv(chg_s), inline=True)
 
     price = _safe_float(item.get("price"))
     supply = _safe_float(item.get("supply"))
@@ -1030,7 +1039,7 @@ def build_token_embed(
         ptxt = f"${price:.8f}".rstrip("0").rstrip(".")
         if supply is not None and supply > 0:
             ptxt += f"  ·  supply {supply:,.0f}".replace(",", " ")
-        embed.add_field(name="Price", value=ptxt, inline=True)
+        embed.add_field(name="Price", value=_fv(ptxt), inline=True)
 
     soc_parts: List[str] = []
     if tw:
@@ -1038,7 +1047,7 @@ def build_token_embed(
     if web:
         soc_parts.append(f"[Site]({web})")
     if soc_parts:
-        embed.add_field(name="Socials", value="  ·  ".join(soc_parts), inline=True)
+        embed.add_field(name="Socials", value=_fv("  ·  ".join(soc_parts)), inline=True)
 
     trade_links: List[str] = []
     if pump_fun:
@@ -1052,10 +1061,10 @@ def build_token_embed(
     if dex:
         trade_links.append(f"[Dex]({dex})")
     if trade_links:
-        embed.add_field(name="Trade", value="  ·  ".join(trade_links), inline=False)
+        embed.add_field(name="Trade", value=_fv("  ·  ".join(trade_links)), inline=False)
 
     if ai_review:
-        embed.add_field(name="🧠 AI brief", value=ai_review[:1024], inline=False)
+        embed.add_field(name="🧠 AI brief", value=_fv(ai_review[:1024]), inline=False)
 
     calls = item.get("callsPreview") or []
     if isinstance(calls, list) and calls:
@@ -1076,7 +1085,7 @@ def build_token_embed(
             body += f"\n_+{len(calls) - 8} more_"
         if len(body) > 1024:
             body = body[:1020] + "…"
-        embed.add_field(name="Callers", value=body, inline=False)
+        embed.add_field(name="Callers", value=_fv(body), inline=False)
     else:
         embed.add_field(name="Callers", value="_No caller history._", inline=False)
 
