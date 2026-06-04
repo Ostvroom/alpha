@@ -185,136 +185,43 @@ async def _fetch_recent_tweets(twitter_client, handle: str, count: int = 10) -> 
 
 
 def _build_tweet_embed(tweet: Any, user: Any) -> Tuple[Embed, str]:
-    """Build a Discord embed from a tweet object. Returns (embed, tweet_url)."""
-    handle = (
-        getattr(user, "screen_name", "")
-        or getattr(user, "username", "")
-        or "unknown"
-    )
+    """Build a clean Discord embed. Returns (embed, tweet_url)."""
+    handle = getattr(user, "screen_name", "") or getattr(user, "username", "") or "unknown"
     name = getattr(user, "name", "") or handle
     text_raw = getattr(tweet, "full_text", "") or getattr(tweet, "text", "") or ""
     tweet_id = getattr(tweet, "id", "") or getattr(tweet, "tweet_id", "")
-    pfp = (
-        getattr(user, "profile_image_url_https", "")
-        or getattr(user, "profile_image_url", "")
-        or ""
-    )
+    pfp = getattr(user, "profile_image_url_https", "") or getattr(user, "profile_image_url", "") or ""
     verified = bool(getattr(user, "verified", False) or getattr(user, "is_blue_verified", False))
 
     tweet_url = f"https://x.com/{handle}/status/{tweet_id}" if tweet_id else f"https://x.com/{handle}"
 
-    # Clean text — strip Twitter's t.co short URLs so the body is readable.
-    cleaned_text = _TCO_RE.sub("", text_raw).strip()
-    cleaned_text = re.sub(r"\n{3,}", "\n\n", cleaned_text)
+    # Strip t.co URLs and tidy whitespace
+    text = _TCO_RE.sub("", text_raw).strip()
+    text = re.sub(r"\n{3,}", "\n\n", text)
 
-    kind_label, kind_emoji = _classify_tweet(tweet)
+    embed = Embed(color=_TWITTER_BLUE, timestamp=datetime.now(timezone.utc))
 
-    embed = Embed(
-        color=_TWITTER_BLUE,
-        timestamp=datetime.now(timezone.utc),
-    )
+    # Author line: "Name (@handle) ✓"
     author_name = f"{name} (@{handle})" + (" ✓" if verified else "")
-    author_kwargs = {"name": author_name[:256], "url": f"https://x.com/{handle}"}
+    author_kwargs: dict = {"name": author_name[:256], "url": f"https://x.com/{handle}"}
     if pfp:
         author_kwargs["icon_url"] = pfp
     embed.set_author(**author_kwargs)
 
-    # Headline + body
-    body_lines: List[str] = [f"### {kind_emoji} {kind_label}"]
-    if cleaned_text:
-        body_lines.append(cleaned_text)
-    else:
-        body_lines.append("*(no text)*")
-    embed.description = "\n".join(body_lines)[:4000]
+    # Tweet body
+    embed.description = text[:4000] if text else "*(no text)*"
 
-    # Quoted tweet preview
-    q = getattr(tweet, "quoted_tweet", None) or getattr(tweet, "quoted_status", None)
-    if q:
-        q_user = getattr(q, "user", None)
-        q_handle = (
-            getattr(q_user, "screen_name", "")
-            or getattr(q_user, "username", "")
-            or "unknown"
-        )
-        q_text = getattr(q, "full_text", "") or getattr(q, "text", "") or ""
-        q_text = _TCO_RE.sub("", q_text).strip()
-        if q_text:
-            embed.add_field(
-                name=f"💬 Quoting @{q_handle}",
-                value=q_text[:1020],
-                inline=False,
-            )
+    # First image (if any)
+    for m in _extract_media(tweet):
+        url = _media_url(m)
+        if url and any(ext in url.lower() for ext in (".jpg", ".jpeg", ".png", ".webp")):
+            try:
+                embed.set_image(url=url)
+            except Exception:
+                pass
+            break
 
-    # Media preview
-    media = _extract_media(tweet)
-    photo_set = False
-    video_count = 0
-    photo_count = 0
-    for m in media:
-        mtype = _media_type(m)
-        if mtype in ("video", "animated_gif"):
-            video_count += 1
-        else:
-            photo_count += 1
-        if not photo_set:
-            url = _media_url(m)
-            if url and any(ext in url.lower() for ext in (".jpg", ".jpeg", ".png", ".webp")):
-                try:
-                    embed.set_image(url=url)
-                    photo_set = True
-                except Exception:
-                    pass
-
-    # Stats row (inline)
-    likes = getattr(tweet, "favorite_count", None)
-    if likes is None:
-        likes = getattr(tweet, "like_count", 0)
-    retweets = getattr(tweet, "retweet_count", 0)
-    replies = getattr(tweet, "reply_count", 0)
-    quotes = getattr(tweet, "quote_count", 0)
-    views = getattr(tweet, "view_count", None) or getattr(tweet, "views", None) or 0
-    bookmarks = getattr(tweet, "bookmark_count", 0)
-
-    embed.add_field(name="❤️ Likes", value=_fmt_count(likes), inline=True)
-    embed.add_field(name="🔁 Reposts", value=_fmt_count(retweets), inline=True)
-    embed.add_field(name="💬 Replies", value=_fmt_count(replies), inline=True)
-    if quotes or bookmarks or views:
-        if views:
-            embed.add_field(name="👁️ Views", value=_fmt_count(views), inline=True)
-        if quotes:
-            embed.add_field(name="🗣️ Quotes", value=_fmt_count(quotes), inline=True)
-        if bookmarks:
-            embed.add_field(name="🔖 Bookmarks", value=_fmt_count(bookmarks), inline=True)
-
-    # Media + post metadata row
-    meta_bits: List[str] = []
-    if photo_count or video_count:
-        m_bits = []
-        if photo_count:
-            m_bits.append(f"🖼️ {photo_count} photo{'s' if photo_count != 1 else ''}")
-        if video_count:
-            m_bits.append(f"🎬 {video_count} video{'s' if video_count != 1 else ''}")
-        meta_bits.append(" · ".join(m_bits))
-    lang = getattr(tweet, "lang", None)
-    if lang and isinstance(lang, str) and lang != "und":
-        meta_bits.append(f"🌐 `{lang}`")
-    posted_dt = _parse_created_at(getattr(tweet, "created_at", None))
-    if posted_dt:
-        ts = int(posted_dt.timestamp())
-        meta_bits.append(f"🕒 <t:{ts}:R>")
-    if meta_bits:
-        embed.add_field(name="​", value="  ·  ".join(meta_bits), inline=False)
-
-    # Author context (followers, name, handle)
-    followers = (
-        getattr(user, "followers_count", None)
-        or getattr(user, "followers", None)
-        or getattr(user, "follower_count", None)
-    )
-    if followers:
-        embed.add_field(name="👥 Followers", value=_fmt_count(followers), inline=True)
-
-    embed.set_footer(text=f"Tweet Watcher · X · @{handle}")
+    embed.set_footer(text=f"@{handle} · X")
     return embed, tweet_url
 
 
