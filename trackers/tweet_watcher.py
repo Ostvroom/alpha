@@ -15,17 +15,17 @@ from discord import Embed
 import config
 import database
 
-# ── Config (read dynamically from config to avoid stale module caches) ───────
+# ── Config (read directly from os.getenv to avoid ALL module caches) ─────────
 def _channel_id() -> int:
-    return int(getattr(config, "TWEET_WATCHER_CHANNEL_ID", 0) or 0)
+    return int(os.getenv("TWEET_WATCHER_CHANNEL_ID", "0") or "0")
 
 
 def _role_id() -> int:
-    return int(getattr(config, "TWEET_WATCHER_ROLE_ID", 0) or 0)
+    return int(os.getenv("TWEET_WATCHER_ROLE_ID", "0") or "0")
 
 
 def _interval_min() -> int:
-    return max(1, int(getattr(config, "TWEET_WATCHER_INTERVAL_MIN", 3) or 3))
+    return max(1, int(os.getenv("TWEET_WATCHER_INTERVAL_MIN", "3") or "3"))
 
 
 def _max_tweets() -> int:
@@ -45,19 +45,27 @@ async def _fetch_recent_tweets(twitter_client, handle: str, count: int = 10) -> 
     """Fetch recent tweets for a handle using the existing TwitterClient."""
     try:
         # Resolve handle -> user_id (cached by TwitterClient)
+        print(f"[TweetWatcher] Resolving user: @{handle}")
         user = await twitter_client.get_user_by_handle(handle)
         if not user:
             print(f"[TweetWatcher] Could not resolve user: {handle}")
             return []
         user_id = getattr(user, "id", None) or getattr(user, "user_id", None)
+        screen_name = getattr(user, "screen_name", "") or getattr(user, "username", "") or handle
         if not user_id:
+            print(f"[TweetWatcher] No user_id for: {handle}")
             return []
+        print(f"[TweetWatcher] @{screen_name} resolved to uid {user_id}")
 
         # Fetch timeline
+        print(f"[TweetWatcher] Fetching timeline for @{handle} (count={count})")
         tweets = await twitter_client.get_user_timeline(user_id, count=count, handle=handle)
+        print(f"[TweetWatcher] Got {len(tweets or [])} tweets for @{handle}")
         return tweets or []
     except Exception as e:
         print(f"[TweetWatcher] Error fetching tweets for {handle}: {e}")
+        import traceback
+        traceback.print_exc()
         return []
 
 
@@ -112,7 +120,11 @@ async def check_watched_accounts(
     Returns number of new tweets posted.
     """
     ch_id = _channel_id()
+    r_id = _role_id()
+    interval = _interval_min()
+    print(f"[TweetWatcher] Starting check — channel={ch_id}, role={r_id}, interval={interval}min")
     if not ch_id:
+        print("[TweetWatcher] No channel configured — skipping")
         return 0
 
     if channel is None:
@@ -120,11 +132,13 @@ async def check_watched_accounts(
         if channel is None:
             try:
                 channel = await bot.fetch_channel(ch_id)
+                print(f"[TweetWatcher] Fetched channel: #{getattr(channel, 'name', ch_id)}")
             except Exception as e:
                 print(f"[TweetWatcher] Cannot access channel {ch_id}: {e}")
                 return 0
 
     watched = database.list_tweet_watcher_handles()
+    print(f"[TweetWatcher] Watching {len(watched)} account(s): {[w['handle'] for w in watched]}")
     if not watched:
         return 0
 
@@ -132,9 +146,11 @@ async def check_watched_accounts(
     for entry in watched:
         handle = entry["handle"]
         last_seen = entry.get("last_seen_tweet_id") or ""
+        print(f"[TweetWatcher] Checking @{handle} — last_seen={last_seen or 'none'}")
 
         tweets = await _fetch_recent_tweets(twitter_client, handle, count=10)
         if not tweets:
+            print(f"[TweetWatcher] No tweets returned for @{handle}")
             continue
 
         # Sort by tweet ID ascending (oldest first) so we post chronologically
@@ -159,12 +175,14 @@ async def check_watched_accounts(
             tid = str(getattr(t, "id", "") or getattr(t, "tweet_id", ""))
             if not tid:
                 continue
+            print(f"[TweetWatcher] Comparing tid={tid} vs last_seen={last_seen} for @{handle} — new={tid > last_seen}")
             if tid <= last_seen:
                 continue
             new_tweets.append(t)
             if len(new_tweets) >= _WATCHER_MAX_TWEETS_PER_CHECK:
                 break
 
+        print(f"[TweetWatcher] Found {len(new_tweets)} new tweet(s) for @{handle}")
         if not new_tweets:
             continue
 
