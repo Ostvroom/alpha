@@ -15,11 +15,28 @@ from discord import Embed
 import config
 import database
 
-# ── Config ───────────────────────────────────────────────────────────────────
-_WATCHER_INTERVAL_MIN = max(1, int(os.getenv("TWEET_WATCHER_INTERVAL_MIN", "3")))
-_WATCHER_CHANNEL_ID = int(os.getenv("TWEET_WATCHER_CHANNEL_ID", "0") or 0)
-_WATCHER_ROLE_ID = int(os.getenv("TWEET_WATCHER_ROLE_ID", "0") or 0)
-_WATCHER_MAX_TWEETS_PER_CHECK = max(1, min(10, int(os.getenv("TWEET_WATCHER_MAX_TWEETS", "3"))))
+# ── Config (read dynamically from config to avoid stale module caches) ───────
+def _channel_id() -> int:
+    return int(getattr(config, "TWEET_WATCHER_CHANNEL_ID", 0) or 0)
+
+
+def _role_id() -> int:
+    return int(getattr(config, "TWEET_WATCHER_ROLE_ID", 0) or 0)
+
+
+def _interval_min() -> int:
+    return max(1, int(getattr(config, "TWEET_WATCHER_INTERVAL_MIN", 3) or 3))
+
+
+def _max_tweets() -> int:
+    return max(1, min(10, int(os.getenv("TWEET_WATCHER_MAX_TWEETS", "3"))))
+
+
+# Legacy module-level aliases (kept for backward compat, but prefer functions above)
+_WATCHER_INTERVAL_MIN = _interval_min()
+_WATCHER_CHANNEL_ID = _channel_id()
+_WATCHER_ROLE_ID = _role_id()
+_WATCHER_MAX_TWEETS_PER_CHECK = _max_tweets()
 
 
 # ── Core watcher logic ───────────────────────────────────────────────────────
@@ -94,16 +111,17 @@ async def check_watched_accounts(
     Check all watched accounts for new tweets and post to Discord.
     Returns number of new tweets posted.
     """
-    if not _WATCHER_CHANNEL_ID:
+    ch_id = _channel_id()
+    if not ch_id:
         return 0
 
     if channel is None:
-        channel = bot.get_channel(_WATCHER_CHANNEL_ID)
+        channel = bot.get_channel(ch_id)
         if channel is None:
             try:
-                channel = await bot.fetch_channel(_WATCHER_CHANNEL_ID)
+                channel = await bot.fetch_channel(ch_id)
             except Exception as e:
-                print(f"[TweetWatcher] Cannot access channel {_WATCHER_CHANNEL_ID}: {e}")
+                print(f"[TweetWatcher] Cannot access channel {ch_id}: {e}")
                 return 0
 
     watched = database.list_tweet_watcher_handles()
@@ -161,8 +179,9 @@ async def check_watched_accounts(
             try:
                 embed = _build_tweet_embed(tweet, user)
                 content = None
-                if _WATCHER_ROLE_ID:
-                    content = f"<@&{_WATCHER_ROLE_ID}>"
+                r_id = _role_id()
+                if r_id:
+                    content = f"<@&{r_id}>"
 
                 if hasattr(bot, "safe_send"):
                     await bot.safe_send(channel, content=content, embed=embed)
@@ -198,7 +217,7 @@ async def add_watched_handle(handle: str) -> tuple[bool, str]:
 
     # Add directly — the watcher loop will resolve the user ID on first check
     database.upsert_tweet_watcher_state(handle, "", "")
-    return True, f"✅ Now watching @{handle}. New tweets will be posted to <#{_WATCHER_CHANNEL_ID}>"
+    return True, f"✅ Now watching @{handle}. New tweets will be posted to <#{_channel_id()}>"
 
 
 
