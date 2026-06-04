@@ -42,19 +42,40 @@ _WATCHER_MAX_TWEETS_PER_CHECK = _max_tweets()
 # ── Core watcher logic ───────────────────────────────────────────────────────
 
 async def _fetch_recent_tweets(twitter_client, handle: str, count: int = 10) -> List[Any]:
-    """Fetch recent tweets for a handle using the existing TwitterClient."""
+    """Fetch recent tweets for a handle using the existing TwitterClient.
+
+    Resolution order: full user object → cached user_id → twikit fallback.
+    Using get_user_id() first lets us hit the resolver cache and avoid the
+    slow Scweet aget_user_info path that has been failing for some handles.
+    """
     try:
-        # Resolve handle -> user_id (cached by TwitterClient)
-        print(f"[TweetWatcher] Resolving user: @{handle}")
-        user = await twitter_client.get_user_by_handle(handle)
-        if not user:
+        user = None
+        user_id = None
+        screen_name = handle
+
+        # 1) Try the cached user_id path first (fast + cache-friendly).
+        try:
+            print(f"[TweetWatcher] Resolving uid for @{handle} (cache/get_user_id)")
+            user_id = await twitter_client.get_user_id(handle)
+        except Exception as e:
+            print(f"[TweetWatcher] get_user_id error for @{handle}: {e}")
+
+        # 2) If that failed, fall back to the heavier get_user_by_handle path.
+        if not user_id:
+            print(f"[TweetWatcher] Resolving full user: @{handle}")
+            user = await twitter_client.get_user_by_handle(handle)
+            if user:
+                user_id = getattr(user, "id", None) or getattr(user, "user_id", None)
+                screen_name = (
+                    getattr(user, "screen_name", "")
+                    or getattr(user, "username", "")
+                    or handle
+                )
+
+        if not user_id:
             print(f"[TweetWatcher] Could not resolve user: {handle}")
             return []
-        user_id = getattr(user, "id", None) or getattr(user, "user_id", None)
-        screen_name = getattr(user, "screen_name", "") or getattr(user, "username", "") or handle
-        if not user_id:
-            print(f"[TweetWatcher] No user_id for: {handle}")
-            return []
+
         print(f"[TweetWatcher] @{screen_name} resolved to uid {user_id}")
 
         # Fetch timeline
