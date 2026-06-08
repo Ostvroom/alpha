@@ -153,6 +153,14 @@ def _max_tweets() -> int:
     return max(1, min(10, int(os.getenv("TWEET_WATCHER_MAX_TWEETS", "3"))))
 
 
+def _handle_timeout_sec() -> float:
+    try:
+        raw = float(os.getenv("TWEET_WATCHER_HANDLE_TIMEOUT_SEC", "25") or "25")
+    except ValueError:
+        raw = 25.0
+    return max(5.0, min(90.0, raw))
+
+
 def _verbose_logs() -> bool:
     return (os.getenv("TWEET_WATCHER_VERBOSE", "0") or "0").strip().lower() in ("1", "true", "yes", "on")
 
@@ -312,7 +320,17 @@ async def check_watched_accounts(
         last_seen = entry.get("last_seen_tweet_id") or ""
         _log(f"[TweetWatcher] Checking @{handle} - last_seen={last_seen or 'none'}", verbose=True)
 
-        tweets = await _fetch_recent_tweets(twitter_client, handle, count=10)
+        try:
+            tweets = await asyncio.wait_for(
+                _fetch_recent_tweets(twitter_client, handle, count=10),
+                timeout=_handle_timeout_sec(),
+            )
+        except asyncio.TimeoutError:
+            print(
+                f"[TweetWatcher] Timeout fetching @{handle} after "
+                f"{_handle_timeout_sec():.0f}s; skipping this account for now."
+            )
+            continue
         if not tweets:
             _log(f"[TweetWatcher] No tweets returned for @{handle}", verbose=True)
             continue
@@ -432,7 +450,13 @@ async def post_latest_for_handle(
     if not h:
         return False, "Invalid X handle."
 
-    tweets = await _fetch_recent_tweets(twitter_client, h, count=10)
+    try:
+        tweets = await asyncio.wait_for(
+            _fetch_recent_tweets(twitter_client, h, count=10),
+            timeout=_handle_timeout_sec(),
+        )
+    except asyncio.TimeoutError:
+        return False, f"Timed out fetching @{h} after {_handle_timeout_sec():.0f}s."
     if not tweets:
         return False, f"No tweets returned for @{h}."
 
@@ -451,7 +475,7 @@ async def post_latest_for_handle(
     embed, tweet_url = _build_tweet_embed(latest, user)
     embed.title = f"TweetWatcher Test - {embed.title.replace('X Alert - ', '')}"
     view = _build_engage_view(tweet_url)
-    content = f"TweetWatcher test: latest fetched post/RT for `@{h}`"
+    content = f"TweetWatcher: latest fetched post/RT for `@{h}`"
 
     if hasattr(bot, "safe_send"):
         await bot.safe_send(channel, content=content, embed=embed, view=view)

@@ -3742,13 +3742,27 @@ class WalletCommands(commands.Cog):
     # ── Tweet Watcher Commands ────────────────────────────────────────────────
 
     @app_commands.command(name="watch_x", description="Add an X account to the tweet watcher")
-    @app_commands.describe(handle="The X handle to watch (e.g. elonmusk)")
-    async def watch_x(self, interaction: Interaction, handle: str):
+    @app_commands.describe(
+        handle="The X handle to watch (e.g. elonmusk)",
+        post_latest="Immediately post the latest fetched tweet/RT and use it as the baseline.",
+    )
+    async def watch_x(self, interaction: Interaction, handle: str, post_latest: bool = True):
         await interaction.response.defer(thinking=True)
         try:
-            from trackers.tweet_watcher import add_watched_handle
+            from trackers.tweet_watcher import add_watched_handle, post_latest_for_handle
             ok, msg = await add_watched_handle(handle)
-            if ok:
+            if ok and post_latest:
+                latest_ok, latest_msg = await post_latest_for_handle(
+                    self.bot,
+                    self.bot.twitter,
+                    handle=handle,
+                    update_state=True,
+                )
+                if latest_ok:
+                    await interaction.followup.send(f"{msg}\nLatest baseline posted: {latest_msg}")
+                else:
+                    await interaction.followup.send(f"{msg}\nLatest baseline failed: {latest_msg}")
+            elif ok:
                 await interaction.followup.send(msg)
             else:
                 await interaction.followup.send(f"❌ {msg}", ephemeral=True)
