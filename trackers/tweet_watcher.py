@@ -397,6 +397,79 @@ async def check_watched_accounts(
 
 # ── Command helpers ──────────────────────────────────────────────────────────
 
+async def post_latest_for_handle(
+    bot,
+    twitter_client,
+    handle: Optional[str] = None,
+    channel: Optional[discord.TextChannel] = None,
+    *,
+    update_state: bool = False,
+) -> tuple[bool, str]:
+    """Fetch and post the latest tweet/RT for one watched handle as a manual test.
+
+    Unlike check_watched_accounts(), this ignores last_seen_tweet_id so operators
+    can verify the watcher pipeline even when there are no new tweets.
+    """
+    ch_id = _channel_id()
+    if not ch_id:
+        return False, "TweetWatcher channel is not configured."
+
+    if channel is None:
+        channel = bot.get_channel(ch_id)
+        if channel is None:
+            try:
+                channel = await bot.fetch_channel(ch_id)
+            except Exception as e:
+                return False, f"Cannot access TweetWatcher channel {ch_id}: {e}"
+
+    h = (handle or "").strip().lstrip("@").lower()
+    if not h:
+        watched = database.list_tweet_watcher_handles()
+        if not watched:
+            return False, "No watched X accounts configured. Add one with /watch_x first."
+        h = str(watched[0].get("handle") or "").strip().lstrip("@").lower()
+
+    if not h:
+        return False, "Invalid X handle."
+
+    tweets = await _fetch_recent_tweets(twitter_client, h, count=10)
+    if not tweets:
+        return False, f"No tweets returned for @{h}."
+
+    try:
+        latest = max(
+            tweets,
+            key=lambda t: int(getattr(t, "id", "0") or getattr(t, "tweet_id", "0") or 0),
+        )
+    except Exception:
+        latest = tweets[0]
+
+    user = getattr(latest, "user", None) or await twitter_client.get_user_by_handle(h)
+    if not user:
+        user = latest
+
+    embed, tweet_url = _build_tweet_embed(latest, user)
+    embed.title = f"TweetWatcher Test - {embed.title.replace('X Alert - ', '')}"
+    view = _build_engage_view(tweet_url)
+    content = f"TweetWatcher test: latest fetched post/RT for `@{h}`"
+
+    if hasattr(bot, "safe_send"):
+        await bot.safe_send(channel, content=content, embed=embed, view=view)
+    else:
+        if view is not None:
+            await channel.send(content=content, embed=embed, view=view)
+        else:
+            await channel.send(content=content, embed=embed)
+
+    tid = str(getattr(latest, "id", "") or getattr(latest, "tweet_id", ""))
+    if update_state and tid:
+        uid = getattr(user, "id", "") or getattr(user, "user_id", "") or ""
+        database.upsert_tweet_watcher_state(h, str(uid), tid)
+
+    print(f"[TweetWatcher] Test posted latest tweet {tid or '?'} from @{h}")
+    return True, f"Posted latest fetched tweet/RT for @{h} to <#{getattr(channel, 'id', ch_id)}>."
+
+
 async def add_watched_handle(handle: str) -> tuple[bool, str]:
     """Add a handle to the watch list. Returns (success, message)."""
     handle = handle.strip().lstrip("@").lower()

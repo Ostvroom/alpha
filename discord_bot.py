@@ -3793,5 +3793,34 @@ class WalletCommands(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
 
+    @app_commands.command(name="test_watch_x", description="Post the latest fetched tweet/RT for a watched X account")
+    @app_commands.describe(
+        handle="Optional X handle. Leave empty to use the first watched account.",
+        update_state="Also set this tweet as last seen after posting the test.",
+    )
+    async def test_watch_x(
+        self,
+        interaction: Interaction,
+        handle: Optional[str] = None,
+        update_state: bool = False,
+    ):
+        await interaction.response.defer(thinking=True)
+        try:
+            from trackers.tweet_watcher import post_latest_for_handle
+
+            ok, msg = await post_latest_for_handle(
+                self.bot,
+                self.bot.twitter,
+                handle=handle,
+                update_state=update_state,
+            )
+            if ok:
+                await interaction.followup.send(f"✅ {msg}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ {msg}", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+
 if __name__ == "__main__":
     BlockBrainBot().run(config.DISCORD_TOKEN)
