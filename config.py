@@ -518,6 +518,15 @@ DISCOVERY_TIMELINE_RETRIES = max(1, min(3, _env_int("DISCOVERY_TIMELINE_RETRIES"
 TWITTER_TIMELINE_CLIENT_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("TWITTER_TIMELINE_CLIENT_TIMEOUT_SEC", 18.0)))
 TWITTER_TIMELINE_CLIENT_RETRIES = max(0, min(3, _env_int("TWITTER_TIMELINE_CLIENT_RETRIES", 0)))
 
+# BrainScan task-level budgets. Keep these lower than the underlying Twikit/Scweet
+# cooldown windows so one bad profile/proxy cannot stall the whole scan.
+BRAIN_SCAN_ID_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("BRAIN_SCAN_ID_TIMEOUT_SEC", 20.0)))
+BRAIN_SCAN_FOLLOWING_TIMEOUT_SEC = max(10.0, min(90.0, _env_float("BRAIN_SCAN_FOLLOWING_TIMEOUT_SEC", 35.0)))
+BRAIN_SCAN_TIMELINE_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("BRAIN_SCAN_TIMELINE_TIMEOUT_SEC", 28.0)))
+BRAIN_SCAN_TIMELINE_ATTEMPTS = max(1, min(3, _env_int("BRAIN_SCAN_TIMELINE_ATTEMPTS", 1)))
+BRAIN_SCAN_HVA_BUDGET_SEC = max(45.0, min(300.0, _env_float("BRAIN_SCAN_HVA_BUDGET_SEC", 120.0)))
+BRAIN_SCAN_SKIP_MENTIONS_WHEN_TWEET_WATCHER_ACTIVE = _env_flag("BRAIN_SCAN_SKIP_MENTIONS_WHEN_TWEET_WATCHER_ACTIVE", "1")
+
 # HVA scan @mention resolution — tune these to reduce timeout waste
 # Hard timeout (seconds) per mention resolve. Lower = less wasted time per bad proxy.
 MENTION_RESOLVE_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("MENTION_RESOLVE_TIMEOUT_SEC", 12.0)))

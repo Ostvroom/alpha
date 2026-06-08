@@ -1380,6 +1380,8 @@ class BlockBrainBot(commands.Bot):
                 _max_mention_timeouts_per_batch = int(getattr(config, "MENTION_RESOLVE_MAX_TIMEOUTS_PER_BATCH", 6) or 6)
                 
                 for hva_handle in batch:
+                    hva_started_at = time.monotonic()
+                    hva_budget_sec = float(getattr(config, "BRAIN_SCAN_HVA_BUDGET_SEC", 120.0) or 120.0)
                     await asyncio.sleep(0) # Yield for heartbeats
                     if self.twitter.is_rate_limited: break
                     if random.random() < 0.03: continue
@@ -1394,7 +1396,7 @@ class BlockBrainBot(commands.Bot):
                         try:
                             hva_id = await asyncio.wait_for(
                                 self.twitter.get_user_id(hva_handle),
-                                timeout=30.0,
+                                timeout=float(getattr(config, "BRAIN_SCAN_ID_TIMEOUT_SEC", 20.0) or 20.0),
                             )
                         except asyncio.TimeoutError:
                             print(f"      ⚠️ Timeout resolving ID for @{hva_handle}, skipping.")
@@ -1407,7 +1409,7 @@ class BlockBrainBot(commands.Bot):
                         try:
                             following, _ = await asyncio.wait_for(
                                 self.twitter.get_new_following_with_delta(hva_id, hva_handle),
-                                timeout=60.0,
+                                timeout=float(getattr(config, "BRAIN_SCAN_FOLLOWING_TIMEOUT_SEC", 35.0) or 35.0),
                             )
                         except asyncio.TimeoutError:
                             print(f"      ⚠️ Timeout fetching follows for @{hva_handle}, skipping.")
@@ -1434,18 +1436,24 @@ class BlockBrainBot(commands.Bot):
                         
                         await asyncio.sleep(random.uniform(8, 18))
 
+                        if time.monotonic() - hva_started_at >= hva_budget_sec:
+                            print(f"      ⚠️ HVA budget exhausted for @{hva_handle}; skipping timeline/mention scan.")
+                            continue
+
                         await self._yield_to_tweet_watcher(f"before @{hva_handle} timeline")
                         timeline = []
-                        for t_attempt in range(2):
+                        timeline_attempts = int(getattr(config, "BRAIN_SCAN_TIMELINE_ATTEMPTS", 1) or 1)
+                        timeline_timeout_s = float(getattr(config, "BRAIN_SCAN_TIMELINE_TIMEOUT_SEC", 28.0) or 28.0)
+                        for t_attempt in range(max(1, timeline_attempts)):
                             try:
                                 timeline = await asyncio.wait_for(
                                     self.twitter.get_user_timeline(hva_id, count=15),
-                                    timeout=45.0,
+                                    timeout=timeline_timeout_s,
                                 )
                                 break
                             except asyncio.TimeoutError:
-                                print(f"      ⚠️ Timeout fetching timeline for @{hva_handle} (attempt {t_attempt + 1}/2)")
-                                if t_attempt < 1:
+                                print(f"      ⚠️ Timeout fetching timeline for @{hva_handle} (attempt {t_attempt + 1}/{timeline_attempts})")
+                                if t_attempt < timeline_attempts - 1:
                                     await asyncio.sleep(5)
                                 else:
                                     timeline = []
@@ -1458,6 +1466,7 @@ class BlockBrainBot(commands.Bot):
                         mention_timeout_s = float(getattr(config, "MENTION_RESOLVE_TIMEOUT_SEC", 12.0) or 12.0)
                         mention_retry_limit = max(0, int(getattr(config, "MENTION_RESOLVE_RETRIES", 0) or 0))
                         mention_resolved_count = 0
+                        mentions_skipped_for_watcher = False
                         for tweet in timeline:
                             await asyncio.sleep(0) # Yield for heartbeats
                             retweeted_user = None
@@ -1482,6 +1491,17 @@ class BlockBrainBot(commands.Bot):
                             except Exception:
                                 text = ""
                             if text:
+                                if time.monotonic() - hva_started_at >= hva_budget_sec:
+                                    print(f"      ⚠️ HVA budget exhausted for @{hva_handle}; skipping remaining mention resolves.")
+                                    break
+                                if (
+                                    getattr(config, "BRAIN_SCAN_SKIP_MENTIONS_WHEN_TWEET_WATCHER_ACTIVE", True)
+                                    and "TweetWatcher" in set(getattr(self, "_twitter_active_jobs", set()) or set())
+                                ):
+                                    if not mentions_skipped_for_watcher:
+                                        print(f"      ℹ️ TweetWatcher active; skipping mention resolves for @{hva_handle}.")
+                                        mentions_skipped_for_watcher = True
+                                    continue
                                 for m in re.findall(r"@([A-Za-z0-9_]{1,15})", text):
                                     if mention_resolved_count >= max_mentions_per_scan:
                                         break
@@ -1497,6 +1517,9 @@ class BlockBrainBot(commands.Bot):
                                     if h in seen_mention_handles:
                                         continue
                                     seen_mention_handles.add(h)
+                                    if time.monotonic() - hva_started_at >= hva_budget_sec:
+                                        print(f"      ⚠️ HVA budget exhausted for @{hva_handle}; stopping mention resolves.")
+                                        break
                                     user_obj = None
                                     timed_out = False
                                     for attempt in range(mention_retry_limit + 1):
