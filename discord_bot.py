@@ -374,6 +374,7 @@ class BlockBrainBot(commands.Bot):
         self._discord_global_pause_until: float = 0.0
         self._twitter_job_lock: asyncio.Lock = asyncio.Lock()
         self._twitter_job_name: Optional[str] = None
+        self._twitter_active_jobs: Set[str] = set()
         # Active channel caches (populated in on_ready)
         self.active_main_channels = []
         self.active_escalation_channels = []
@@ -448,19 +449,34 @@ class BlockBrainBot(commands.Bot):
         """Best-effort guard for long-running Twitter/X background jobs."""
         if not getattr(config, "TWITTER_BACKGROUND_EXCLUSIVE_MODE", True):
             return True
-        if self._twitter_job_lock.locked():
-            active = self._twitter_job_name or "another Twitter job"
-            print(f"{self._get_log_prefix()} [{job_name}] Skipped: Twitter pool busy with {active}.")
+        active_jobs = set(getattr(self, "_twitter_active_jobs", set()) or set())
+        if job_name in active_jobs:
+            print(f"{self._get_log_prefix()} [{job_name}] Skipped: previous {job_name} still running.")
             return False
-        await self._twitter_job_lock.acquire()
-        self._twitter_job_name = job_name
+
+        if job_name == "XSearch" and active_jobs:
+            active = ", ".join(sorted(active_jobs))
+            print(f"{self._get_log_prefix()} [XSearch] Skipped: Twitter pool busy with {active}.")
+            return False
+
+        # BrainScan and TweetWatcher are allowed to overlap. TweetWatcher needs to
+        # stay real-time, and BrainScan spends long periods sleeping between calls.
+        # XSearch is intentionally low-priority: it refuses to start while other
+        # jobs are active, but it does not block a later TweetWatcher/BrainScan tick.
+        self._twitter_active_jobs.add(job_name)
+        if not self._twitter_job_lock.locked():
+            await self._twitter_job_lock.acquire()
+            self._twitter_job_name = job_name
         return True
 
     def _end_twitter_job(self, job_name: str) -> None:
         if not getattr(config, "TWITTER_BACKGROUND_EXCLUSIVE_MODE", True):
             return
-        if self._twitter_job_name == job_name:
-            self._twitter_job_name = None
+        self._twitter_active_jobs.discard(job_name)
+        if self._twitter_active_jobs:
+            self._twitter_job_name = sorted(self._twitter_active_jobs)[0]
+            return
+        self._twitter_job_name = None
         if self._twitter_job_lock.locked():
             self._twitter_job_lock.release()
 
@@ -2987,14 +3003,16 @@ class BlockBrainBot(commands.Bot):
             if num_hvas > last:
                 type_label = "NEW SMART" if is_new_follow else "MOMENTUM"
                 status_suffix = ""
-                if age >= config.SNIPER_MAX_AGE_DAYS:
+                escalation_max_age = int(getattr(config, "ESCALATION_MAX_AGE_DAYS", config.SNIPER_MAX_AGE_DAYS) or config.SNIPER_MAX_AGE_DAYS)
+                if age >= escalation_max_age:
                     status_suffix = " (Archive Only - No Alert)"
                 
                 print(f"{self._get_log_prefix()} 📈 [{type_label} DETECTED!] @{account.screen_name} -> {num_hvas} Smarts! 🚀{status_suffix}")
                 database.update_posted_smarts(account.id, num_hvas)
                 
-                # GATE: Only send Discord alerts if project is < 100 days old
-                if age < config.SNIPER_MAX_AGE_DAYS:
+                # GATE: Only send Discord escalation alerts if project is inside
+                # the configured escalation age window.
+                if age < escalation_max_age:
                     # Escalation requires: 1+ HVAs (catch early signals)
                     if num_hvas >= 1:
                         skip_escalation_discord = False
