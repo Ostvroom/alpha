@@ -480,6 +480,25 @@ class BlockBrainBot(commands.Bot):
         if self._twitter_job_lock.locked():
             self._twitter_job_lock.release()
 
+    async def _yield_to_tweet_watcher(self, context: str = "") -> None:
+        """Let TweetWatcher get a short priority window over BrainScan X calls."""
+        if not getattr(config, "BRAIN_SCAN_YIELD_TO_TWEET_WATCHER", True):
+            return
+        if "TweetWatcher" not in set(getattr(self, "_twitter_active_jobs", set()) or set()):
+            return
+
+        max_wait = float(getattr(config, "BRAIN_SCAN_TWEET_WATCHER_YIELD_SEC", 75.0) or 75.0)
+        max_wait = max(5.0, min(180.0, max_wait))
+        suffix = f" ({context})" if context else ""
+        print(f"{self._get_log_prefix()} [BrainScan] Yielding to TweetWatcher{suffix} for up to {max_wait:.0f}s.")
+        started = time.monotonic()
+        while "TweetWatcher" in set(getattr(self, "_twitter_active_jobs", set()) or set()):
+            remaining = max_wait - (time.monotonic() - started)
+            if remaining <= 0:
+                print(f"{self._get_log_prefix()} [BrainScan] TweetWatcher yield window expired; resuming scan.")
+                return
+            await asyncio.sleep(min(2.0, remaining))
+
     def brand_logo_file(self) -> Optional[discord.File]:
         if not BRAND_LOGO_PATH or not BRAND_LOGO_FILE:
             return None
@@ -1371,6 +1390,7 @@ class BlockBrainBot(commands.Bot):
                     database.update_hva_scan_timestamp(hva_handle)
                     
                     try:
+                        await self._yield_to_tweet_watcher(f"before @{hva_handle} ID lookup")
                         try:
                             hva_id = await asyncio.wait_for(
                                 self.twitter.get_user_id(hva_handle),
@@ -1383,6 +1403,7 @@ class BlockBrainBot(commands.Bot):
                             print(f"      ⚠️ Skip @{hva_handle}: Could not resolve User ID.")
                             continue
 
+                        await self._yield_to_tweet_watcher(f"before @{hva_handle} following")
                         try:
                             following, _ = await asyncio.wait_for(
                                 self.twitter.get_new_following_with_delta(hva_id, hva_handle),
@@ -1413,6 +1434,7 @@ class BlockBrainBot(commands.Bot):
                         
                         await asyncio.sleep(random.uniform(8, 18))
 
+                        await self._yield_to_tweet_watcher(f"before @{hva_handle} timeline")
                         timeline = []
                         for t_attempt in range(2):
                             try:
@@ -1478,6 +1500,7 @@ class BlockBrainBot(commands.Bot):
                                     user_obj = None
                                     timed_out = False
                                     for attempt in range(mention_retry_limit + 1):
+                                        await self._yield_to_tweet_watcher(f"before mention @{h}")
                                         try:
                                             user_obj = await asyncio.wait_for(
                                                 self.twitter.get_user_by_handle(h),

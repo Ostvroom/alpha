@@ -155,9 +155,9 @@ def _max_tweets() -> int:
 
 def _handle_timeout_sec() -> float:
     try:
-        raw = float(os.getenv("TWEET_WATCHER_HANDLE_TIMEOUT_SEC", "25") or "25")
+        raw = float(os.getenv("TWEET_WATCHER_HANDLE_TIMEOUT_SEC", "45") or "45")
     except ValueError:
-        raw = 25.0
+        raw = 45.0
     return max(5.0, min(90.0, raw))
 
 
@@ -180,7 +180,12 @@ _WATCHER_MAX_TWEETS_PER_CHECK = _max_tweets()
 
 # ── Core watcher logic ───────────────────────────────────────────────────────
 
-async def _fetch_recent_tweets(twitter_client, handle: str, count: int = 10) -> List[Any]:
+async def _fetch_recent_tweets(
+    twitter_client,
+    handle: str,
+    count: int = 10,
+    known_user_id: Optional[str] = None,
+) -> List[Any]:
     """Fetch recent tweets for a handle using the existing TwitterClient.
 
     Resolution order: full user object → cached user_id → twikit fallback.
@@ -189,15 +194,18 @@ async def _fetch_recent_tweets(twitter_client, handle: str, count: int = 10) -> 
     """
     try:
         user = None
-        user_id = None
+        user_id = str(known_user_id or "").strip() or None
         screen_name = handle
 
         # 1) Try the cached user_id path first (fast + cache-friendly).
-        try:
-            _log(f"[TweetWatcher] Resolving uid for @{handle} (cache/get_user_id)", verbose=True)
-            user_id = await twitter_client.get_user_id(handle)
-        except Exception as e:
-            print(f"[TweetWatcher] get_user_id error for @{handle}: {e}")
+        if not user_id:
+            try:
+                _log(f"[TweetWatcher] Resolving uid for @{handle} (cache/get_user_id)", verbose=True)
+                user_id = await twitter_client.get_user_id(handle)
+            except Exception as e:
+                print(f"[TweetWatcher] get_user_id error for @{handle}: {e}")
+        else:
+            _log(f"[TweetWatcher] Reusing stored uid {user_id} for @{handle}", verbose=True)
 
         # 2) If that failed, fall back to the heavier get_user_by_handle path.
         if not user_id:
@@ -317,12 +325,13 @@ async def check_watched_accounts(
     posted = 0
     for entry in watched:
         handle = entry["handle"]
+        twitter_id = str(entry.get("twitter_id") or "").strip()
         last_seen = entry.get("last_seen_tweet_id") or ""
         _log(f"[TweetWatcher] Checking @{handle} - last_seen={last_seen or 'none'}", verbose=True)
 
         try:
             tweets = await asyncio.wait_for(
-                _fetch_recent_tweets(twitter_client, handle, count=10),
+                _fetch_recent_tweets(twitter_client, handle, count=10, known_user_id=twitter_id),
                 timeout=_handle_timeout_sec(),
             )
         except asyncio.TimeoutError:
@@ -450,9 +459,11 @@ async def post_latest_for_handle(
     if not h:
         return False, "Invalid X handle."
 
+    state = database.get_tweet_watcher_state(h) or {}
+    twitter_id = str(state.get("twitter_id") or "").strip()
     try:
         tweets = await asyncio.wait_for(
-            _fetch_recent_tweets(twitter_client, h, count=10),
+            _fetch_recent_tweets(twitter_client, h, count=10, known_user_id=twitter_id),
             timeout=_handle_timeout_sec(),
         )
     except asyncio.TimeoutError:
