@@ -2405,14 +2405,28 @@ class BlockBrainBot(commands.Bot):
         candidates_processed = 0
         mention_timeouts_this_cycle = 0
         seen_handles_this_cycle: set[str] = set()
+        cycle_budget_s = float(getattr(config, "X_PROJECT_SEARCH_CYCLE_BUDGET_SEC", 240.0) or 240.0)
+        cycle_deadline = time.monotonic() + max(60.0, cycle_budget_s)
+        consecutive_keyword_timeouts = 0
+        max_keyword_timeout_streak = int(
+            getattr(config, "X_PROJECT_SEARCH_MAX_CONSECUTIVE_KEYWORD_TIMEOUTS", 3) or 3
+        )
 
         for kw in keywords:
             if candidates_processed >= config.X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE:
                 break
+            remaining_budget = cycle_deadline - time.monotonic()
+            if remaining_budget <= 10.0:
+                print(f"{pfx} [XSearch] Cycle budget exhausted; stopping early.")
+                break
 
             tweets = []
-            kw_timeout_s = float(getattr(config, "X_PROJECT_SEARCH_KEYWORD_TIMEOUT_SEC", 35.0) or 35.0)
-            kw_retry_limit = max(0, int(getattr(config, "X_PROJECT_SEARCH_KEYWORD_RETRIES", 1) or 1))
+            keyword_timed_out = False
+            kw_timeout_s = min(
+                float(getattr(config, "X_PROJECT_SEARCH_KEYWORD_TIMEOUT_SEC", 35.0) or 35.0),
+                max(5.0, remaining_budget - 5.0),
+            )
+            kw_retry_limit = max(0, int(getattr(config, "X_PROJECT_SEARCH_KEYWORD_RETRIES", 0) or 0))
             for attempt in range(kw_retry_limit + 1):
                 try:
                     tweets = await asyncio.wait_for(
@@ -2424,18 +2438,34 @@ class BlockBrainBot(commands.Bot):
                     )
                     break
                 except asyncio.TimeoutError:
+                    self.twitter._mark_session_blocked("ReadTimeout")
                     if attempt < kw_retry_limit:
                         await asyncio.sleep(1.25 * (attempt + 1))
                         continue
                     print(f"{pfx} [XSearch] Timeout searching keyword '{kw}', skipping.")
+                    keyword_timed_out = True
                     tweets = []
             if not tweets:
+                if keyword_timed_out:
+                    consecutive_keyword_timeouts += 1
+                    if consecutive_keyword_timeouts >= max_keyword_timeout_streak:
+                        print(
+                            f"{pfx} [XSearch] {consecutive_keyword_timeouts} keyword timeouts in a row; "
+                            "ending cycle to avoid session/proxy burn."
+                        )
+                        break
+                else:
+                    consecutive_keyword_timeouts = 0
                 await asyncio.sleep(max(1.0, float(getattr(config, "TWIKIT_REQUEST_GAP_SEC", 1.35) or 1.0)))
                 continue
+            consecutive_keyword_timeouts = 0
 
             mention_resolves_this_keyword = 0
             for t in tweets:
                 if candidates_processed >= config.X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE:
+                    break
+                if (cycle_deadline - time.monotonic()) <= 8.0:
+                    print(f"{pfx} [XSearch] Cycle budget nearly exhausted; skipping remaining tweets.")
                     break
 
                 tid = str(getattr(t, "id", "") or getattr(t, "tweet_id", "") or "")
@@ -2472,6 +2502,8 @@ class BlockBrainBot(commands.Bot):
                     for m in re.findall(r"@([A-Za-z0-9_]{1,15})", text):
                         if candidates_processed >= config.X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE:
                             break
+                        if (cycle_deadline - time.monotonic()) <= 8.0:
+                            break
                         if mention_resolves_this_keyword >= int(getattr(config, "X_PROJECT_SEARCH_MAX_MENTION_RESOLVES_PER_KEYWORD", 4) or 4):
                             break
                         if mention_timeouts_this_cycle >= int(getattr(config, "X_PROJECT_SEARCH_MAX_MENTION_TIMEOUTS_PER_CYCLE", 12) or 12):
@@ -2494,6 +2526,7 @@ class BlockBrainBot(commands.Bot):
                                 break
                             except asyncio.TimeoutError:
                                 timed_out = True
+                                self.twitter._mark_session_blocked("ReadTimeout")
                                 if attempt < mention_retry_limit:
                                     await asyncio.sleep(1.0 * (attempt + 1))
                                     continue
@@ -2549,15 +2582,20 @@ class BlockBrainBot(commands.Bot):
         # and briefly retry in case the account just posted.
         timeline_tweets = None
         tweet_text_blob = ""
+        discovery_timeline_timeout = float(getattr(config, "DISCOVERY_TIMELINE_TIMEOUT_SEC", 18.0) or 18.0)
+        discovery_timeline_retries = int(getattr(config, "DISCOVERY_TIMELINE_RETRIES", 1) or 1)
         if is_personal:
-            for attempt in range(3):
+            for attempt in range(discovery_timeline_retries):
                 try:
                     timeline_tweets = await asyncio.wait_for(
                         self.twitter.get_user_timeline(account.id, count=8),
-                        timeout=35.0,
+                        timeout=discovery_timeline_timeout,
                     )
                 except asyncio.TimeoutError:
-                    print(f"         ⚠️ Timeout fetching timeline for @{account.screen_name} (attempt {attempt + 1}/3)")
+                    print(
+                        f"         ⚠️ Timeout fetching timeline for @{account.screen_name} "
+                        f"(attempt {attempt + 1}/{discovery_timeline_retries})"
+                    )
                     timeline_tweets = []
                 except Exception:
                     timeline_tweets = []
@@ -2569,7 +2607,7 @@ class BlockBrainBot(commands.Bot):
                 tweet_text_blob = " ".join(parts)[:2500]
                 if tweet_text_blob:
                     break
-                if attempt < 2:
+                if attempt < discovery_timeline_retries - 1:
                     await asyncio.sleep(5)
 
             if tweet_text_blob:
@@ -2602,7 +2640,13 @@ class BlockBrainBot(commands.Bot):
         if is_new and age < config.SNIPER_MAX_AGE_DAYS:
             if timeline_tweets is None:
                 try:
-                    timeline_tweets = await self.twitter.get_user_timeline(account.id, count=8)
+                    timeline_tweets = await asyncio.wait_for(
+                        self.twitter.get_user_timeline(account.id, count=8),
+                        timeout=discovery_timeline_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    print(f"         ⚠️ Timeout fetching timeline for @{account.screen_name} during new-account check")
+                    timeline_tweets = []
                 except Exception:
                     timeline_tweets = []
             if not tweet_text_blob:
@@ -2625,7 +2669,13 @@ class BlockBrainBot(commands.Bot):
             if len(bio_stripped) < strict_len:
                 if timeline_tweets is None:
                     try:
-                        timeline_tweets = await self.twitter.get_user_timeline(account.id, count=10)
+                        timeline_tweets = await asyncio.wait_for(
+                            self.twitter.get_user_timeline(account.id, count=10),
+                            timeout=discovery_timeline_timeout,
+                        )
+                    except asyncio.TimeoutError:
+                        print(f"         ⚠️ Timeout fetching timeline for @{account.screen_name} during strict Web3 gate")
+                        timeline_tweets = []
                     except Exception:
                         timeline_tweets = []
                 parts_gate = []
@@ -2680,7 +2730,19 @@ class BlockBrainBot(commands.Bot):
         ai_data = None
         if is_new and age < config.SNIPER_MAX_AGE_DAYS:
             print(f"      🤖 [AI] Analyzing @{account.screen_name}...")
-            tweets = timeline_tweets if timeline_tweets is not None else await self.twitter.get_user_timeline(account.id, count=10)
+            if timeline_tweets is not None:
+                tweets = timeline_tweets
+            else:
+                try:
+                    tweets = await asyncio.wait_for(
+                        self.twitter.get_user_timeline(account.id, count=10),
+                        timeout=discovery_timeline_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    print(f"         ⚠️ Timeout fetching AI timeline for @{account.screen_name}; analyzing profile only")
+                    tweets = []
+                except Exception:
+                    tweets = []
             ai_data = await self.ai.analyze_project(account, tweets)
             
             if ai_data:
