@@ -455,6 +455,10 @@ LOG_TWITTER_SESSION_HEALTH = _env_flag("LOG_TWITTER_SESSION_HEALTH", "0")
 LOG_TWITTER_TIMELINE_FETCH = _env_flag("LOG_TWITTER_TIMELINE_FETCH", "0")
 # Proxy/backoff chatter (522, rotated proxy, WAIT 429, soft CF403) — off by default for cleaner logs.
 LOG_TWITTER_PROXY_BACKOFF = _env_flag("LOG_TWITTER_PROXY_BACKOFF", "0")
+# Prevent the HVA brain scan, keyword search, and TweetWatcher from competing for
+# the same Twikit/Scweet session pool. This trades occasional skipped ticks for
+# fewer timeout cascades and fewer burned cookie/proxy sessions.
+TWITTER_BACKGROUND_EXCLUSIVE_MODE = _env_flag("TWITTER_BACKGROUND_EXCLUSIVE_MODE", "1")
 # Wallet tracker: periodic "scan complete" and ETH/USD refresh (very chatty on Render).
 LOG_ETH_WALLET_HEARTBEAT = _env_flag("LOG_ETH_WALLET_HEARTBEAT", "0")
 LOG_ETH_USD_REFRESH = _env_flag("LOG_ETH_USD_REFRESH", "0")
