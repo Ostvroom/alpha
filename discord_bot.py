@@ -372,6 +372,8 @@ class BlockBrainBot(commands.Bot):
         self._telegram_calls_task: Optional[asyncio.Task] = None
         self._discord_send_lock: asyncio.Lock = asyncio.Lock()
         self._discord_global_pause_until: float = 0.0
+        self._twitter_job_lock: asyncio.Lock = asyncio.Lock()
+        self._twitter_job_name: Optional[str] = None
         # Active channel caches (populated in on_ready)
         self.active_main_channels = []
         self.active_escalation_channels = []
@@ -441,6 +443,26 @@ class BlockBrainBot(commands.Bot):
 
     def _get_log_prefix(self):
         return f"[{datetime.now().strftime('%H:%M:%S')}]"
+
+    async def _try_begin_twitter_job(self, job_name: str) -> bool:
+        """Best-effort guard for long-running Twitter/X background jobs."""
+        if not getattr(config, "TWITTER_BACKGROUND_EXCLUSIVE_MODE", True):
+            return True
+        if self._twitter_job_lock.locked():
+            active = self._twitter_job_name or "another Twitter job"
+            print(f"{self._get_log_prefix()} [{job_name}] Skipped: Twitter pool busy with {active}.")
+            return False
+        await self._twitter_job_lock.acquire()
+        self._twitter_job_name = job_name
+        return True
+
+    def _end_twitter_job(self, job_name: str) -> None:
+        if not getattr(config, "TWITTER_BACKGROUND_EXCLUSIVE_MODE", True):
+            return
+        if self._twitter_job_name == job_name:
+            self._twitter_job_name = None
+        if self._twitter_job_lock.locked():
+            self._twitter_job_lock.release()
 
     def brand_logo_file(self) -> Optional[discord.File]:
         if not BRAND_LOGO_PATH or not BRAND_LOGO_FILE:
@@ -1247,6 +1269,8 @@ class BlockBrainBot(commands.Bot):
 
     @tasks.loop(seconds=config.CHECK_INTERVAL_SECONDS)
     async def monitor_twitter(self):
+        if not await self._try_begin_twitter_job("BrainScan"):
+            return
         try:
             self.twitter.check_cooldown()
             if not self.twitter._sessions:
@@ -1481,6 +1505,8 @@ class BlockBrainBot(commands.Bot):
             print(f"❌ CRITICAL Error in monitor_twitter: {e}")
             import traceback
             traceback.print_exc()
+        finally:
+            self._end_twitter_job("BrainScan")
 
     @tasks.loop(hours=4)
     async def trending_report(self):
@@ -2221,6 +2247,8 @@ class BlockBrainBot(commands.Bot):
         """Poll watched X accounts and post new tweets to Discord."""
         if not getattr(config, "TWEET_WATCHER_ENABLED", False) or not config.TWEET_WATCHER_CHANNEL_ID:
             return
+        if not await self._try_begin_twitter_job("TweetWatcher"):
+            return
         try:
             from trackers.tweet_watcher import check_watched_accounts
             posted = await check_watched_accounts(self, self.twitter)
@@ -2228,6 +2256,8 @@ class BlockBrainBot(commands.Bot):
                 print(f"[TweetWatcher] Posted {posted} new tweet(s)")
         except Exception as e:
             print(f"[TweetWatcher] Error in watcher loop: {e}")
+        finally:
+            self._end_twitter_job("TweetWatcher")
 
     @tweet_watcher_task.before_loop
     async def before_tweet_watcher(self):
@@ -2385,176 +2415,181 @@ class BlockBrainBot(commands.Bot):
         Searches recent tweets for project keywords, dedups by tweet-id in SQLite,
         and routes candidate accounts into process_discovery() using interaction_type='keyword_search'.
         """
+        if not await self._try_begin_twitter_job("XSearch"):
+            return
         pfx = self._get_log_prefix()
-        if self.twitter.is_rate_limited:
-            print(f"{pfx} [XSearch] Skipped: rate limited.")
-            return
-
         try:
-            keywords = database.get_x_project_search_keywords(config.X_PROJECT_SEARCH_KEYWORDS_LIMIT)
-        except Exception as e:
-            print(f"{pfx} [XSearch] Failed to load keywords: {e}")
-            return
+            if self.twitter.is_rate_limited:
+                print(f"{pfx} [XSearch] Skipped: rate limited.")
+                return
 
-        if not keywords:
-            print(f"{pfx} [XSearch] No keywords in DB.")
-            return
+            try:
+                keywords = database.get_x_project_search_keywords(config.X_PROJECT_SEARCH_KEYWORDS_LIMIT)
+            except Exception as e:
+                print(f"{pfx} [XSearch] Failed to load keywords: {e}")
+                return
 
-        print(f"{pfx} [XSearch] Running project-first scan over {len(keywords)} keywords...")
+            if not keywords:
+                print(f"{pfx} [XSearch] No keywords in DB.")
+                return
 
-        candidates_processed = 0
-        mention_timeouts_this_cycle = 0
-        seen_handles_this_cycle: set[str] = set()
-        cycle_budget_s = float(getattr(config, "X_PROJECT_SEARCH_CYCLE_BUDGET_SEC", 240.0) or 240.0)
-        cycle_deadline = time.monotonic() + max(60.0, cycle_budget_s)
-        consecutive_keyword_timeouts = 0
-        max_keyword_timeout_streak = int(
-            getattr(config, "X_PROJECT_SEARCH_MAX_CONSECUTIVE_KEYWORD_TIMEOUTS", 3) or 3
-        )
+            print(f"{pfx} [XSearch] Running project-first scan over {len(keywords)} keywords...")
 
-        for kw in keywords:
-            if candidates_processed >= config.X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE:
-                break
-            remaining_budget = cycle_deadline - time.monotonic()
-            if remaining_budget <= 10.0:
-                print(f"{pfx} [XSearch] Cycle budget exhausted; stopping early.")
-                break
-
-            tweets = []
-            keyword_timed_out = False
-            kw_timeout_s = min(
-                float(getattr(config, "X_PROJECT_SEARCH_KEYWORD_TIMEOUT_SEC", 35.0) or 35.0),
-                max(5.0, remaining_budget - 5.0),
-            )
-            kw_retry_limit = max(0, int(getattr(config, "X_PROJECT_SEARCH_KEYWORD_RETRIES", 0) or 0))
-            for attempt in range(kw_retry_limit + 1):
-                try:
-                    tweets = await asyncio.wait_for(
-                        self.twitter.search_recent_tweets(
-                            query=str(kw),
-                            count=config.X_PROJECT_SEARCH_MAX_TWEETS_PER_KEYWORD,
-                        ),
-                        timeout=kw_timeout_s,
-                    )
-                    break
-                except asyncio.TimeoutError:
-                    self.twitter._mark_session_blocked("ReadTimeout")
-                    if attempt < kw_retry_limit:
-                        await asyncio.sleep(1.25 * (attempt + 1))
-                        continue
-                    print(f"{pfx} [XSearch] Timeout searching keyword '{kw}', skipping.")
-                    keyword_timed_out = True
-                    tweets = []
-            if not tweets:
-                if keyword_timed_out:
-                    consecutive_keyword_timeouts += 1
-                    if consecutive_keyword_timeouts >= max_keyword_timeout_streak:
-                        print(
-                            f"{pfx} [XSearch] {consecutive_keyword_timeouts} keyword timeouts in a row; "
-                            "ending cycle to avoid session/proxy burn."
-                        )
-                        break
-                else:
-                    consecutive_keyword_timeouts = 0
-                await asyncio.sleep(max(1.0, float(getattr(config, "TWIKIT_REQUEST_GAP_SEC", 1.35) or 1.0)))
-                continue
+            candidates_processed = 0
+            mention_timeouts_this_cycle = 0
+            seen_handles_this_cycle: set[str] = set()
+            cycle_budget_s = float(getattr(config, "X_PROJECT_SEARCH_CYCLE_BUDGET_SEC", 240.0) or 240.0)
+            cycle_deadline = time.monotonic() + max(60.0, cycle_budget_s)
             consecutive_keyword_timeouts = 0
-
-            mention_resolves_this_keyword = 0
-            for t in tweets:
+            max_keyword_timeout_streak = int(
+                getattr(config, "X_PROJECT_SEARCH_MAX_CONSECUTIVE_KEYWORD_TIMEOUTS", 3) or 3
+            )
+    
+            for kw in keywords:
                 if candidates_processed >= config.X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE:
                     break
-                if (cycle_deadline - time.monotonic()) <= 8.0:
-                    print(f"{pfx} [XSearch] Cycle budget nearly exhausted; skipping remaining tweets.")
+                remaining_budget = cycle_deadline - time.monotonic()
+                if remaining_budget <= 10.0:
+                    print(f"{pfx} [XSearch] Cycle budget exhausted; stopping early.")
                     break
-
-                tid = str(getattr(t, "id", "") or getattr(t, "tweet_id", "") or "")
-                if tid:
-                    if not database.is_x_project_search_tweet_new(tid):
-                        continue
-                    database.mark_x_project_search_tweet_seen(tid)
-
-                # Candidate 1: tweet author
-                author = getattr(t, "user", None) or getattr(t, "author", None)
-                if author:
-                    h = (getattr(author, "screen_name", "") or "").lower()
-                    if h and h not in seen_handles_this_cycle:
-                        seen_handles_this_cycle.add(h)
-                        try:
-                            age = self.get_account_age_days(getattr(author, "created_at", None))
-                        except Exception:
-                            age = 9999
-                        if age <= config.NEW_ACCS_MAX_AGE_DAYS:
-                            await self.process_discovery(
-                                author,
-                                f"search:{kw}",
-                                "keyword_search",
-                                self.active_main_channels,
-                            )
-                            candidates_processed += 1
-
-                # Candidate 2: mentioned handles in tweet text
-                try:
-                    text = getattr(t, "text", None) or getattr(t, "full_text", None) or ""
-                except Exception:
-                    text = ""
-                if text:
-                    for m in re.findall(r"@([A-Za-z0-9_]{1,15})", text):
-                        if candidates_processed >= config.X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE:
-                            break
-                        if (cycle_deadline - time.monotonic()) <= 8.0:
-                            break
-                        if mention_resolves_this_keyword >= int(getattr(config, "X_PROJECT_SEARCH_MAX_MENTION_RESOLVES_PER_KEYWORD", 4) or 4):
-                            break
-                        if mention_timeouts_this_cycle >= int(getattr(config, "X_PROJECT_SEARCH_MAX_MENTION_TIMEOUTS_PER_CYCLE", 12) or 12):
-                            print(f"{pfx} [XSearch] Mention timeout budget reached for this cycle; skipping remaining mention-resolves.")
-                            break
-                        mh = (m or "").strip().lower()
-                        if not mh or mh in seen_handles_this_cycle:
+    
+                tweets = []
+                keyword_timed_out = False
+                kw_timeout_s = min(
+                    float(getattr(config, "X_PROJECT_SEARCH_KEYWORD_TIMEOUT_SEC", 35.0) or 35.0),
+                    max(5.0, remaining_budget - 5.0),
+                )
+                kw_retry_limit = max(0, int(getattr(config, "X_PROJECT_SEARCH_KEYWORD_RETRIES", 0) or 0))
+                for attempt in range(kw_retry_limit + 1):
+                    try:
+                        tweets = await asyncio.wait_for(
+                            self.twitter.search_recent_tweets(
+                                query=str(kw),
+                                count=config.X_PROJECT_SEARCH_MAX_TWEETS_PER_KEYWORD,
+                            ),
+                            timeout=kw_timeout_s,
+                        )
+                        break
+                    except asyncio.TimeoutError:
+                        self.twitter._mark_session_blocked("ReadTimeout")
+                        if attempt < kw_retry_limit:
+                            await asyncio.sleep(1.25 * (attempt + 1))
                             continue
-                        seen_handles_this_cycle.add(mh)
-                        mention_timeout_s = float(getattr(config, "MENTION_RESOLVE_TIMEOUT_SEC", 35.0) or 35.0)
-                        mention_retry_limit = max(0, int(getattr(config, "MENTION_RESOLVE_RETRIES", 1) or 1))
-                        u = None
-                        timed_out = False
-                        for attempt in range(mention_retry_limit + 1):
+                        print(f"{pfx} [XSearch] Timeout searching keyword '{kw}', skipping.")
+                        keyword_timed_out = True
+                        tweets = []
+                if not tweets:
+                    if keyword_timed_out:
+                        consecutive_keyword_timeouts += 1
+                        if consecutive_keyword_timeouts >= max_keyword_timeout_streak:
+                            print(
+                                f"{pfx} [XSearch] {consecutive_keyword_timeouts} keyword timeouts in a row; "
+                                "ending cycle to avoid session/proxy burn."
+                            )
+                            break
+                    else:
+                        consecutive_keyword_timeouts = 0
+                    await asyncio.sleep(max(1.0, float(getattr(config, "TWIKIT_REQUEST_GAP_SEC", 1.35) or 1.0)))
+                    continue
+                consecutive_keyword_timeouts = 0
+    
+                mention_resolves_this_keyword = 0
+                for t in tweets:
+                    if candidates_processed >= config.X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE:
+                        break
+                    if (cycle_deadline - time.monotonic()) <= 8.0:
+                        print(f"{pfx} [XSearch] Cycle budget nearly exhausted; skipping remaining tweets.")
+                        break
+    
+                    tid = str(getattr(t, "id", "") or getattr(t, "tweet_id", "") or "")
+                    if tid:
+                        if not database.is_x_project_search_tweet_new(tid):
+                            continue
+                        database.mark_x_project_search_tweet_seen(tid)
+    
+                    # Candidate 1: tweet author
+                    author = getattr(t, "user", None) or getattr(t, "author", None)
+                    if author:
+                        h = (getattr(author, "screen_name", "") or "").lower()
+                        if h and h not in seen_handles_this_cycle:
+                            seen_handles_this_cycle.add(h)
                             try:
-                                u = await asyncio.wait_for(
-                                    self.twitter.get_user_by_handle(mh),
-                                    timeout=mention_timeout_s,
+                                age = self.get_account_age_days(getattr(author, "created_at", None))
+                            except Exception:
+                                age = 9999
+                            if age <= config.NEW_ACCS_MAX_AGE_DAYS:
+                                await self.process_discovery(
+                                    author,
+                                    f"search:{kw}",
+                                    "keyword_search",
+                                    self.active_main_channels,
                                 )
+                                candidates_processed += 1
+    
+                    # Candidate 2: mentioned handles in tweet text
+                    try:
+                        text = getattr(t, "text", None) or getattr(t, "full_text", None) or ""
+                    except Exception:
+                        text = ""
+                    if text:
+                        for m in re.findall(r"@([A-Za-z0-9_]{1,15})", text):
+                            if candidates_processed >= config.X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE:
                                 break
-                            except asyncio.TimeoutError:
-                                timed_out = True
-                                self.twitter._mark_session_blocked("ReadTimeout")
-                                if attempt < mention_retry_limit:
-                                    await asyncio.sleep(1.0 * (attempt + 1))
-                                    continue
-                        if timed_out and not u:
-                            mention_timeouts_this_cycle += 1
-                            print(f"{pfx} [XSearch] Timeout resolving @{mh}, skipping.")
-                            continue
-                        if not u:
-                            continue
-                        mention_resolves_this_keyword += 1
-                        try:
-                            age = self.get_account_age_days(getattr(u, "created_at", None))
-                        except Exception:
-                            age = 9999
-                        if age <= config.NEW_ACCS_MAX_AGE_DAYS:
-                            await self.process_discovery(
-                                u,
-                                f"search:{kw}",
-                                "keyword_search",
-                                self.active_main_channels,
-                            )
-                            candidates_processed += 1
-
-                await asyncio.sleep(max(0.55, float(getattr(config, "TWIKIT_REQUEST_GAP_SEC", 1.35) or 0.55) * 0.4))
-
-            await asyncio.sleep(max(2.0, float(getattr(config, "TWIKIT_REQUEST_GAP_SEC", 1.35) or 2.0) * 1.4))
-
-        print(f"{pfx} [XSearch] Done. Routed {candidates_processed} candidate account(s) this cycle.")
+                            if (cycle_deadline - time.monotonic()) <= 8.0:
+                                break
+                            if mention_resolves_this_keyword >= int(getattr(config, "X_PROJECT_SEARCH_MAX_MENTION_RESOLVES_PER_KEYWORD", 4) or 4):
+                                break
+                            if mention_timeouts_this_cycle >= int(getattr(config, "X_PROJECT_SEARCH_MAX_MENTION_TIMEOUTS_PER_CYCLE", 12) or 12):
+                                print(f"{pfx} [XSearch] Mention timeout budget reached for this cycle; skipping remaining mention-resolves.")
+                                break
+                            mh = (m or "").strip().lower()
+                            if not mh or mh in seen_handles_this_cycle:
+                                continue
+                            seen_handles_this_cycle.add(mh)
+                            mention_timeout_s = float(getattr(config, "MENTION_RESOLVE_TIMEOUT_SEC", 35.0) or 35.0)
+                            mention_retry_limit = max(0, int(getattr(config, "MENTION_RESOLVE_RETRIES", 1) or 1))
+                            u = None
+                            timed_out = False
+                            for attempt in range(mention_retry_limit + 1):
+                                try:
+                                    u = await asyncio.wait_for(
+                                        self.twitter.get_user_by_handle(mh),
+                                        timeout=mention_timeout_s,
+                                    )
+                                    break
+                                except asyncio.TimeoutError:
+                                    timed_out = True
+                                    self.twitter._mark_session_blocked("ReadTimeout")
+                                    if attempt < mention_retry_limit:
+                                        await asyncio.sleep(1.0 * (attempt + 1))
+                                        continue
+                            if timed_out and not u:
+                                mention_timeouts_this_cycle += 1
+                                print(f"{pfx} [XSearch] Timeout resolving @{mh}, skipping.")
+                                continue
+                            if not u:
+                                continue
+                            mention_resolves_this_keyword += 1
+                            try:
+                                age = self.get_account_age_days(getattr(u, "created_at", None))
+                            except Exception:
+                                age = 9999
+                            if age <= config.NEW_ACCS_MAX_AGE_DAYS:
+                                await self.process_discovery(
+                                    u,
+                                    f"search:{kw}",
+                                    "keyword_search",
+                                    self.active_main_channels,
+                                )
+                                candidates_processed += 1
+    
+                    await asyncio.sleep(max(0.55, float(getattr(config, "TWIKIT_REQUEST_GAP_SEC", 1.35) or 0.55) * 0.4))
+    
+                await asyncio.sleep(max(2.0, float(getattr(config, "TWIKIT_REQUEST_GAP_SEC", 1.35) or 2.0) * 1.4))
+    
+            print(f"{pfx} [XSearch] Done. Routed {candidates_processed} candidate account(s) this cycle.")
+        finally:
+            self._end_twitter_job("XSearch")
 
     @x_project_first_search_task.before_loop
     async def before_x_project_first_search_task(self):
