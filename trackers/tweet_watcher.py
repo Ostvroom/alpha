@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import time
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Tuple
 
@@ -152,6 +153,16 @@ def _max_tweets() -> int:
     return max(1, min(10, int(os.getenv("TWEET_WATCHER_MAX_TWEETS", "3"))))
 
 
+def _verbose_logs() -> bool:
+    return (os.getenv("TWEET_WATCHER_VERBOSE", "0") or "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _log(message: str, *, verbose: bool = False) -> None:
+    if verbose and not _verbose_logs():
+        return
+    print(message)
+
+
 # Legacy module-level aliases (kept for backward compat, but prefer functions above)
 _WATCHER_INTERVAL_MIN = _interval_min()
 _WATCHER_CHANNEL_ID = _channel_id()
@@ -175,14 +186,14 @@ async def _fetch_recent_tweets(twitter_client, handle: str, count: int = 10) -> 
 
         # 1) Try the cached user_id path first (fast + cache-friendly).
         try:
-            print(f"[TweetWatcher] Resolving uid for @{handle} (cache/get_user_id)")
+            _log(f"[TweetWatcher] Resolving uid for @{handle} (cache/get_user_id)", verbose=True)
             user_id = await twitter_client.get_user_id(handle)
         except Exception as e:
             print(f"[TweetWatcher] get_user_id error for @{handle}: {e}")
 
         # 2) If that failed, fall back to the heavier get_user_by_handle path.
         if not user_id:
-            print(f"[TweetWatcher] Resolving full user: @{handle}")
+            _log(f"[TweetWatcher] Resolving full user: @{handle}", verbose=True)
             user = await twitter_client.get_user_by_handle(handle)
             if user:
                 user_id = getattr(user, "id", None) or getattr(user, "user_id", None)
@@ -196,12 +207,12 @@ async def _fetch_recent_tweets(twitter_client, handle: str, count: int = 10) -> 
             print(f"[TweetWatcher] Could not resolve user: {handle}")
             return []
 
-        print(f"[TweetWatcher] @{screen_name} resolved to uid {user_id}")
+        _log(f"[TweetWatcher] @{screen_name} resolved to uid {user_id}", verbose=True)
 
         # Fetch timeline
-        print(f"[TweetWatcher] Fetching timeline for @{handle} (count={count})")
+        _log(f"[TweetWatcher] Fetching timeline for @{handle} (count={count})", verbose=True)
         tweets = await twitter_client.get_user_timeline(user_id, count=count, handle=handle)
-        print(f"[TweetWatcher] Got {len(tweets or [])} tweets for @{handle}")
+        _log(f"[TweetWatcher] Got {len(tweets or [])} tweets for @{handle}", verbose=True)
         return tweets or []
     except Exception as e:
         print(f"[TweetWatcher] Error fetching tweets for {handle}: {e}")
@@ -274,7 +285,8 @@ async def check_watched_accounts(
     ch_id = _channel_id()
     r_id = _role_id()
     interval = _interval_min()
-    print(f"[TweetWatcher] Starting check — channel={ch_id}, role={r_id}, interval={interval}min")
+    started_at = time.monotonic()
+    _log(f"[TweetWatcher] Starting check - channel={ch_id}, role={r_id}, interval={interval}min", verbose=True)
     if not ch_id:
         print("[TweetWatcher] No channel configured — skipping")
         return 0
@@ -284,13 +296,13 @@ async def check_watched_accounts(
         if channel is None:
             try:
                 channel = await bot.fetch_channel(ch_id)
-                print(f"[TweetWatcher] Fetched channel: #{getattr(channel, 'name', ch_id)}")
+                _log(f"[TweetWatcher] Fetched channel: #{getattr(channel, 'name', ch_id)}", verbose=True)
             except Exception as e:
                 print(f"[TweetWatcher] Cannot access channel {ch_id}: {e}")
                 return 0
 
     watched = database.list_tweet_watcher_handles()
-    print(f"[TweetWatcher] Watching {len(watched)} account(s): {[w['handle'] for w in watched]}")
+    _log(f"[TweetWatcher] Watching {len(watched)} account(s): {[w['handle'] for w in watched]}", verbose=True)
     if not watched:
         return 0
 
@@ -298,11 +310,11 @@ async def check_watched_accounts(
     for entry in watched:
         handle = entry["handle"]
         last_seen = entry.get("last_seen_tweet_id") or ""
-        print(f"[TweetWatcher] Checking @{handle} — last_seen={last_seen or 'none'}")
+        _log(f"[TweetWatcher] Checking @{handle} - last_seen={last_seen or 'none'}", verbose=True)
 
         tweets = await _fetch_recent_tweets(twitter_client, handle, count=10)
         if not tweets:
-            print(f"[TweetWatcher] No tweets returned for @{handle}")
+            _log(f"[TweetWatcher] No tweets returned for @{handle}", verbose=True)
             continue
 
         # Sort by tweet ID ascending (oldest first) so we post chronologically
@@ -327,14 +339,14 @@ async def check_watched_accounts(
             tid = str(getattr(t, "id", "") or getattr(t, "tweet_id", ""))
             if not tid:
                 continue
-            print(f"[TweetWatcher] Comparing tid={tid} vs last_seen={last_seen} for @{handle} — new={tid > last_seen}")
+            _log(f"[TweetWatcher] Comparing tid={tid} vs last_seen={last_seen} for @{handle} - new={tid > last_seen}", verbose=True)
             if tid <= last_seen:
                 continue
             new_tweets.append(t)
             if len(new_tweets) >= _WATCHER_MAX_TWEETS_PER_CHECK:
                 break
 
-        print(f"[TweetWatcher] Found {len(new_tweets)} new tweet(s) for @{handle}")
+        _log(f"[TweetWatcher] Found {len(new_tweets)} new tweet(s) for @{handle}", verbose=True)
         if not new_tweets:
             continue
 
@@ -374,6 +386,12 @@ async def check_watched_accounts(
             user_id = getattr(user, "id", "") or getattr(user, "user_id", "") or ""
             database.upsert_tweet_watcher_state(handle, str(user_id), newest_tid)
 
+    elapsed = time.monotonic() - started_at
+    if not posted and elapsed > max(60.0, interval * 60.0):
+        print(
+            f"[TweetWatcher] Check took {elapsed:.1f}s with no new tweets; "
+            f"interval is {interval}min. Consider raising TWEET_WATCHER_INTERVAL_MIN."
+        )
     return posted
 
 
