@@ -459,6 +459,10 @@ LOG_TWITTER_PROXY_BACKOFF = _env_flag("LOG_TWITTER_PROXY_BACKOFF", "0")
 # the same Twikit/Scweet session pool. This trades occasional skipped ticks for
 # fewer timeout cascades and fewer burned cookie/proxy sessions.
 TWITTER_BACKGROUND_EXCLUSIVE_MODE = _env_flag("TWITTER_BACKGROUND_EXCLUSIVE_MODE", "1")
+# Give the first brain scan a chance to take the Twitter pool after deploy before
+# lower-priority jobs start competing for it.
+TWEET_WATCHER_STARTUP_DELAY_SEC = max(0.0, min(900.0, _env_float("TWEET_WATCHER_STARTUP_DELAY_SEC", 180.0)))
+X_PROJECT_SEARCH_STARTUP_DELAY_SEC = max(0.0, min(1800.0, _env_float("X_PROJECT_SEARCH_STARTUP_DELAY_SEC", 360.0)))
 # Wallet tracker: periodic "scan complete" and ETH/USD refresh (very chatty on Render).
 LOG_ETH_WALLET_HEARTBEAT = _env_flag("LOG_ETH_WALLET_HEARTBEAT", "0")
 LOG_ETH_USD_REFRESH = _env_flag("LOG_ETH_USD_REFRESH", "0")
@@ -470,18 +474,18 @@ LOG_ETH_LIVE_MINTS_RPC_NOISE = _env_flag("LOG_ETH_LIVE_MINTS_RPC_NOISE", "0")
 # X project-first discovery (keyword search → new accounts → discovery pipeline)
 ENABLE_X_PROJECT_SEARCH = _env_flag("ENABLE_X_PROJECT_SEARCH", "1")  # default ON
 X_PROJECT_SEARCH_POLL_MINUTES = max(10, min(120, _env_int("X_PROJECT_SEARCH_POLL_MINUTES", 25)))
-X_PROJECT_SEARCH_KEYWORDS_LIMIT = max(5, min(200, _env_int("X_PROJECT_SEARCH_KEYWORDS_LIMIT", 50)))
+X_PROJECT_SEARCH_KEYWORDS_LIMIT = max(5, min(200, _env_int("X_PROJECT_SEARCH_KEYWORDS_LIMIT", 12)))
 # Safety caps per cycle (prevents spam + rate-limit issues)
 X_PROJECT_SEARCH_MAX_TWEETS_PER_KEYWORD = max(3, min(30, _env_int("X_PROJECT_SEARCH_MAX_TWEETS_PER_KEYWORD", 8)))
-X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE = max(5, min(80, _env_int("X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE", 25)))
-X_PROJECT_SEARCH_KEYWORD_TIMEOUT_SEC = max(10.0, min(90.0, _env_float("X_PROJECT_SEARCH_KEYWORD_TIMEOUT_SEC", 35.0)))
+X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE = max(5, min(80, _env_int("X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE", 12)))
+X_PROJECT_SEARCH_KEYWORD_TIMEOUT_SEC = max(10.0, min(90.0, _env_float("X_PROJECT_SEARCH_KEYWORD_TIMEOUT_SEC", 20.0)))
 X_PROJECT_SEARCH_KEYWORD_RETRIES = max(0, min(4, _env_int("X_PROJECT_SEARCH_KEYWORD_RETRIES", 0)))
 # Hard wall-clock budget for one keyword-search cycle. Keeps XSearch from
 # overlapping the next cycle or starving HVA/TweetWatcher traffic when X is slow.
-X_PROJECT_SEARCH_CYCLE_BUDGET_SEC = max(60.0, min(1800.0, _env_float("X_PROJECT_SEARCH_CYCLE_BUDGET_SEC", 240.0)))
+X_PROJECT_SEARCH_CYCLE_BUDGET_SEC = max(60.0, min(1800.0, _env_float("X_PROJECT_SEARCH_CYCLE_BUDGET_SEC", 90.0)))
 # Internal client cap for Scweet/Twikit search calls. This is intentionally lower
 # than the task-level keyword timeout so fallback/cleanup still has room to run.
-X_PROJECT_SEARCH_CLIENT_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("X_PROJECT_SEARCH_CLIENT_TIMEOUT_SEC", 18.0)))
+X_PROJECT_SEARCH_CLIENT_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("X_PROJECT_SEARCH_CLIENT_TIMEOUT_SEC", 12.0)))
 X_PROJECT_SEARCH_CLIENT_RETRIES = max(0, min(3, _env_int("X_PROJECT_SEARCH_CLIENT_RETRIES", 0)))
 # If several keyword searches time out in a row, stop the cycle early instead of
 # spending the whole budget on a degraded proxy/session.

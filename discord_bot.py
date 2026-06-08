@@ -2262,6 +2262,9 @@ class BlockBrainBot(commands.Bot):
     @tweet_watcher_task.before_loop
     async def before_tweet_watcher(self):
         await self.wait_until_ready()
+        delay = float(getattr(config, "TWEET_WATCHER_STARTUP_DELAY_SEC", 180.0) or 0.0)
+        if delay > 0:
+            await asyncio.sleep(delay)
 
     # ─────────────────────────────────────────────────────────────────────────
     # CT DOMAIN WATCHER  (certificate transparency → new crypto domains)
@@ -2438,7 +2441,7 @@ class BlockBrainBot(commands.Bot):
             candidates_processed = 0
             mention_timeouts_this_cycle = 0
             seen_handles_this_cycle: set[str] = set()
-            cycle_budget_s = float(getattr(config, "X_PROJECT_SEARCH_CYCLE_BUDGET_SEC", 240.0) or 240.0)
+            cycle_budget_s = float(getattr(config, "X_PROJECT_SEARCH_CYCLE_BUDGET_SEC", 90.0) or 90.0)
             cycle_deadline = time.monotonic() + max(60.0, cycle_budget_s)
             consecutive_keyword_timeouts = 0
             max_keyword_timeout_streak = int(
@@ -2594,8 +2597,11 @@ class BlockBrainBot(commands.Bot):
     @x_project_first_search_task.before_loop
     async def before_x_project_first_search_task(self):
         await self.wait_until_ready()
-        # Stagger keyword search vs brain scan so both don't hammer Twikit the same second.
-        await asyncio.sleep(random.uniform(60.0, 150.0))
+        # Start well after the first brain scan/TweetWatcher pass so XSearch does
+        # not take the shared Twitter pool immediately after deploy.
+        delay = float(getattr(config, "X_PROJECT_SEARCH_STARTUP_DELAY_SEC", 360.0) or 0.0)
+        jitter = random.uniform(0.0, 60.0) if delay > 0 else 0.0
+        await asyncio.sleep(delay + jitter)
 
     async def process_discovery(self, account, hva_handle, interaction_type, channels):
         account = await self._hydrate_account_profile(account)
