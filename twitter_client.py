@@ -115,17 +115,21 @@ class _ScweetTweet:
         "user",
         "retweeted_tweet",
         "retweeted_status",
+        "media",
+        "extended_entities",
+        "created_at",
     )
 
     def __init__(self, data: dict):
         self._data = data
         self.id = data.get("tweet_id") or data.get("id")
         self.tweet_id = self.id
-        self.text = data.get("text") or data.get("full_text")
+        raw = data.get("raw", {})
+        self.text = data.get("text") or data.get("full_text") or _extract_graphql_tweet_text(raw)
         self.full_text = self.text
+        self.created_at = data.get("created_at")
 
         user_data = data.get("user")
-        raw = data.get("raw", {})
 
         # Extract user_id from raw GraphQL core if available
         user_id = None
@@ -148,6 +152,8 @@ class _ScweetTweet:
 
         self.retweeted_tweet = None
         self.retweeted_status = None
+        self.media = data.get("media") or _extract_graphql_media(raw)
+        self.extended_entities = {"media": self.media} if self.media else {}
 
         if isinstance(raw, dict):
             legacy = raw.get("legacy", {}) or {}
@@ -158,6 +164,38 @@ class _ScweetTweet:
 
     def __repr__(self):
         return f"<_ScweetTweet {self.id}>"
+
+
+def _extract_graphql_tweet_text(result: Any) -> str:
+    """Return full tweet text from common X GraphQL shapes, including long Notes."""
+    if not isinstance(result, dict):
+        return ""
+    note = result.get("note_tweet") or {}
+    if isinstance(note, dict):
+        note_result = (note.get("note_tweet_results") or {}).get("result") or {}
+        if isinstance(note_result, dict):
+            text = note_result.get("text")
+            if text:
+                return str(text)
+    legacy = result.get("legacy") or {}
+    if isinstance(legacy, dict):
+        return str(legacy.get("full_text") or legacy.get("text") or "")
+    return ""
+
+
+def _extract_graphql_media(result: Any) -> list:
+    if not isinstance(result, dict):
+        return []
+    legacy = result.get("legacy") or {}
+    if not isinstance(legacy, dict):
+        return []
+    ext = legacy.get("extended_entities") or {}
+    if isinstance(ext, dict) and ext.get("media"):
+        return list(ext.get("media") or [])
+    ents = legacy.get("entities") or {}
+    if isinstance(ents, dict) and ents.get("media"):
+        return list(ents.get("media") or [])
+    return []
 
 
 def _build_retweet_tweet(rt_result: dict) -> Optional[_ScweetTweet]:
@@ -188,7 +226,9 @@ def _build_retweet_tweet(rt_result: dict) -> Optional[_ScweetTweet]:
     tweet = _ScweetTweet(
         {
             "tweet_id": legacy.get("id_str"),
-            "text": legacy.get("full_text"),
+            "text": _extract_graphql_tweet_text(result),
+            "created_at": legacy.get("created_at"),
+            "media": _extract_graphql_media(result),
             "user": {
                 "screen_name": user_legacy.get("screen_name"),
                 "name": user_legacy.get("name"),
