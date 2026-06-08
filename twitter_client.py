@@ -1456,7 +1456,11 @@ class TwitterClient:
 
         try:
             await self._twikit_pace()
-            tweets = await scweet.aget_profile_tweets([lookup_handle], limit=count)
+            timeline_timeout = float(getattr(config, "TWITTER_TIMELINE_CLIENT_TIMEOUT_SEC", 18.0) or 18.0)
+            tweets = await asyncio.wait_for(
+                scweet.aget_profile_tweets([lookup_handle], limit=count),
+                timeout=timeline_timeout,
+            )
             wrapped = [_ScweetTweet(t) for t in tweets]
             self._timeline_log(f"      ✔ Fetched {len(wrapped)} timeline items")
             self._reset_soft_429(session)
@@ -1477,7 +1481,8 @@ class TwitterClient:
                 err_msg = f"Empty {type(e).__name__}"
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 self._mark_session_blocked(err_msg)
-                if _retry_depth < 2:
+                max_retries = int(getattr(config, "TWITTER_TIMELINE_CLIENT_RETRIES", 0) or 0)
+                if _retry_depth < max_retries:
                     return await self.get_user_timeline(user_id, count, handle=handle, _retry_depth=_retry_depth + 1)
                 return []
             print(f"      ERROR Timeline error (ID: {user_id}): {err_msg}")
@@ -1490,7 +1495,11 @@ class TwitterClient:
             return []
         try:
             await self._twikit_pace()
-            tweets = await session['client'].get_user_tweets(user_id, 'Tweets', count=count)
+            timeline_timeout = float(getattr(config, "TWITTER_TIMELINE_CLIENT_TIMEOUT_SEC", 18.0) or 18.0)
+            tweets = await asyncio.wait_for(
+                session['client'].get_user_tweets(user_id, 'Tweets', count=count),
+                timeout=timeline_timeout,
+            )
             self._timeline_log(f"      ✔ Fetched {len(tweets)} timeline items")
             self._reset_soft_429(session)
             return tweets
@@ -1503,7 +1512,8 @@ class TwitterClient:
                 err_msg = f"Empty {type(e).__name__}"
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 self._mark_session_blocked(err_msg)
-                if _retry_depth < 2:
+                max_retries = int(getattr(config, "TWITTER_TIMELINE_CLIENT_RETRIES", 0) or 0)
+                if _retry_depth < max_retries:
                     return await self._get_user_timeline_twikit(user_id, count, _retry_depth + 1)
                 return []
             print(f"      ERROR Timeline error (ID: {user_id}): {err_msg}")
@@ -1677,7 +1687,11 @@ class TwitterClient:
 
         try:
             await self._twikit_pace()
-            tweets = await scweet.asearch(query, limit=count)
+            search_timeout = float(getattr(config, "X_PROJECT_SEARCH_CLIENT_TIMEOUT_SEC", 18.0) or 18.0)
+            tweets = await asyncio.wait_for(
+                scweet.asearch(query, limit=count),
+                timeout=search_timeout,
+            )
             wrapped = [_ScweetTweet(t) for t in tweets]
             # Cache tweet authors so downstream process_discovery can use Scweet
             for t in wrapped:
@@ -1691,7 +1705,8 @@ class TwitterClient:
                 err_msg = f"Empty {type(e).__name__}"
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 self._mark_session_blocked(err_msg)
-                if _retry_depth < 2:
+                max_retries = int(getattr(config, "X_PROJECT_SEARCH_CLIENT_RETRIES", 0) or 0)
+                if _retry_depth < max_retries:
                     return await self.search_recent_tweets(query, count=count, _retry_depth=_retry_depth + 1)
                 return []
             return []
@@ -1704,25 +1719,39 @@ class TwitterClient:
         try:
             await self._twikit_pace()
             client = session["client"]
+            search_timeout = float(getattr(config, "X_PROJECT_SEARCH_CLIENT_TIMEOUT_SEC", 18.0) or 18.0)
             if hasattr(client, "search_tweet"):
                 try:
-                    out = list(await client.search_tweet(query, product="Latest", count=count))
+                    out = list(await asyncio.wait_for(
+                        client.search_tweet(query, product="Latest", count=count),
+                        timeout=search_timeout,
+                    ))
                 except TypeError:
-                    out = list(await client.search_tweet(query, "Latest", count=count))
+                    out = list(await asyncio.wait_for(
+                        client.search_tweet(query, "Latest", count=count),
+                        timeout=search_timeout,
+                    ))
                 self._reset_soft_429(session)
                 return out
             if hasattr(client, "search_tweets"):
                 try:
-                    out = list(await client.search_tweets(query, product="Latest", count=count))
+                    out = list(await asyncio.wait_for(
+                        client.search_tweets(query, product="Latest", count=count),
+                        timeout=search_timeout,
+                    ))
                 except TypeError:
-                    out = list(await client.search_tweets(query, "Latest", count=count))
+                    out = list(await asyncio.wait_for(
+                        client.search_tweets(query, "Latest", count=count),
+                        timeout=search_timeout,
+                    ))
                 self._reset_soft_429(session)
                 return out
         except Exception as e:
             err_msg = str(e) or f"Empty {type(e).__name__}"
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 self._mark_session_blocked(err_msg)
-                if _retry_depth < 2:
+                max_retries = int(getattr(config, "X_PROJECT_SEARCH_CLIENT_RETRIES", 0) or 0)
+                if _retry_depth < max_retries:
                     return await self._search_recent_tweets_twikit(query, count, _retry_depth + 1)
                 return []
         return []

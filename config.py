@@ -471,10 +471,27 @@ X_PROJECT_SEARCH_KEYWORDS_LIMIT = max(5, min(200, _env_int("X_PROJECT_SEARCH_KEY
 X_PROJECT_SEARCH_MAX_TWEETS_PER_KEYWORD = max(3, min(30, _env_int("X_PROJECT_SEARCH_MAX_TWEETS_PER_KEYWORD", 8)))
 X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE = max(5, min(80, _env_int("X_PROJECT_SEARCH_MAX_CANDIDATES_PER_CYCLE", 25)))
 X_PROJECT_SEARCH_KEYWORD_TIMEOUT_SEC = max(10.0, min(90.0, _env_float("X_PROJECT_SEARCH_KEYWORD_TIMEOUT_SEC", 35.0)))
-X_PROJECT_SEARCH_KEYWORD_RETRIES = max(0, min(4, _env_int("X_PROJECT_SEARCH_KEYWORD_RETRIES", 1)))
+X_PROJECT_SEARCH_KEYWORD_RETRIES = max(0, min(4, _env_int("X_PROJECT_SEARCH_KEYWORD_RETRIES", 0)))
+# Hard wall-clock budget for one keyword-search cycle. Keeps XSearch from
+# overlapping the next cycle or starving HVA/TweetWatcher traffic when X is slow.
+X_PROJECT_SEARCH_CYCLE_BUDGET_SEC = max(60.0, min(1800.0, _env_float("X_PROJECT_SEARCH_CYCLE_BUDGET_SEC", 240.0)))
+# Internal client cap for Scweet/Twikit search calls. This is intentionally lower
+# than the task-level keyword timeout so fallback/cleanup still has room to run.
+X_PROJECT_SEARCH_CLIENT_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("X_PROJECT_SEARCH_CLIENT_TIMEOUT_SEC", 18.0)))
+X_PROJECT_SEARCH_CLIENT_RETRIES = max(0, min(3, _env_int("X_PROJECT_SEARCH_CLIENT_RETRIES", 0)))
+# If several keyword searches time out in a row, stop the cycle early instead of
+# spending the whole budget on a degraded proxy/session.
+X_PROJECT_SEARCH_MAX_CONSECUTIVE_KEYWORD_TIMEOUTS = max(1, min(20, _env_int("X_PROJECT_SEARCH_MAX_CONSECUTIVE_KEYWORD_TIMEOUTS", 3)))
 # Mention resolving is the most timeout-prone step; cap it hard to keep scans healthy.
 X_PROJECT_SEARCH_MAX_MENTION_RESOLVES_PER_KEYWORD = max(1, min(30, _env_int("X_PROJECT_SEARCH_MAX_MENTION_RESOLVES_PER_KEYWORD", 4)))
 X_PROJECT_SEARCH_MAX_MENTION_TIMEOUTS_PER_CYCLE = max(2, min(100, _env_int("X_PROJECT_SEARCH_MAX_MENTION_TIMEOUTS_PER_CYCLE", 12)))
+
+# Discovery timeline fetches are useful, but they must not stall the whole finder
+# for multiple 35s attempts on one bad profile.
+DISCOVERY_TIMELINE_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("DISCOVERY_TIMELINE_TIMEOUT_SEC", 18.0)))
+DISCOVERY_TIMELINE_RETRIES = max(1, min(3, _env_int("DISCOVERY_TIMELINE_RETRIES", 1)))
+TWITTER_TIMELINE_CLIENT_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("TWITTER_TIMELINE_CLIENT_TIMEOUT_SEC", 18.0)))
+TWITTER_TIMELINE_CLIENT_RETRIES = max(0, min(3, _env_int("TWITTER_TIMELINE_CLIENT_RETRIES", 0)))
 
 # HVA scan @mention resolution — tune these to reduce timeout waste
 # Hard timeout (seconds) per mention resolve. Lower = less wasted time per bad proxy.
