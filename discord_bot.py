@@ -3936,5 +3936,63 @@ class WalletCommands(commands.Cog):
             await interaction.response.send_message(f"âŒ Error: {e}", ephemeral=True)
 
 
+    @app_commands.command(name="clean_channel", description="Admin: delete recent messages from a channel")
+    @app_commands.default_permissions(manage_messages=True)
+    @app_commands.guild_only()
+    @app_commands.describe(
+        amount="Number of recent messages to delete, from 1 to 1000.",
+        channel="Optional channel to clean. Defaults to the current channel.",
+    )
+    async def clean_channel(
+        self,
+        interaction: Interaction,
+        amount: app_commands.Range[int, 1, 1000],
+        channel: Optional[discord.TextChannel] = None,
+    ):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            if not interaction.guild:
+                await interaction.followup.send("This command can only be used in a server.", ephemeral=True)
+                return
+
+            member = interaction.user if isinstance(interaction.user, discord.Member) else None
+            if not member or not member.guild_permissions.manage_messages:
+                await interaction.followup.send("You need Manage Messages permission to use this.", ephemeral=True)
+                return
+
+            target = channel or interaction.channel
+            if not isinstance(target, discord.TextChannel):
+                await interaction.followup.send("Target must be a text channel.", ephemeral=True)
+                return
+
+            bot_member = interaction.guild.me or interaction.guild.get_member(self.bot.user.id)
+            if not bot_member:
+                await interaction.followup.send("Could not verify bot permissions.", ephemeral=True)
+                return
+            perms = target.permissions_for(bot_member)
+            if not perms.manage_messages or not perms.read_message_history:
+                await interaction.followup.send(
+                    f"I need Manage Messages and Read Message History in {target.mention}.",
+                    ephemeral=True,
+                )
+                return
+
+            deleted = await target.purge(
+                limit=int(amount),
+                reason=f"Channel cleanup requested by {interaction.user} ({interaction.user.id})",
+                bulk=True,
+            )
+            await interaction.followup.send(
+                f"Deleted {len(deleted)} message(s) from {target.mention}.",
+                ephemeral=True,
+            )
+        except discord.Forbidden:
+            await interaction.followup.send("Discord denied the cleanup. Check my channel permissions.", ephemeral=True)
+        except discord.HTTPException as e:
+            await interaction.followup.send(f"Cleanup failed: {e}", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"Error: {e}", ephemeral=True)
+
+
 if __name__ == "__main__":
     BlockBrainBot().run(config.DISCORD_TOKEN)
