@@ -1331,7 +1331,14 @@ class BlockBrainBot(commands.Bot):
             
             # Load HVAs from DB
             priority_list = database.get_hva_priority_list()
-            total_batches = (len(priority_list) + config.BATCH_SIZE - 1) // config.BATCH_SIZE
+            degraded_mode = bool(getattr(self.twitter, "is_degraded_mode", lambda: False)())
+            scan_batch_size = int(
+                getattr(config, "BRAIN_SCAN_DEGRADED_BATCH_SIZE", 2)
+                if degraded_mode
+                else getattr(config, "BATCH_SIZE", 10)
+            )
+            scan_batch_size = max(1, scan_batch_size)
+            total_batches = (len(priority_list) + scan_batch_size - 1) // scan_batch_size
             print(f"      ✔ Scanning {len(priority_list)} hunters across {total_batches} batches.")
 
             # Skip @mention resolution for any handle we already classify as an HVA (avoids wasted lookups).
@@ -1374,7 +1381,7 @@ class BlockBrainBot(commands.Bot):
                     print(f"{self._get_log_prefix()} ⛔ Rate limited. Skipping remaining batches for this cycle.")
                     break
                 
-                batch = priority_list[batch_num*config.BATCH_SIZE : (batch_num+1)*config.BATCH_SIZE]
+                batch = priority_list[batch_num*scan_batch_size : (batch_num+1)*scan_batch_size]
                 print(f"\n{self._get_log_prefix()} 📦 [BATCH {batch_num + 1}/{total_batches}] Checking {len(batch)} {BRAND_NAME} hunters...")
                 mention_timeouts_this_batch = 0
                 _max_mention_timeouts_per_batch = int(getattr(config, "MENTION_RESOLVE_MAX_TIMEOUTS_PER_BATCH", 6) or 6)
@@ -1442,12 +1449,17 @@ class BlockBrainBot(commands.Bot):
 
                         await self._yield_to_tweet_watcher(f"before @{hva_handle} timeline")
                         timeline = []
+                        timeline_count = (
+                            int(getattr(config, "BRAIN_SCAN_DEGRADED_TIMELINE_COUNT", 8) or 8)
+                            if bool(getattr(self.twitter, "is_degraded_mode", lambda: False)())
+                            else 15
+                        )
                         timeline_attempts = int(getattr(config, "BRAIN_SCAN_TIMELINE_ATTEMPTS", 1) or 1)
                         timeline_timeout_s = float(getattr(config, "BRAIN_SCAN_TIMELINE_TIMEOUT_SEC", 28.0) or 28.0)
                         for t_attempt in range(max(1, timeline_attempts)):
                             try:
                                 timeline = await asyncio.wait_for(
-                                    self.twitter.get_user_timeline(hva_id, count=15),
+                                    self.twitter.get_user_timeline(hva_id, count=timeline_count),
                                     timeout=timeline_timeout_s,
                                 )
                                 break
@@ -1493,6 +1505,12 @@ class BlockBrainBot(commands.Bot):
                             if text:
                                 if time.monotonic() - hva_started_at >= hva_budget_sec:
                                     print(f"      ⚠️ HVA budget exhausted for @{hva_handle}; skipping remaining mention resolves.")
+                                    break
+                                if (
+                                    getattr(config, "BRAIN_SCAN_DEGRADED_SKIP_MENTIONS", True)
+                                    and bool(getattr(self.twitter, "is_degraded_mode", lambda: False)())
+                                ):
+                                    print(f"      ℹ️ X degraded mode active; skipping mention resolves for @{hva_handle}.")
                                     break
                                 if (
                                     getattr(config, "BRAIN_SCAN_SKIP_MENTIONS_WHEN_TWEET_WATCHER_ACTIVE", True)
@@ -1552,6 +1570,14 @@ class BlockBrainBot(commands.Bot):
                     await asyncio.sleep(random.uniform(15, 35))
                 
                 if batch_num < total_batches - 1:
+                    degraded_extra_rest = (
+                        float(getattr(config, "BRAIN_SCAN_DEGRADED_EXTRA_REST_SEC", 60.0) or 60.0)
+                        if bool(getattr(self.twitter, "is_degraded_mode", lambda: False)())
+                        else 0.0
+                    )
+                    if degraded_extra_rest > 0:
+                        print(f"{self._get_log_prefix()} [BrainScan] X degraded; extra rest {degraded_extra_rest:.0f}s before batch break.")
+                        await asyncio.sleep(degraded_extra_rest)
                     print(f"{self._get_log_prefix()} ☕ Batch complete. Resting for {config.BATCH_BREAK_SECONDS}s...")
                     for i in range(config.BATCH_BREAK_SECONDS // 30):
                         await asyncio.sleep(30)
@@ -3880,6 +3906,34 @@ class WalletCommands(commands.Cog):
                 await interaction.followup.send(f"❌ {msg}", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+
+    @app_commands.command(name="x_session_health", description="Show X/Twikit session health and degraded mode")
+    async def x_session_health(self, interaction: Interaction):
+        try:
+            tw = getattr(self.bot, "twitter", None)
+            if not tw or not hasattr(tw, "session_health_snapshot"):
+                await interaction.response.send_message("X session health is unavailable.", ephemeral=True)
+                return
+            rows = tw.session_health_snapshot()
+            degraded = tw.degraded_mode_summary() if hasattr(tw, "degraded_mode_summary") else "unknown"
+            lines = [f"Degraded mode: `{degraded}`"]
+            now = time.time()
+            for row in rows[:10]:
+                backoff = max(0, int(float(row.get("backoff_until_ts") or 0.0) - now))
+                status = "blocked" if row.get("rate_limited") else (f"backoff {backoff}s" if backoff > 0 else "ready")
+                reason = str(row.get("last_failure_reason") or "")
+                if len(reason) > 60:
+                    reason = reason[:57] + "..."
+                lines.append(
+                    f"`{row['health_score']:>4}` {status} "
+                    f"ok={row['success_count']} fail={row['failure_count']} "
+                    f"{row['label']}"
+                    + (f" | {reason}" if reason else "")
+                )
+            await interaction.response.send_message("\n".join(lines)[:1900], ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"âŒ Error: {e}", ephemeral=True)
 
 
 if __name__ == "__main__":

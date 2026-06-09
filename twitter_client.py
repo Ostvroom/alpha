@@ -300,6 +300,9 @@ class TwitterClient:
         self._next_twikit_call_ts = 0.0
         self._global_backoff_until_ts = 0.0
         self._cf403_streak = 0
+        self._x_failure_events = []
+        self._degraded_until_ts = 0.0
+        self._degraded_logged_until_ts = 0.0
         # asyncio lock created lazily (can't use asyncio primitives before event loop starts)
         self._session_lock = None  # will be asyncio.Lock once event loop is running
         self._cf403_last_ts = 0.0
@@ -340,6 +343,125 @@ class TwitterClient:
     def _proxy_backoff_log(self, message: str) -> None:
         if self._log_proxy_backoff:
             print(message)
+
+    def _ensure_session_health_fields(self, session) -> None:
+        if session is None:
+            return
+        session.setdefault("health_score", 0)
+        session.setdefault("success_count", 0)
+        session.setdefault("failure_count", 0)
+        session.setdefault("last_success_ts", 0.0)
+        session.setdefault("last_failure_ts", 0.0)
+        session.setdefault("last_failure_reason", "")
+
+    def _record_session_success(self, session) -> None:
+        if session is None:
+            return
+        self._ensure_session_health_fields(session)
+        reward = int(getattr(config, "TWITTER_SESSION_HEALTH_SUCCESS_REWARD", 2) or 2)
+        session["success_count"] = int(session.get("success_count", 0) or 0) + 1
+        session["last_success_ts"] = time.time()
+        session["health_score"] = min(100, int(session.get("health_score", 0) or 0) + max(1, reward))
+
+    def _record_session_failure(self, session, reason: str) -> None:
+        if session is None:
+            return
+        self._ensure_session_health_fields(session)
+        penalty = int(getattr(config, "TWITTER_SESSION_HEALTH_FAILURE_PENALTY", 8) or 8)
+        session["failure_count"] = int(session.get("failure_count", 0) or 0) + 1
+        session["last_failure_ts"] = time.time()
+        session["last_failure_reason"] = str(reason or "")[:120]
+        session["health_score"] = max(-100, int(session.get("health_score", 0) or 0) - max(1, penalty))
+        self._record_x_failure(reason)
+
+    def _record_x_failure(self, reason: str) -> None:
+        if not getattr(config, "TWITTER_DEGRADED_MODE", True):
+            return
+        now = time.time()
+        window = float(getattr(config, "TWITTER_DEGRADED_FAILURE_WINDOW_SEC", 300.0) or 300.0)
+        self._x_failure_events = [
+            (ts, msg)
+            for ts, msg in list(getattr(self, "_x_failure_events", []) or [])
+            if now - float(ts) <= window
+        ]
+        self._x_failure_events.append((now, str(reason or "")[:80]))
+        threshold = int(getattr(config, "TWITTER_DEGRADED_FAILURE_THRESHOLD", 5) or 5)
+        if len(self._x_failure_events) >= max(2, threshold):
+            cooldown = float(getattr(config, "TWITTER_DEGRADED_COOLDOWN_SEC", 900.0) or 900.0)
+            self._degraded_until_ts = max(float(getattr(self, "_degraded_until_ts", 0.0) or 0.0), now + cooldown)
+            if now >= float(getattr(self, "_degraded_logged_until_ts", 0.0) or 0.0):
+                until = datetime.fromtimestamp(self._degraded_until_ts).strftime("%H:%M:%S")
+                print(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] X degraded mode ON until {until}: "
+                    f"{len(self._x_failure_events)} failures in {int(window)}s."
+                )
+                self._degraded_logged_until_ts = now + 120.0
+
+    def is_degraded_mode(self) -> bool:
+        if not getattr(config, "TWITTER_DEGRADED_MODE", True):
+            return False
+        return float(getattr(self, "_degraded_until_ts", 0.0) or 0.0) > time.time()
+
+    def degraded_mode_summary(self) -> str:
+        if not self.is_degraded_mode():
+            return "off"
+        remaining = max(0, int(float(self._degraded_until_ts) - time.time()))
+        return f"on ({remaining}s remaining)"
+
+    def session_health_snapshot(self) -> list:
+        rows = []
+        for idx, session in enumerate(list(self._sessions or [])):
+            self._ensure_session_health_fields(session)
+            rows.append(
+                {
+                    "idx": idx,
+                    "label": self._session_debug_label(idx),
+                    "health_score": int(session.get("health_score", 0) or 0),
+                    "success_count": int(session.get("success_count", 0) or 0),
+                    "failure_count": int(session.get("failure_count", 0) or 0),
+                    "rate_limited": bool(session.get("rate_limited")),
+                    "backoff_until_ts": float(session.get("backoff_until_ts", 0.0) or 0.0),
+                    "last_failure_reason": str(session.get("last_failure_reason") or ""),
+                }
+            )
+        return rows
+
+    def _eligible_session_indices(self):
+        if not self._sessions:
+            return []
+        now = time.time()
+        min_score = int(getattr(config, "TWITTER_SESSION_HEALTH_MIN_SCORE", -40) or -40)
+        eligible = []
+        fallback = []
+        for idx, session in enumerate(self._sessions):
+            self._ensure_session_health_fields(session)
+            if session.get("rate_limited"):
+                continue
+            in_cf_quarantine = float(session.get("cf_quarantine_until_ts", 0.0) or 0.0) > now
+            if in_cf_quarantine or self._is_session_backing_off(session):
+                continue
+            fallback.append(idx)
+            if int(session.get("health_score", 0) or 0) >= min_score:
+                eligible.append(idx)
+        return eligible or fallback
+
+    def _select_best_session_idx(self):
+        eligible = self._eligible_session_indices()
+        if not eligible:
+            return None
+        now = time.time()
+
+        def score(idx):
+            s = self._sessions[idx]
+            health = int(s.get("health_score", 0) or 0)
+            # Favor healthy sessions, but penalize very recent use so one good
+            # account does not carry the full scan until it fails.
+            last_success = float(s.get("last_success_ts", 0.0) or 0.0)
+            age_bonus = min(5.0, max(0.0, now - last_success) / 300.0)
+            recent_use_penalty = max(0.0, 10.0 - (max(0.0, now - last_success) / 6.0)) if last_success else 0.0
+            return (health + age_bonus - recent_use_penalty, -int(s.get("failure_count", 0) or 0), -idx)
+
+        return max(eligible, key=score)
 
     def _load_accounts(self):
         """Load accounts from accounts.json and create client sessions."""
@@ -549,16 +671,21 @@ class TwitterClient:
             self.is_rate_limited = False
             return None
         self._normalize_session_idx()
+        if getattr(config, "TWITTER_SESSION_HEALTH_SCORING", True):
+            best_idx = self._select_best_session_idx()
+            if best_idx is not None:
+                self._current_session_idx = int(best_idx)
+                return self._sessions[self._current_session_idx]
+
         has_non_limited = False
         attempts = 0
         while attempts < len(self._sessions):
             session = self._sessions[self._current_session_idx]
-            if not session['rate_limited']:
+            if not session["rate_limited"]:
                 has_non_limited = True
                 in_cf_quarantine = float(session.get("cf_quarantine_until_ts", 0.0) or 0.0) > time.time()
                 if not self._is_session_backing_off(session) and not in_cf_quarantine:
                     return session
-            # Try next session
             self._rotate_session()
             attempts += 1
 
@@ -636,9 +763,11 @@ class TwitterClient:
 
         self._next_twikit_call_ts = max(time.monotonic(), self._next_twikit_call_ts) + gap + random.uniform(0, jitter)
 
-        # Proactive session rotation: spread load across all sessions so no single
-        # session bears the full brunt of a scan batch (critical with datacenter IPs).
-        self._rotate_session()
+        # Legacy round-robin rotation. In health-scoring mode, _ensure_session()
+        # chooses the next session before the request and we keep the current
+        # index stable so failures are charged to the session that made the call.
+        if not getattr(config, "TWITTER_SESSION_HEALTH_SCORING", True):
+            self._rotate_session()
 
     @staticmethod
     def _reset_soft_429(session):
@@ -649,6 +778,10 @@ class TwitterClient:
             session["backoff_until_ts"] = 0.0
             session["proxy_fails"] = 0
             session["cf_consecutive"] = 0
+            session["success_count"] = int(session.get("success_count", 0) or 0) + 1
+            session["last_success_ts"] = time.time()
+            reward = int(getattr(config, "TWITTER_SESSION_HEALTH_SUCCESS_REWARD", 2) or 2)
+            session["health_score"] = min(100, int(session.get("health_score", 0) or 0) + max(1, reward))
 
     def _is_session_backing_off(self, session):
         until_ts = float(session.get("backoff_until_ts", 0.0) or 0.0)
@@ -761,6 +894,18 @@ class TwitterClient:
         if len(self._sessions) <= 1:
             return False
         self._normalize_session_idx()
+        if getattr(config, "TWITTER_SESSION_HEALTH_SCORING", True):
+            best_idx = self._select_best_session_idx()
+            if best_idx is None:
+                return False
+            changed = int(best_idx) != self._current_session_idx
+            self._current_session_idx = int(best_idx)
+            if changed:
+                self._rotation_log(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] Session Rotation: "
+                    f"Selected healthy {self._session_debug_label(self._current_session_idx)}"
+                )
+            return True
         original_idx = self._current_session_idx
         while True:
             self._current_session_idx = (self._current_session_idx + 1) % len(self._sessions)
@@ -782,6 +927,7 @@ class TwitterClient:
         self._normalize_session_idx()
         session = self._sessions[self._current_session_idx]
         username = session['account']['username'] if session['account'] else 'default'
+        self._record_session_failure(session, reason)
         
         # Proxy / transport errors (include ReadTimeout — else slow proxies block the whole pool)
         is_proxy_err = any(
