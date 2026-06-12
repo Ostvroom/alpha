@@ -575,6 +575,8 @@ class BlockBrainBot(commands.Bot):
         if _claim_roles_view.children:
             self.add_view(_claim_roles_view)
         register_claim_role_views(self)
+        if getattr(config, "TWEET_WATCHER_ENABLED", False) and config.TWEET_WATCHER_CHANNEL_ID:
+            self.tweet_watcher_task.start()
         self.monitor_twitter.start()
         self.trending_report.start()
         self.daily_x_trending_task.start()
@@ -601,8 +603,6 @@ class BlockBrainBot(commands.Bot):
             self.performance_recap_daily.start()
         if config.ENABLE_MINTS_OVERVIEW and config.MINTS_OVERVIEW_CHANNEL_ID:
             self.mints_overview_feed.start()
-        if getattr(config, "TWEET_WATCHER_ENABLED", False) and config.TWEET_WATCHER_CHANNEL_ID:
-            self.tweet_watcher_task.start()
 
         # Telegram calls bridge (user session; no bot)
         if getattr(config, "ENABLE_TELEGRAM_CALLS", False):
@@ -2350,7 +2350,7 @@ class BlockBrainBot(commands.Bot):
     @tweet_watcher_task.before_loop
     async def before_tweet_watcher(self):
         await self.wait_until_ready()
-        delay = float(getattr(config, "TWEET_WATCHER_STARTUP_DELAY_SEC", 180.0) or 0.0)
+        delay = float(getattr(config, "TWEET_WATCHER_STARTUP_DELAY_SEC", 5.0) or 0.0)
         if delay > 0:
             await asyncio.sleep(delay)
 

@@ -480,9 +480,8 @@ LOG_TWITTER_PROXY_BACKOFF = _env_flag("LOG_TWITTER_PROXY_BACKOFF", "0")
 # the same Twikit/Scweet session pool. This trades occasional skipped ticks for
 # fewer timeout cascades and fewer burned cookie/proxy sessions.
 TWITTER_BACKGROUND_EXCLUSIVE_MODE = _env_flag("TWITTER_BACKGROUND_EXCLUSIVE_MODE", "1")
-# Give the first brain scan a chance to take the Twitter pool after deploy before
-# lower-priority jobs start competing for it.
-TWEET_WATCHER_STARTUP_DELAY_SEC = max(0.0, min(900.0, _env_float("TWEET_WATCHER_STARTUP_DELAY_SEC", 180.0)))
+# TweetWatcher is real-time user-facing traffic, so start it quickly after deploy.
+TWEET_WATCHER_STARTUP_DELAY_SEC = max(0.0, min(900.0, _env_float("TWEET_WATCHER_STARTUP_DELAY_SEC", 5.0)))
 X_PROJECT_SEARCH_STARTUP_DELAY_SEC = max(0.0, min(1800.0, _env_float("X_PROJECT_SEARCH_STARTUP_DELAY_SEC", 360.0)))
 BRAIN_SCAN_YIELD_TO_TWEET_WATCHER = _env_flag("BRAIN_SCAN_YIELD_TO_TWEET_WATCHER", "1")
 BRAIN_SCAN_TWEET_WATCHER_YIELD_SEC = max(

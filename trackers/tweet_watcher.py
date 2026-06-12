@@ -8,7 +8,7 @@ import asyncio
 import os
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 
 import discord
@@ -141,6 +141,42 @@ def _is_newer_tweet_id(tid: str, last_seen: str) -> bool:
     return str(tid) > str(last_seen)
 
 
+def _tweet_created_at(tweet: Any) -> Optional[datetime]:
+    parsed = _parse_created_at(getattr(tweet, "created_at", None))
+    if parsed:
+        return parsed.astimezone(timezone.utc)
+
+    tid_i = _tweet_id_int(tweet)
+    if not tid_i:
+        return None
+
+    # Twitter/X snowflake timestamp: milliseconds since 2010-11-04.
+    try:
+        ms = (tid_i >> 22) + 1288834974657
+        return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc)
+    except Exception:
+        return None
+
+
+def _is_after_watch_start(tweet: Any, watched_at_raw: Any) -> bool:
+    watched_at = _parse_created_at(watched_at_raw)
+    created_at = _tweet_created_at(tweet)
+    if not watched_at or not created_at:
+        return False
+    watched_at = watched_at.astimezone(timezone.utc) - timedelta(seconds=5)
+    return created_at >= watched_at
+
+
+def _is_recent_first_check_tweet(tweet: Any, now: datetime) -> bool:
+    window_min = _first_check_recent_min()
+    if window_min <= 0:
+        return False
+    created_at = _tweet_created_at(tweet)
+    if not created_at:
+        return False
+    return created_at >= now.astimezone(timezone.utc) - timedelta(minutes=window_min)
+
+
 def _tweet_url(tweet: Any, user: Any) -> str:
     handle = getattr(user, "screen_name", "") or getattr(user, "username", "") or ""
     tid = _tweet_id(tweet)
@@ -185,6 +221,14 @@ def _fetch_count() -> int:
     except ValueError:
         raw = 20
     return max(10, min(50, raw))
+
+
+def _first_check_recent_min() -> int:
+    try:
+        raw = int(os.getenv("TWEET_WATCHER_FIRST_CHECK_RECENT_MIN", "15") or "15")
+    except ValueError:
+        raw = 15
+    return max(0, min(240, raw))
 
 
 def _handle_timeout_sec() -> float:
@@ -384,28 +428,51 @@ async def check_watched_accounts(
         except Exception:
             tweets_sorted = tweets
 
-        # First-time watch: just record the newest tweet ID, don't flood the channel
-        if not last_seen:
-            newest_tid = _tweet_id(tweets_sorted[-1]) if tweets_sorted else ""
-            if newest_tid:
-                user_obj = getattr(tweets_sorted[-1], "user", None)
-                uid = getattr(user_obj, "id", "") if user_obj else twitter_id
-                database.upsert_tweet_watcher_state(handle, str(uid), newest_tid)
-                print(f"[TweetWatcher] First check for @{handle} — baseline set to {newest_tid}")
-            continue
-
         new_tweets: List[Any] = []
-        for t in tweets_sorted:
-            tid = _tweet_id(t)
-            if not tid:
+
+        # First-time watch: baseline old history, but do alert posts created after
+        # the handle was added. This avoids swallowing a real-time test tweet when
+        # the first scheduled watcher run is delayed.
+        if not last_seen:
+            watched_at = entry.get("last_checked_at")
+            now_utc = datetime.now(timezone.utc)
+            for t in tweets_sorted:
+                if not _tweet_id(t):
+                    continue
+                if not (
+                    _is_after_watch_start(t, watched_at)
+                    or _is_recent_first_check_tweet(t, now_utc)
+                ):
+                    continue
+                new_tweets.append(t)
+                if len(new_tweets) >= _max_tweets():
+                    break
+
+            if new_tweets:
+                print(
+                    f"[TweetWatcher] First check for @{handle} found "
+                    f"{len(new_tweets)} recent/new post(s); posting."
+                )
+            else:
+                newest_tid = _tweet_id(tweets_sorted[-1]) if tweets_sorted else ""
+                if newest_tid:
+                    user_obj = getattr(tweets_sorted[-1], "user", None)
+                    uid = getattr(user_obj, "id", "") if user_obj else twitter_id
+                    database.upsert_tweet_watcher_state(handle, str(uid), newest_tid)
+                    print(f"[TweetWatcher] First check for @{handle} — baseline set to {newest_tid}")
                 continue
-            is_new = _is_newer_tweet_id(tid, last_seen)
-            _log(f"[TweetWatcher] Comparing tid={tid} vs last_seen={last_seen} for @{handle} - new={is_new}", verbose=True)
-            if not is_new:
-                continue
-            new_tweets.append(t)
-            if len(new_tweets) >= _max_tweets():
-                break
+        else:
+            for t in tweets_sorted:
+                tid = _tweet_id(t)
+                if not tid:
+                    continue
+                is_new = _is_newer_tweet_id(tid, last_seen)
+                _log(f"[TweetWatcher] Comparing tid={tid} vs last_seen={last_seen} for @{handle} - new={is_new}", verbose=True)
+                if not is_new:
+                    continue
+                new_tweets.append(t)
+                if len(new_tweets) >= _max_tweets():
+                    break
 
         _log(f"[TweetWatcher] Found {len(new_tweets)} new tweet(s) for @{handle}", verbose=True)
         if not new_tweets:
