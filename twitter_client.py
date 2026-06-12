@@ -124,7 +124,7 @@ class _ScweetTweet:
         self._data = data
         self.id = data.get("tweet_id") or data.get("id")
         self.tweet_id = self.id
-        raw = data.get("raw", {})
+        raw = _normalize_graphql_tweet_result(data.get("raw", {}))
         self.text = data.get("text") or data.get("full_text") or _extract_graphql_tweet_text(raw)
         self.full_text = self.text
         self.created_at = data.get("created_at")
@@ -166,8 +166,19 @@ class _ScweetTweet:
         return f"<_ScweetTweet {self.id}>"
 
 
+def _normalize_graphql_tweet_result(result: Any) -> Any:
+    """Unwrap common GraphQL tweet containers into the actual tweet result."""
+    if not isinstance(result, dict):
+        return result
+    tweet = result.get("tweet")
+    if isinstance(tweet, dict):
+        return tweet
+    return result
+
+
 def _extract_graphql_tweet_text(result: Any) -> str:
     """Return full tweet text from common X GraphQL shapes, including long Notes."""
+    result = _normalize_graphql_tweet_result(result)
     if not isinstance(result, dict):
         return ""
     note = result.get("note_tweet") or {}
@@ -184,6 +195,7 @@ def _extract_graphql_tweet_text(result: Any) -> str:
 
 
 def _extract_graphql_media(result: Any) -> list:
+    result = _normalize_graphql_tweet_result(result)
     if not isinstance(result, dict):
         return []
     legacy = result.get("legacy") or {}
@@ -202,7 +214,7 @@ def _build_retweet_tweet(rt_result: dict) -> Optional[_ScweetTweet]:
     """Build a fake tweet object from a retweeted_status_result GraphQL node."""
     if not isinstance(rt_result, dict):
         return None
-    result = rt_result.get("result", {})
+    result = _normalize_graphql_tweet_result(rt_result.get("result", {}))
     if not isinstance(result, dict):
         return None
     legacy = result.get("legacy", {}) or {}
@@ -1625,6 +1637,12 @@ class TwitterClient:
                 return tw or []
             if not err_msg:
                 err_msg = f"Empty {type(e).__name__}"
+            if "Timeout" in err_msg or "invalid response" in err_msg:
+                self._mark_session_blocked(err_msg)
+                self._timeline_log("      ℹ️ Timeline: Scweet stalled — falling back to twikit")
+                tw = await self._get_user_timeline_twikit(user_id, count, _retry_depth)
+                if tw:
+                    return tw
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 self._mark_session_blocked(err_msg)
                 max_retries = int(getattr(config, "TWITTER_TIMELINE_CLIENT_RETRIES", 0) or 0)

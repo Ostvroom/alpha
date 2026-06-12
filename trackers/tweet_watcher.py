@@ -75,10 +75,14 @@ def _classify_tweet(tweet: Any) -> Tuple[str, str]:
 
 def _extract_media(tweet: Any) -> List[Any]:
     media = getattr(tweet, "media", None)
+    if isinstance(media, dict) and isinstance(media.get("image_links"), list):
+        return [{"media_url_https": u, "type": "photo"} for u in media.get("image_links") or []]
     if not media:
         ext = getattr(tweet, "extended_entities", None)
         if isinstance(ext, dict):
             media = ext.get("media") or []
+    if not isinstance(media, (list, tuple)):
+        return []
     return list(media or [])
 
 
@@ -113,6 +117,28 @@ def _tweet_text(tweet: Any) -> str:
 
 def _tweet_id(tweet: Any) -> str:
     return str(getattr(tweet, "id", "") or getattr(tweet, "tweet_id", "") or "")
+
+
+def _tweet_id_int(tweet: Any) -> int:
+    try:
+        return int(_tweet_id(tweet) or 0)
+    except Exception:
+        return 0
+
+
+def _id_int(raw: Any) -> int:
+    try:
+        return int(str(raw or "").strip() or 0)
+    except Exception:
+        return 0
+
+
+def _is_newer_tweet_id(tid: str, last_seen: str) -> bool:
+    tid_i = _id_int(tid)
+    last_i = _id_int(last_seen)
+    if tid_i and last_i:
+        return tid_i > last_i
+    return str(tid) > str(last_seen)
 
 
 def _tweet_url(tweet: Any, user: Any) -> str:
@@ -153,6 +179,14 @@ def _max_tweets() -> int:
     return max(1, min(10, int(os.getenv("TWEET_WATCHER_MAX_TWEETS", "3"))))
 
 
+def _fetch_count() -> int:
+    try:
+        raw = int(os.getenv("TWEET_WATCHER_FETCH_COUNT", "20") or "20")
+    except ValueError:
+        raw = 20
+    return max(10, min(50, raw))
+
+
 def _handle_timeout_sec() -> float:
     try:
         raw = float(os.getenv("TWEET_WATCHER_HANDLE_TIMEOUT_SEC", "45") or "45")
@@ -175,7 +209,6 @@ def _log(message: str, *, verbose: bool = False) -> None:
 _WATCHER_INTERVAL_MIN = _interval_min()
 _WATCHER_CHANNEL_ID = _channel_id()
 _WATCHER_ROLE_ID = _role_id()
-_WATCHER_MAX_TWEETS_PER_CHECK = _max_tweets()
 
 
 # ── Core watcher logic ───────────────────────────────────────────────────────
@@ -331,7 +364,7 @@ async def check_watched_accounts(
 
         try:
             tweets = await asyncio.wait_for(
-                _fetch_recent_tweets(twitter_client, handle, count=10, known_user_id=twitter_id),
+                _fetch_recent_tweets(twitter_client, handle, count=_fetch_count(), known_user_id=twitter_id),
                 timeout=_handle_timeout_sec(),
             )
         except asyncio.TimeoutError:
@@ -341,36 +374,37 @@ async def check_watched_accounts(
             )
             continue
         if not tweets:
-            _log(f"[TweetWatcher] No tweets returned for @{handle}", verbose=True)
+            print(f"[TweetWatcher] No tweets returned for @{handle}; keeping last_seen unchanged.")
             continue
 
         # Sort by tweet ID ascending (oldest first) so we post chronologically
         # Twitter tweet IDs are snowflakes — higher = newer
         try:
-            tweets_sorted = sorted(tweets, key=lambda t: int(getattr(t, "id", "0") or getattr(t, "tweet_id", "0") or 0))
+            tweets_sorted = sorted(tweets, key=_tweet_id_int)
         except Exception:
             tweets_sorted = tweets
 
         # First-time watch: just record the newest tweet ID, don't flood the channel
         if not last_seen:
-            newest_tid = str(getattr(tweets_sorted[-1], "id", "") or getattr(tweets_sorted[-1], "tweet_id", "")) if tweets_sorted else ""
+            newest_tid = _tweet_id(tweets_sorted[-1]) if tweets_sorted else ""
             if newest_tid:
-                user_id = getattr(tweets_sorted[-1], "user", None)
-                uid = getattr(user_id, "id", "") if user_id else ""
+                user_obj = getattr(tweets_sorted[-1], "user", None)
+                uid = getattr(user_obj, "id", "") if user_obj else twitter_id
                 database.upsert_tweet_watcher_state(handle, str(uid), newest_tid)
                 print(f"[TweetWatcher] First check for @{handle} — baseline set to {newest_tid}")
             continue
 
         new_tweets: List[Any] = []
         for t in tweets_sorted:
-            tid = str(getattr(t, "id", "") or getattr(t, "tweet_id", ""))
+            tid = _tweet_id(t)
             if not tid:
                 continue
-            _log(f"[TweetWatcher] Comparing tid={tid} vs last_seen={last_seen} for @{handle} - new={tid > last_seen}", verbose=True)
-            if tid <= last_seen:
+            is_new = _is_newer_tweet_id(tid, last_seen)
+            _log(f"[TweetWatcher] Comparing tid={tid} vs last_seen={last_seen} for @{handle} - new={is_new}", verbose=True)
+            if not is_new:
                 continue
             new_tweets.append(t)
-            if len(new_tweets) >= _WATCHER_MAX_TWEETS_PER_CHECK:
+            if len(new_tweets) >= _max_tweets():
                 break
 
         _log(f"[TweetWatcher] Found {len(new_tweets)} new tweet(s) for @{handle}", verbose=True)
@@ -383,8 +417,9 @@ async def check_watched_accounts(
             user = new_tweets[-1]  # fallback
 
         # Post each new tweet
+        newest_posted_tid = ""
         for tweet in new_tweets:
-            tid = str(getattr(tweet, "id", "") or getattr(tweet, "tweet_id", ""))
+            tid = _tweet_id(tweet)
             try:
                 embed, tweet_url = _build_tweet_embed(tweet, user)
                 view = _build_engage_view(tweet_url)
@@ -402,16 +437,17 @@ async def check_watched_accounts(
                         await channel.send(content=content, embed=embed)
 
                 posted += 1
+                newest_posted_tid = tid
                 print(f"[TweetWatcher] Posted tweet {tid} from @{handle}")
                 await asyncio.sleep(1.5)  # gentle pace between posts
             except Exception as e:
                 print(f"[TweetWatcher] Failed to post tweet {tid}: {e}")
 
-        # Update state with the newest tweet ID we saw
-        newest_tid = str(getattr(new_tweets[-1], "id", "") or getattr(new_tweets[-1], "tweet_id", ""))
-        if newest_tid:
+        # Update state only through the newest tweet that was actually posted.
+        # If Discord send fails, keeping last_seen behind lets the next cycle retry.
+        if newest_posted_tid:
             user_id = getattr(user, "id", "") or getattr(user, "user_id", "") or ""
-            database.upsert_tweet_watcher_state(handle, str(user_id), newest_tid)
+            database.upsert_tweet_watcher_state(handle, str(user_id or twitter_id), newest_posted_tid)
 
     elapsed = time.monotonic() - started_at
     if not posted and elapsed > max(60.0, interval * 60.0):
@@ -463,7 +499,7 @@ async def post_latest_for_handle(
     twitter_id = str(state.get("twitter_id") or "").strip()
     try:
         tweets = await asyncio.wait_for(
-            _fetch_recent_tweets(twitter_client, h, count=10, known_user_id=twitter_id),
+            _fetch_recent_tweets(twitter_client, h, count=_fetch_count(), known_user_id=twitter_id),
             timeout=_handle_timeout_sec(),
         )
     except asyncio.TimeoutError:
@@ -474,7 +510,7 @@ async def post_latest_for_handle(
     try:
         latest = max(
             tweets,
-            key=lambda t: int(getattr(t, "id", "0") or getattr(t, "tweet_id", "0") or 0),
+            key=_tweet_id_int,
         )
     except Exception:
         latest = tweets[0]
@@ -496,7 +532,7 @@ async def post_latest_for_handle(
         else:
             await channel.send(content=content, embed=embed)
 
-    tid = str(getattr(latest, "id", "") or getattr(latest, "tweet_id", ""))
+    tid = _tweet_id(latest)
     if update_state and tid:
         uid = getattr(user, "id", "") or getattr(user, "user_id", "") or ""
         database.upsert_tweet_watcher_state(h, str(uid), tid)
