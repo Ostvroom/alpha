@@ -352,8 +352,13 @@ def _build_tweet_embed(tweet: Any, user: Any) -> Tuple[Embed, str]:
     if retweeted:
         embed.add_field(name="Retweeted by", value=f"[@{retweeter_handle}](https://x.com/{retweeter_handle})", inline=False)
 
-    # First image (if any)
-    for m in _extract_media(display_tweet):
+    # First image (if any). For retweets the source tweet's media often isn't
+    # carried on the nested object (Scweet flattens image_links onto the outer
+    # RT wrapper), so fall back to the wrapper's media when the source has none.
+    media_candidates = _extract_media(display_tweet)
+    if not media_candidates and retweeted:
+        media_candidates = _extract_media(tweet)
+    for m in media_candidates:
         url = _media_url(m)
         if url and any(ext in url.lower() for ext in (".jpg", ".jpeg", ".png", ".webp")):
             try:
