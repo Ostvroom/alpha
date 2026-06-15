@@ -3419,7 +3419,11 @@ class BrainCommands(commands.Cog):
             "`/daily_mints`": "Post daily-mints.com cards in the current channel (slash).",
             "**Token feed**": "Background: low / $100K+ / $1M+ channels — alerts on **new callers** or **meaningful MC/ATH moves**; banner + token icon when available.",
         }
-        embed.add_field(name="🚀 Commands", value=self.bot._get_stats_field(cmds), inline=False)
+        cmd_lines = [f"**{label}:** {value}" for label, value in cmds.items()]
+        parts = _chunk_lines_to_fields(cmd_lines, sep="\n")
+        for i, val in enumerate(parts, 1):
+            name = f"🚀 Commands (part {i})" if len(parts) > 1 else "🚀 Commands"
+            embed.add_field(name=name, value=val, inline=False)
         await self._send_brand_embed(ctx, embed)
 
     @commands.command(name="ping")
