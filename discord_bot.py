@@ -657,7 +657,28 @@ class BlockBrainBot(commands.Bot):
             except Exception:
                 _eth_ch = None
             if _eth_ch:
-                self.loop.create_task(check_eth_block(self, eth_t_id, eth_n_id))
+                _wt_task = self.loop.create_task(check_eth_block(self, eth_t_id, eth_n_id))
+
+                def _wt_done(t: asyncio.Task, _t_id=eth_t_id, _n_id=eth_n_id):
+                    try:
+                        exc = t.exception()
+                    except asyncio.CancelledError:
+                        print("    [WalletTracker] Task cancelled.")
+                        return
+                    except Exception as e:
+                        print(f"    [WalletTracker] Task exception lookup failed: {e}")
+                        return
+                    if exc:
+                        print(f"\033[91m    [WalletTracker] Task CRASHED: {exc!r} — restarting in 15s\033[0m")
+                        async def _restart():
+                            await asyncio.sleep(15)
+                            new_task = self.loop.create_task(check_eth_block(self, _t_id, _n_id))
+                            new_task.add_done_callback(_wt_done)
+                        self.loop.create_task(_restart())
+                    else:
+                        print("    [WalletTracker] Task ended without error (unexpected).")
+
+                _wt_task.add_done_callback(_wt_done)
                 print(f"    [WalletTracker] ETH NFTs → {len(wallet_ids)} channel(s) (first: #{getattr(_eth_ch, 'name', 'unknown')})")
             else:
                 print(
