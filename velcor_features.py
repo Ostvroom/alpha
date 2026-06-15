@@ -1437,8 +1437,41 @@ class VelcorFeatures(commands.Cog):
             await ctx.send("⚠️ ETHSCAN_API_KEY is missing — cannot fetch transactions.")
             return
 
+        # Resolve the real wallet-tracker channel (same as the live tracker) so this
+        # test confirms that exact channel works — not the channel you typed in.
+        import config as _config
+        import guild_license as _gl
+
+        target_ids = []
+        if getattr(_config, "DISCORD_NFT_CHANNEL_ID", 0):
+            target_ids.append(int(_config.DISCORD_NFT_CHANNEL_ID))
+        try:
+            for cid in _gl.all_wallet_nft_channel_ids():
+                if cid and int(cid) not in target_ids:
+                    target_ids.append(int(cid))
+        except Exception:
+            pass
+
+        target_channel = None
+        for cid in target_ids:
+            try:
+                ch = self.bot.get_channel(cid) or await self.bot.fetch_channel(cid)
+            except Exception:
+                ch = None
+            if ch:
+                target_channel = ch
+                break
+
+        if target_channel is None:
+            await ctx.send(
+                "⚠️ No reachable wallet-tracker channel found "
+                "(check DISCORD_NFT_CHANNEL_ID / bot permissions)."
+            )
+            return
+
         status = await ctx.send(
-            f"🧪 Testing **{len(wallets)}** wallet(s) — fetching latest NFT tx for each…"
+            f"🧪 Testing **{len(wallets)}** wallet(s) → posting to "
+            f"#{getattr(target_channel, 'name', target_channel.id)}…"
         )
 
         sent = 0
@@ -1480,7 +1513,7 @@ class VelcorFeatures(commands.Cog):
                         all_token_ids=[int(t["tokenID"]) for t in txs] if len(txs) > 1 else None,
                     )
                     await eth_tracker._safe_discord_send(
-                        ctx.channel, content=content, embed=embed, view=view, files=files
+                        target_channel, content=content, embed=embed, view=view, files=files
                     )
                     sent += 1
                 except Exception as e:
