@@ -1403,6 +1403,98 @@ class VelcorFeatures(commands.Cog):
     async def vping(self, ctx):
         await ctx.send(f"🏓 Velcor3 Pong! Latency: {round(self.bot.latency * 1000)}ms")
 
+    @commands.command(
+        name="testwallets",
+        help="Post the latest NFT tx for tracked wallets as a test. Usage: !velcor3 testwallets [count]",
+    )
+    @commands.has_permissions(administrator=True)
+    async def testwallets(self, ctx, count: int = 0):
+        """Fetch each tracked wallet's most recent NFT transfer and post the real
+        alert embed in THIS channel. Bypasses the live 'only new tx' filter so you
+        can confirm the wallet tracker formatting / sending works end-to-end."""
+        import aiohttp
+        import wallet_database
+        from trackers import eth_tracker
+
+        # Make sure wallet labels are loaded.
+        try:
+            wallet_database.init_db()
+            eth_tracker.tracked_eth_wallets.update(
+                wallet_database.get_wallets_by_chain("ETH")
+            )
+        except Exception:
+            pass
+
+        wallets = list(eth_tracker.tracked_eth_wallets.items())
+        if not wallets:
+            await ctx.send("⚠️ No tracked ETH wallets found in the database.")
+            return
+        if count and count > 0:
+            wallets = wallets[:count]
+
+        ekey = eth_tracker.ETHSCAN_API_KEY
+        if not ekey:
+            await ctx.send("⚠️ ETHSCAN_API_KEY is missing — cannot fetch transactions.")
+            return
+
+        status = await ctx.send(
+            f"🧪 Testing **{len(wallets)}** wallet(s) — fetching latest NFT tx for each…"
+        )
+
+        sent = 0
+        no_tx = 0
+        errors = 0
+        async with aiohttp.ClientSession() as session:
+            for wallet, label in wallets:
+                try:
+                    url = (
+                        f"https://api.etherscan.io/v2/api?chainid=1&module=account"
+                        f"&action=tokennfttx&address={wallet}&page=1&offset=1&sort=desc&apikey={ekey}"
+                    )
+                    d, err0 = await eth_tracker._etherscan_fetch_json(
+                        session, url, "tokennfttx", wallet
+                    )
+                    rows, err = eth_tracker._etherscan_account_tx_rows(d) if d else (None, err0)
+                    if err or not rows:
+                        no_tx += 1
+                        continue
+                    # Build the same grouped embed the live tracker sends, newest only.
+                    groups = eth_tracker._group_erc721_transactions(rows, wallet)
+                    if not groups:
+                        no_tx += 1
+                        continue
+                    group = groups[0]
+                    txs = group["txs"]
+                    first = txs[0]
+                    action_type = "Sent" if group["kind"] == "sell" else "Received"
+                    embed, content, view, files = await eth_tracker.create_eth_nft_embed(
+                        action_type=action_type,
+                        wallet=wallet,
+                        contract=first["contractAddress"],
+                        session=session,
+                        tx_hash=first["hash"],
+                        token_id=int(first["tokenID"]),
+                        from_addr=first["from"],
+                        to_addr=first["to"],
+                        bulk_quantity=len(txs) if len(txs) > 1 else None,
+                        all_token_ids=[int(t["tokenID"]) for t in txs] if len(txs) > 1 else None,
+                    )
+                    await eth_tracker._safe_discord_send(
+                        ctx.channel, content=content, embed=embed, view=view, files=files
+                    )
+                    sent += 1
+                except Exception as e:
+                    errors += 1
+                    print(f"[testwallets] {wallet[:10]}… failed: {e}")
+                await asyncio.sleep(0.5)
+
+        await status.edit(
+            content=(
+                f"✅ Test done — sent **{sent}** embed(s) · "
+                f"{no_tx} wallet(s) with no NFT tx · {errors} error(s)."
+            )
+        )
+
     @commands.command(name="test_welcome", help="Manually trigger welcome + auto-role for a user (Admin only)")
     @commands.has_permissions(administrator=True)
     async def test_welcome(self, ctx, member: discord.Member = None):
