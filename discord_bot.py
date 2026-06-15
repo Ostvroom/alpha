@@ -87,6 +87,25 @@ from velcor_features import VelcorFeatures, PingRolesView, register_claim_role_v
 
 BRAND_NAME = "Velcor3"
 
+
+def _chunk_lines_to_fields(lines, sep="\n", limit=1024):
+    """Join lines with sep into one or more strings each <= limit chars,
+    so they fit Discord's 1024-char embed-field-value cap. Never splits a line."""
+    parts = []
+    cur = ""
+    for line in lines:
+        line = str(line)
+        piece = (sep if cur else "") + line
+        if cur and len(cur) + len(piece) > limit:
+            parts.append(cur)
+            cur = line[:limit]
+        else:
+            cur += piece
+    if cur:
+        parts.append(cur)
+    return parts or ["—"]
+
+
 try:
     import feed_events
 except Exception:
@@ -3450,9 +3469,11 @@ class BrainCommands(commands.Cog):
         hvas = sorted([h[0] for h in database.get_all_hvas()])
         if not hvas: return await ctx.send("📋 Hunter list is empty.")
         embed = self.bot._create_premium_embed(f"📋 Full Monitored {BRAND_NAME} Fleet")
-        for i in range(0, len(hvas), 50):
-            chunk = hvas[i:i+50]
-            embed.add_field(name=f"Hunters {i+1}-{i+len(chunk)}", value=", ".join([f"@{h}" for h in chunk]), inline=False)
+        # Split into fields that each stay under Discord's 1024-char field limit.
+        parts = _chunk_lines_to_fields([f"@{h}" for h in hvas], sep=", ")
+        for i, val in enumerate(parts, 1):
+            name = f"Hunters (part {i})" if len(parts) > 1 else "Hunters"
+            embed.add_field(name=name, value=val, inline=False)
         await self._send_brand_embed(ctx, embed)
 
     @commands.command(name="trending")
@@ -3476,7 +3497,10 @@ class BrainCommands(commands.Cog):
             
             lines.append(f"**{i+1}. {display_name}** ([@{handle}](https://x.com/{handle}))\n   └ {metrics} {cat_label}")
             
-        embed.add_field(name="Top 10 High-Velocity Projects", value="\n".join(lines), inline=False)
+        parts = _chunk_lines_to_fields(lines, sep="\n")
+        for i, val in enumerate(parts, 1):
+            name = f"Top High-Velocity Projects (part {i})" if len(parts) > 1 else "Top 10 High-Velocity Projects"
+            embed.add_field(name=name, value=val, inline=False)
         await self._send_brand_embed(ctx, embed)
 
     @commands.command(name="hva_health", aliases=["health"])
@@ -3825,7 +3849,10 @@ class WalletCommands(commands.Cog):
             eth_list.append(line)
 
         if eth_list:
-            embed.add_field(name="🔹 Ethereum", value="\n".join(eth_list), inline=False)
+            parts = _chunk_lines_to_fields(eth_list, sep="\n")
+            for i, val in enumerate(parts, 1):
+                name = f"🔹 Ethereum (part {i})" if len(parts) > 1 else "🔹 Ethereum"
+                embed.add_field(name=name, value=val, inline=False)
         else:
             embed.description = "_No Ethereum wallets tracked._"
         
