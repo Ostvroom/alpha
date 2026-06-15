@@ -660,6 +660,40 @@ def _embed_section_spacer(embed: discord.Embed) -> None:
     embed.add_field(name="\u200b", value="\u200b", inline=False)
 
 
+# Wide (1024x8) transparent PNG, embedded so it needs no asset file in the repo.
+# Used as the embed image to force every wallet alert to the same full width
+# (Discord sizes an embed to its widest element). Written to a temp file at
+# import so it survives _fresh_discord_files() (which rebuilds files from a path).
+import base64 as _base64
+import tempfile as _tempfile
+
+_WT_SPACER_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAABAAAAAAICAYAAABnAY39AAAANklEQVR4nO3BMQEAAADCoPVP7WMMo"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAboAIAAHLcPLuAAAAAElFTkSuQmCC"
+)
+_WT_SPACER_PATH: Optional[str] = None
+try:
+    _spacer_fp = os.path.join(_tempfile.gettempdir(), "velcor_wt_spacer.png")
+    with open(_spacer_fp, "wb") as _f:
+        _f.write(_base64.b64decode(_WT_SPACER_PNG_B64))
+    _WT_SPACER_PATH = _spacer_fp
+except Exception:
+    _WT_SPACER_PATH = None
+
+
+def _apply_uniform_width(embed: discord.Embed, files: List[discord.File]) -> None:
+    """Attach a fixed-width transparent spacer as the embed image so all alerts
+    render the same width regardless of how much text/price content they have."""
+    try:
+        if not _WT_SPACER_PATH or not os.path.exists(_WT_SPACER_PATH):
+            return
+        fname = "wt_spacer.png"
+        files.append(discord.File(_WT_SPACER_PATH, filename=fname))
+        embed.set_image(url=f"attachment://{fname}")
+    except Exception:
+        pass
+
+
 async def fetch_wallet_profile(wallet: str, session: aiohttp.ClientSession) -> dict:
     """Fetch wallet account profile metadata from OpenSea for richer embeds."""
     wallet_lower = wallet.lower()
@@ -1889,6 +1923,7 @@ async def create_eth_nft_embed(
             token_rarity_score=float(rarity_data.get("score", 0)) if rarity_data and rarity_data.get("score") else None,
         )
         embed = await build_premium_nft_wallet_embed_async(alert_ctx, session)
+        _apply_uniform_width(embed, files)
         return embed, None, None, files
 
     opensea_asset_url = f"https://opensea.io/assets/ethereum/{contract}/{token_id}"
@@ -1925,6 +1960,7 @@ async def create_eth_nft_embed(
     )
     embed.set_thumbnail(url=thumb_url)
     embed.set_footer(text=f"{_BRAND_NAME} · Wallet Tracker")
+    _apply_uniform_width(embed, files)
     return embed, None, None, files
 
 async def create_eth_embed(action: str, wallet: str, contract: str, amount: float, session: aiohttp.ClientSession, tx_hash: str, is_nft: bool = False, token_id: int = None) -> Tuple[Embed, List[discord.File]]:
