@@ -489,7 +489,7 @@ BRAIN_SCAN_TWEET_WATCHER_YIELD_SEC = max(
     min(180.0, _env_float("BRAIN_SCAN_TWEET_WATCHER_YIELD_SEC", 75.0)),
 )
 # Wallet tracker: periodic "scan complete" and ETH/USD refresh (very chatty on Render).
-LOG_ETH_WALLET_HEARTBEAT = _env_flag("LOG_ETH_WALLET_HEARTBEAT", "0")
+LOG_ETH_WALLET_HEARTBEAT = _env_flag("LOG_ETH_WALLET_HEARTBEAT", "1")
 LOG_ETH_USD_REFRESH = _env_flag("LOG_ETH_USD_REFRESH", "0")
 # Per-tx [PRICE] lines next to NFT alerts (set 0 to hide).
 LOG_ETH_TX_PRICE_LINES = _env_flag("LOG_ETH_TX_PRICE_LINES", "1")
