@@ -648,15 +648,24 @@ class BlockBrainBot(commands.Bot):
                     wallet_ids.append(int(cid))
         except Exception:
             pass
-        eth_n_id = ",".join(str(x) for x in wallet_ids if x)
-        if eth_n_id:
+        # Validate EVERY candidate channel and keep only the ones the bot can
+        # actually reach. A single dead channel must NOT take the whole tracker
+        # down (previously only the first id was checked).
+        reachable_ids: List[int] = []
+        _first_ch = None
+        for cid in wallet_ids:
             try:
-                # Just validate the first target exists; the tracker handles splitting/each channel send.
-                first_id = int(str(eth_n_id).split(",")[0])
-                _eth_ch = self.get_channel(first_id) or await self.fetch_channel(first_id)
-            except Exception:
-                _eth_ch = None
-            if _eth_ch:
+                ch = self.get_channel(cid) or await self.fetch_channel(cid)
+            except Exception as e:
+                print(f"    [WalletTracker] Skipping channel {cid} (no access): {e}")
+                ch = None
+            if ch:
+                reachable_ids.append(cid)
+                if _first_ch is None:
+                    _first_ch = ch
+        eth_n_id = ",".join(str(x) for x in reachable_ids)
+        if eth_n_id:
+            if True:
                 _wt_task = self.loop.create_task(check_eth_block(self, eth_t_id, eth_n_id))
 
                 def _wt_done(t: asyncio.Task, _t_id=eth_t_id, _n_id=eth_n_id):
@@ -679,12 +688,12 @@ class BlockBrainBot(commands.Bot):
                         print("    [WalletTracker] Task ended without error (unexpected).")
 
                 _wt_task.add_done_callback(_wt_done)
-                print(f"    [WalletTracker] ETH NFTs → {len(wallet_ids)} channel(s) (first: #{getattr(_eth_ch, 'name', 'unknown')})")
-            else:
-                print(
-                    f"    [WalletTracker] ETH NFT channel {eth_n_id} not found / no access — "
-                    f"wallet tracker skipped (check DISCORD_NFT_CHANNEL_ID and bot permissions: View Channel, Send Messages, Embed Links)."
-                )
+                print(f"    [WalletTracker] ETH NFTs → {len(reachable_ids)} channel(s) (first: #{getattr(_first_ch, 'name', 'unknown')})")
+        else:
+            print(
+                f"    [WalletTracker] No reachable ETH NFT channel(s) — wallet tracker skipped "
+                f"(check DISCORD_NFT_CHANNEL_ID and bot permissions: View Channel, Send Messages, Embed Links)."
+            )
 
         # Live + hot mints (nftscan-style WebSocket feed or legacy getLogs poller)
         if getattr(config, "ENABLE_NFTSCAN_LIVE_MINTS", True):
