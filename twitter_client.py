@@ -276,7 +276,7 @@ def _scweet_error_to_str(exc: Exception) -> str:
 
 
 class TwitterClient:
-    def __init__(self):
+    def __init__(self, cookie_allowlist=None, cookie_blocklist=None, proxy_slice=None, label="brain"):
         from app_paths import BASE_DIR, DATA_DIR, ensure_dirs
 
         ensure_dirs()
@@ -288,9 +288,24 @@ class TwitterClient:
         self._id_handle_cache: dict[str, str] = {}   # reverse lookup
         self.is_rate_limited = False
         self.cooldown_ends = None
-        
-        # Proxy rotation
-        self._all_proxies = config.get_proxies()
+
+        # Pool partitioning: restrict which cookie files / proxies this client owns
+        # so two clients (e.g. Brain vs TweetWatcher) never share sessions or quota.
+        self.label = str(label or "brain")
+        self._cookie_allowlist = {str(c).strip() for c in (cookie_allowlist or []) if str(c).strip()}
+        self._cookie_blocklist = {str(c).strip() for c in (cookie_blocklist or []) if str(c).strip()}
+
+        # Proxy rotation (optionally sliced so two clients use disjoint proxy ranges)
+        all_proxies = config.get_proxies()
+        if proxy_slice and len(all_proxies) > 1:
+            try:
+                start, end = int(proxy_slice[0]), int(proxy_slice[1])
+                sliced = all_proxies[start:end]
+                if sliced:
+                    all_proxies = sliced
+            except Exception:
+                pass
+        self._all_proxies = all_proxies
         self._proxy_idx = 0
         
         # User-Agents for stealth
@@ -487,6 +502,14 @@ class TwitterClient:
         def get_random_ua():
             return random.choice(self._user_agents)
 
+        def _cookie_allowed(name: str) -> bool:
+            base = os.path.basename(str(name or "").strip())
+            if self._cookie_allowlist and base not in self._cookie_allowlist:
+                return False
+            if base in self._cookie_blocklist:
+                return False
+            return True
+
         # Primary cookies: DATA_DIR, project root, Render "Secret Files" (/etc/secrets/<name>).
         def _pick_cookie_file(name: str):
             for base in (self._cookies_dir, self._base_dir, "/etc/secrets"):
@@ -500,6 +523,8 @@ class TwitterClient:
             main_cookie_path = ""
         if not main_cookie_path:
             main_cookie_path = _pick_cookie_file("cookies.json")
+        if main_cookie_path and not _cookie_allowed(main_cookie_path):
+            main_cookie_path = None
         if main_cookie_path:
             current_proxy = get_next_proxy()
             client = Client('en-US', proxy=current_proxy)
@@ -532,6 +557,8 @@ class TwitterClient:
         # - cookies_backup2.json, cookies_backup3.json, ... cookies_backup20.json
         backup_names = ["cookies_backup.json"] + [f"cookies_backup{i}.json" for i in range(2, 21)]
         for backup_name in backup_names:
+            if not _cookie_allowed(backup_name):
+                continue
             backup_cookie_path = _pick_cookie_file(backup_name)
             if not backup_cookie_path:
                 continue
@@ -567,6 +594,8 @@ class TwitterClient:
                 
                 for acc in accounts:
                     cookie_file = os.path.join(self._cookies_dir, f"cookies_{acc['username']}.json")
+                    if not _cookie_allowed(cookie_file):
+                        continue
                     # Add session even if cookies don't exist yet - _login will handle it
                     current_proxy = get_next_proxy()
                     client = Client('en-US', proxy=current_proxy)

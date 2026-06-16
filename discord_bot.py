@@ -376,7 +376,29 @@ class BlockBrainBot(commands.Bot):
         intents.members = True
         intents.guild_reactions = True
         super().__init__(command_prefix="!velcor3 ", intents=intents, help_command=None)
-        self.twitter = TwitterClient()
+        if getattr(config, "TWEET_WATCHER_SEPARATE_POOL", True) and getattr(config, "TWEET_WATCHER_COOKIES", None):
+            _watcher_cookies = config.TWEET_WATCHER_COOKIES
+            _split = int(getattr(config, "TWEET_WATCHER_PROXY_SPLIT", 8))
+            # Brain: all sessions EXCEPT the watcher's, proxies [0:split]
+            self.twitter = TwitterClient(
+                cookie_blocklist=_watcher_cookies, proxy_slice=(0, _split), label="brain"
+            )
+            # Watcher: ONLY its own cookies, proxies [split:]
+            self.twitter_watcher = TwitterClient(
+                cookie_allowlist=_watcher_cookies, proxy_slice=(_split, 9999), label="watcher"
+            )
+            # Safety: if the watcher's cookies didn't load (e.g. accounts.json missing),
+            # fall back to the shared pool so the watcher never goes silently dark.
+            if not getattr(self.twitter_watcher, "_sessions", None):
+                print("⚠️ [Pool] Watcher cookies loaded 0 sessions — falling back to shared Brain pool.")
+                self.twitter_watcher = self.twitter
+            elif not getattr(self.twitter, "_sessions", None):
+                print("⚠️ [Pool] Brain cookies loaded 0 sessions — disabling separation, using one shared pool.")
+                self.twitter = TwitterClient()
+                self.twitter_watcher = self.twitter
+        else:
+            self.twitter = TwitterClient()
+            self.twitter_watcher = self.twitter
         self.ai = AIAnalyzer()
         self.current_scan_discoveries = 0
         self.total_processed_today = 0
@@ -2384,17 +2406,20 @@ class BlockBrainBot(commands.Bot):
         """Poll watched X accounts and post new tweets to Discord."""
         if not getattr(config, "TWEET_WATCHER_ENABLED", False) or not config.TWEET_WATCHER_CHANNEL_ID:
             return
-        if not await self._try_begin_twitter_job("TweetWatcher"):
+        # Separate pool: watcher runs on its own client, no need to gate against the Brain.
+        _shared_pool = self.twitter_watcher is self.twitter
+        if _shared_pool and not await self._try_begin_twitter_job("TweetWatcher"):
             return
         try:
             from trackers.tweet_watcher import check_watched_accounts
-            posted = await check_watched_accounts(self, self.twitter)
+            posted = await check_watched_accounts(self, self.twitter_watcher)
             if posted:
                 print(f"[TweetWatcher] Posted {posted} new tweet(s)")
         except Exception as e:
             print(f"[TweetWatcher] Error in watcher loop: {e}")
         finally:
-            self._end_twitter_job("TweetWatcher")
+            if _shared_pool:
+                self._end_twitter_job("TweetWatcher")
 
     @tweet_watcher_task.before_loop
     async def before_tweet_watcher(self):

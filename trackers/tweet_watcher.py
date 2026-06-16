@@ -243,6 +243,52 @@ def _verbose_logs() -> bool:
     return (os.getenv("TWEET_WATCHER_VERBOSE", "0") or "0").strip().lower() in ("1", "true", "yes", "on")
 
 
+# ── Dead-handle quarantine ───────────────────────────────────────────────────
+# A handle that can't be resolved (suspended/renamed/blocked) burns the full
+# timeout every cycle. After N consecutive failures, skip it for a cooldown.
+_handle_fail_state: Dict[str, Dict[str, float]] = {}
+
+
+def _fail_threshold() -> int:
+    try:
+        return max(1, int(os.getenv("TWEET_WATCHER_FAIL_QUARANTINE_THRESHOLD", "3") or "3"))
+    except ValueError:
+        return 3
+
+
+def _quarantine_sec() -> float:
+    try:
+        return max(60.0, float(os.getenv("TWEET_WATCHER_QUARANTINE_SEC", "1800") or "1800"))
+    except ValueError:
+        return 1800.0
+
+
+def _is_quarantined(handle: str) -> bool:
+    st = _handle_fail_state.get(handle.lower())
+    return bool(st and st.get("until", 0.0) > time.time())
+
+
+def _quarantine_remaining(handle: str) -> int:
+    st = _handle_fail_state.get(handle.lower())
+    return max(0, int(st.get("until", 0.0) - time.time())) if st else 0
+
+
+def _record_handle_failure(handle: str) -> None:
+    key = handle.lower()
+    st = _handle_fail_state.setdefault(key, {"fails": 0, "until": 0.0})
+    st["fails"] = float(st.get("fails", 0)) + 1
+    if st["fails"] >= _fail_threshold():
+        st["until"] = time.time() + _quarantine_sec()
+        print(
+            f"[TweetWatcher] ⏸️ @{handle} quarantined for {int(_quarantine_sec())}s "
+            f"after {int(st['fails'])} consecutive failures."
+        )
+
+
+def _record_handle_success(handle: str) -> None:
+    _handle_fail_state.pop(handle.lower(), None)
+
+
 def _log(message: str, *, verbose: bool = False) -> None:
     if verbose and not _verbose_logs():
         return
@@ -411,20 +457,32 @@ async def check_watched_accounts(
         last_seen = entry.get("last_seen_tweet_id") or ""
         _log(f"[TweetWatcher] Checking @{handle} - last_seen={last_seen or 'none'}", verbose=True)
 
+        if _is_quarantined(handle):
+            _log(
+                f"[TweetWatcher] ⏸️ Skipping @{handle} (quarantined, "
+                f"{_quarantine_remaining(handle)}s remaining).",
+                verbose=True,
+            )
+            continue
+
         try:
             tweets = await asyncio.wait_for(
                 _fetch_recent_tweets(twitter_client, handle, count=_fetch_count(), known_user_id=twitter_id),
                 timeout=_handle_timeout_sec(),
             )
         except asyncio.TimeoutError:
+            _record_handle_failure(handle)
             print(
                 f"[TweetWatcher] Timeout fetching @{handle} after "
                 f"{_handle_timeout_sec():.0f}s; skipping this account for now."
             )
             continue
         if not tweets:
+            _record_handle_failure(handle)
             print(f"[TweetWatcher] No tweets returned for @{handle}; keeping last_seen unchanged.")
             continue
+
+        _record_handle_success(handle)
 
         # Sort by tweet ID ascending (oldest first) so we post chronologically
         # Twitter tweet IDs are snowflakes — higher = newer

@@ -480,6 +480,20 @@ LOG_TWITTER_PROXY_BACKOFF = _env_flag("LOG_TWITTER_PROXY_BACKOFF", "0")
 # the same Twikit/Scweet session pool. This trades occasional skipped ticks for
 # fewer timeout cascades and fewer burned cookie/proxy sessions.
 TWITTER_BACKGROUND_EXCLUSIVE_MODE = _env_flag("TWITTER_BACKGROUND_EXCLUSIVE_MODE", "1")
+
+# ── Separate X session pools: TweetWatcher gets its own cookies/proxies so it can
+# never stall the Brain scan (and vice-versa). Comma-separated cookie filenames. ──
+TWEET_WATCHER_SEPARATE_POOL = _env_flag("TWEET_WATCHER_SEPARATE_POOL", "1")
+TWEET_WATCHER_COOKIES = [
+    c.strip()
+    for c in (
+        os.getenv("TWEET_WATCHER_COOKIES", "cookies_tanriseverarya.json,cookies_gmzozocak.json")
+        or ""
+    ).split(",")
+    if c.strip()
+]
+# Proxy ranges: Brain takes [0:split], Watcher takes [split:]. With 10 proxies, split=8.
+TWEET_WATCHER_PROXY_SPLIT = max(1, _env_int("TWEET_WATCHER_PROXY_SPLIT", 8))
 # TweetWatcher is real-time user-facing traffic, so start it quickly after deploy.
 TWEET_WATCHER_STARTUP_DELAY_SEC = max(0.0, min(900.0, _env_float("TWEET_WATCHER_STARTUP_DELAY_SEC", 5.0)))
 X_PROJECT_SEARCH_STARTUP_DELAY_SEC = max(0.0, min(1800.0, _env_float("X_PROJECT_SEARCH_STARTUP_DELAY_SEC", 360.0)))
@@ -524,14 +538,14 @@ X_PROJECT_SEARCH_MAX_MENTION_TIMEOUTS_PER_CYCLE = max(2, min(100, _env_int("X_PR
 DISCOVERY_TIMELINE_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("DISCOVERY_TIMELINE_TIMEOUT_SEC", 18.0)))
 DISCOVERY_TIMELINE_RETRIES = max(1, min(3, _env_int("DISCOVERY_TIMELINE_RETRIES", 1)))
 TWITTER_TIMELINE_CLIENT_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("TWITTER_TIMELINE_CLIENT_TIMEOUT_SEC", 18.0)))
-TWITTER_TIMELINE_CLIENT_RETRIES = max(0, min(3, _env_int("TWITTER_TIMELINE_CLIENT_RETRIES", 0)))
+TWITTER_TIMELINE_CLIENT_RETRIES = max(0, min(3, _env_int("TWITTER_TIMELINE_CLIENT_RETRIES", 1)))
 
 # BrainScan task-level budgets. Keep these lower than the underlying Twikit/Scweet
 # cooldown windows so one bad profile/proxy cannot stall the whole scan.
 BRAIN_SCAN_ID_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("BRAIN_SCAN_ID_TIMEOUT_SEC", 20.0)))
 BRAIN_SCAN_FOLLOWING_TIMEOUT_SEC = max(10.0, min(90.0, _env_float("BRAIN_SCAN_FOLLOWING_TIMEOUT_SEC", 35.0)))
 BRAIN_SCAN_TIMELINE_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("BRAIN_SCAN_TIMELINE_TIMEOUT_SEC", 28.0)))
-BRAIN_SCAN_TIMELINE_ATTEMPTS = max(1, min(3, _env_int("BRAIN_SCAN_TIMELINE_ATTEMPTS", 1)))
+BRAIN_SCAN_TIMELINE_ATTEMPTS = max(1, min(3, _env_int("BRAIN_SCAN_TIMELINE_ATTEMPTS", 2)))
 BRAIN_SCAN_HVA_BUDGET_SEC = max(45.0, min(300.0, _env_float("BRAIN_SCAN_HVA_BUDGET_SEC", 120.0)))
 BRAIN_SCAN_SKIP_MENTIONS_WHEN_TWEET_WATCHER_ACTIVE = _env_flag("BRAIN_SCAN_SKIP_MENTIONS_WHEN_TWEET_WATCHER_ACTIVE", "1")
 BRAIN_SCAN_DEGRADED_BATCH_SIZE = max(1, min(10, _env_int("BRAIN_SCAN_DEGRADED_BATCH_SIZE", 2)))
