@@ -586,14 +586,26 @@ class TwitterClient:
             })
             self._health_log(f"   + Backup session: {backup_name} (Proxy: {self._redact_proxy(current_proxy)})")
         
-        # Then add accounts from accounts.json as backup sessions
-        if os.path.exists(self._accounts_path):
+        # Then add accounts from accounts.json as backup sessions.
+        # accounts.json may live in DATA_DIR, project root, or Render /etc/secrets —
+        # search all three (same as cookie files) so prod secret-file uploads load.
+        accounts_path = self._accounts_path
+        if not os.path.isfile(accounts_path):
+            for base in (self._cookies_dir, self._base_dir, "/etc/secrets"):
+                cand = os.path.join(base, "accounts.json")
+                if os.path.isfile(cand):
+                    accounts_path = cand
+                    break
+        if os.path.isfile(accounts_path):
             try:
-                with open(self._accounts_path, 'r') as f:
+                with open(accounts_path, 'r') as f:
                     accounts = json.load(f)
-                
+
                 for acc in accounts:
-                    cookie_file = os.path.join(self._cookies_dir, f"cookies_{acc['username']}.json")
+                    # Resolve the account's cookie file wherever it lives (DATA_DIR,
+                    # root, or /etc/secrets); fall back to DATA_DIR path for new logins.
+                    cookie_name = f"cookies_{acc['username']}.json"
+                    cookie_file = _pick_cookie_file(cookie_name) or os.path.join(self._cookies_dir, cookie_name)
                     if not _cookie_allowed(cookie_file):
                         continue
                     # Add session even if cookies don't exist yet - _login will handle it
@@ -638,6 +650,13 @@ class TwitterClient:
             self._health_log(
                 f"Total sessions available: {len(self._sessions)} | Proxies loaded: {len(self._all_proxies)}"
             )
+        # Always-on summary so pool separation is visible in production logs.
+        _files = [os.path.basename(s.get('cookie_path') or '?') for s in self._sessions]
+        print(
+            f"[Pool:{self.label}] {len(self._sessions)} session(s), "
+            f"{len(self._all_proxies)} proxies: {_files}",
+            flush=True,
+        )
         self._normalize_session_idx()
 
     # ── Scweet helpers ───────────────────────────────────────────────────────
