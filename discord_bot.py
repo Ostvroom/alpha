@@ -2789,7 +2789,9 @@ class BlockBrainBot(commands.Bot):
             for attempt in range(discovery_timeline_retries):
                 try:
                     timeline_tweets = await asyncio.wait_for(
-                        self.twitter.get_user_timeline(account.id, count=8),
+                        self.twitter.get_user_timeline(
+                            account.id, count=8, handle=getattr(account, "screen_name", None)
+                        ),
                         timeout=discovery_timeline_timeout,
                     )
                 except asyncio.TimeoutError:
@@ -2842,7 +2844,9 @@ class BlockBrainBot(commands.Bot):
             if timeline_tweets is None:
                 try:
                     timeline_tweets = await asyncio.wait_for(
-                        self.twitter.get_user_timeline(account.id, count=8),
+                        self.twitter.get_user_timeline(
+                            account.id, count=8, handle=getattr(account, "screen_name", None)
+                        ),
                         timeout=discovery_timeline_timeout,
                     )
                 except asyncio.TimeoutError:
@@ -2871,7 +2875,9 @@ class BlockBrainBot(commands.Bot):
                 if timeline_tweets is None:
                     try:
                         timeline_tweets = await asyncio.wait_for(
-                            self.twitter.get_user_timeline(account.id, count=10),
+                            self.twitter.get_user_timeline(
+                                account.id, count=10, handle=getattr(account, "screen_name", None)
+                            ),
                             timeout=discovery_timeline_timeout,
                         )
                     except asyncio.TimeoutError:
@@ -2936,7 +2942,9 @@ class BlockBrainBot(commands.Bot):
             else:
                 try:
                     tweets = await asyncio.wait_for(
-                        self.twitter.get_user_timeline(account.id, count=10),
+                        self.twitter.get_user_timeline(
+                            account.id, count=10, handle=getattr(account, "screen_name", None)
+                        ),
                         timeout=discovery_timeline_timeout,
                     )
                 except asyncio.TimeoutError:

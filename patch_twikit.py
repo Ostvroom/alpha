@@ -202,6 +202,20 @@ def _apply_transport_monkey_patch():
 
     _original_async_client = httpx.AsyncClient
 
+    # libcurl-level timeouts so a dead/slow proxy fails fast and FREES the
+    # connection, instead of hanging the curl handle until the outer
+    # asyncio.wait_for aborts the await (which leaves the proxy tied up).
+    # httpx-level timeouts are only partially honored by curl_cffi, so these
+    # must be set as CurlOpt. Env-tunable.
+    def _int_env(name, default):
+        try:
+            return max(1000, int(os.getenv(name, str(default)) or default))
+        except Exception:
+            return default
+
+    _connect_ms = _int_env("TWIKIT_CONNECT_TIMEOUT_MS", 10000)   # 10s to connect
+    _total_ms = _int_env("TWIKIT_TOTAL_TIMEOUT_MS", 30000)       # 30s hard cap
+
     class _TwikitAsyncClient(_original_async_client):
         def __init__(self, *args, **kwargs):
             proxy = kwargs.pop("proxy", None)
@@ -213,6 +227,10 @@ def _apply_transport_monkey_patch():
                     impersonate="chrome",
                     default_headers=True,
                     proxy=proxy,
+                    curl_options={
+                        CurlOpt.CONNECTTIMEOUT_MS: _connect_ms,
+                        CurlOpt.TIMEOUT_MS: _total_ms,
+                    },
                 )
                 super().__init__(transport=transport, *args, **kwargs)
             except Exception:
