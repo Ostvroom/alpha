@@ -276,7 +276,7 @@ def _scweet_error_to_str(exc: Exception) -> str:
 
 
 class TwitterClient:
-    def __init__(self, cookie_allowlist=None, cookie_blocklist=None, proxy_slice=None, label="brain"):
+    def __init__(self, cookie_allowlist=None, cookie_blocklist=None, proxy_slice=None, session_slice=None, label="brain"):
         from app_paths import BASE_DIR, DATA_DIR, ensure_dirs
 
         ensure_dirs()
@@ -294,6 +294,10 @@ class TwitterClient:
         self.label = str(label or "brain")
         self._cookie_allowlist = {str(c).strip() for c in (cookie_allowlist or []) if str(c).strip()}
         self._cookie_blocklist = {str(c).strip() for c in (cookie_blocklist or []) if str(c).strip()}
+        # Filename-agnostic partition: keep only sessions[start:end] after loading
+        # all cookies in deterministic order. Both clients load the same set, then
+        # each trims to its slice — so the watcher reserve works on any deployment.
+        self._session_slice = session_slice
 
         # Proxy rotation (optionally sliced so two clients use disjoint proxy ranges)
         all_proxies = config.get_proxies()
@@ -650,6 +654,13 @@ class TwitterClient:
             self._health_log(
                 f"Total sessions available: {len(self._sessions)} | Proxies loaded: {len(self._all_proxies)}"
             )
+        # Apply count-based partition (filename-agnostic). Only trim if it leaves
+        # at least one session; otherwise keep all (caller falls back to shared pool).
+        if self._session_slice and self._sessions:
+            start, end = self._session_slice
+            trimmed = self._sessions[start:end]
+            if trimmed:
+                self._sessions = trimmed
         # Always-on summary so pool separation is visible in production logs.
         _files = [os.path.basename(s.get('cookie_path') or '?') for s in self._sessions]
         print(

@@ -376,28 +376,26 @@ class BlockBrainBot(commands.Bot):
         intents.members = True
         intents.guild_reactions = True
         super().__init__(command_prefix="!velcor3 ", intents=intents, help_command=None)
-        if getattr(config, "TWEET_WATCHER_SEPARATE_POOL", True) and getattr(config, "TWEET_WATCHER_COOKIES", None):
-            _watcher_cookies = config.TWEET_WATCHER_COOKIES
-            _split = int(getattr(config, "TWEET_WATCHER_PROXY_SPLIT", 8))
-            # Brain: all sessions EXCEPT the watcher's, proxies [0:split]
+        _wc = int(getattr(config, "TWEET_WATCHER_SESSION_COUNT", 2))
+        _split = int(getattr(config, "TWEET_WATCHER_PROXY_SPLIT", 8))
+        # Probe total available sessions once to decide if we can safely split.
+        _probe = TwitterClient(label="probe")
+        _total = len(getattr(_probe, "_sessions", []) or [])
+        if getattr(config, "TWEET_WATCHER_SEPARATE_POOL", True) and _total > _wc:
+            # Brain keeps the first (total - N) sessions; watcher reserves the last N.
             self.twitter = TwitterClient(
-                cookie_blocklist=_watcher_cookies, proxy_slice=(0, _split), label="brain"
+                session_slice=(0, _total - _wc), proxy_slice=(0, _split), label="brain"
             )
-            # Watcher: ONLY its own cookies, proxies [split:]
             self.twitter_watcher = TwitterClient(
-                cookie_allowlist=_watcher_cookies, proxy_slice=(_split, 9999), label="watcher"
+                session_slice=(_total - _wc, None), proxy_slice=(_split, 9999), label="watcher"
             )
-            # Safety: if the watcher's cookies didn't load (e.g. accounts.json missing),
-            # fall back to the shared pool so the watcher never goes silently dark.
             if not getattr(self.twitter_watcher, "_sessions", None):
-                print("⚠️ [Pool] Watcher cookies loaded 0 sessions — falling back to shared Brain pool.")
-                self.twitter_watcher = self.twitter
-            elif not getattr(self.twitter, "_sessions", None):
-                print("⚠️ [Pool] Brain cookies loaded 0 sessions — disabling separation, using one shared pool.")
-                self.twitter = TwitterClient()
+                print("⚠️ [Pool] Watcher loaded 0 sessions — falling back to shared Brain pool.")
                 self.twitter_watcher = self.twitter
         else:
-            self.twitter = TwitterClient()
+            if getattr(config, "TWEET_WATCHER_SEPARATE_POOL", True):
+                print(f"⚠️ [Pool] Only {_total} session(s) — too few to split; using one shared pool.")
+            self.twitter = TwitterClient(label="brain")
             self.twitter_watcher = self.twitter
         self.ai = AIAnalyzer()
         self.current_scan_discoveries = 0
