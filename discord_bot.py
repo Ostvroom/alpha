@@ -3460,8 +3460,10 @@ class BrainCommands(commands.Cog):
         await self._send_brand_embed(ctx, embed)
 
     @commands.command(name="ping")
-    async def ping_cmd(self, ctx):
+    async def ping_cmd(self, ctx, *, args: str = None):
         """Test bot responsiveness."""
+        if args:  # e.g. !velcor3 ping degen — handled by AlphaPingCog
+            return
         await ctx.send(f"🏓 **Pong!** Latency: {round(self.bot.latency * 1000)}ms")
 
     @commands.command(name="post_verification")
