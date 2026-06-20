@@ -285,7 +285,7 @@ class AlphaPingCog(commands.Cog, name="AlphaPing"):
 
     # ── !velcor3 ping degen — only works inside ALPHA_CHANNEL_ID ─────────────
 
-    @commands.command(name="ping", help="Ping the degen role (alpha channel only).")
+    @commands.command(name="alphaping", help="Ping the degen role (alpha channel only).")
     async def ping_degen(self, ctx: commands.Context):
         if ctx.channel.id != ALPHA_CHANNEL_ID:
             return  # silently ignore — not our channel
