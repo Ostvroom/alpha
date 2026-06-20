@@ -603,6 +603,8 @@ class BlockBrainBot(commands.Bot):
         await self.add_cog(PanelCommands(self))
         await self.add_cog(GuildLicenseCommands(self))
         await self.add_cog(VelcorFeatures(self))
+        from alpha_ping import setup as setup_alpha_ping
+        await setup_alpha_ping(self)
         from trackers.mint_feed_commands import setup as setup_mint_feed_commands
 
         await setup_mint_feed_commands(self)
