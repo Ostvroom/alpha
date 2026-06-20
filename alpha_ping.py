@@ -100,6 +100,12 @@ def init_alpha_tables() -> None:
         );
         """
     )
+    # Migration: add handle column if table was created before this field existed
+    try:
+        conn.execute("ALTER TABLE alpha_posts ADD COLUMN handle TEXT")
+        conn.commit()
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 
@@ -415,6 +421,32 @@ class AlphaPingCog(commands.Cog, name="AlphaPing"):
         content = (message.content or "").strip()
         if not content:
             return
+
+        # Skip bot commands — let the command handler process them
+        if content.lower().startswith("!velcor3 "):
+            # Special case: !velcor3 ping degen → ping the target role
+            if re.match(r"!velcor3\s+ping\s+degen", content, re.IGNORECASE):
+                poster_role = message.guild.get_role(ALPHA_POSTER_ROLE_ID)
+                if poster_role not in message.author.roles:
+                    try:
+                        await message.delete()
+                        await message.channel.send(
+                            f"{message.author.mention} You need the **{poster_role.name if poster_role else 'required'}** role.",
+                            delete_after=6,
+                        )
+                    except Exception:
+                        pass
+                    return
+                target_role = message.guild.get_role(ALPHA_TARGET_ROLE_ID)
+                try:
+                    await message.delete()
+                    if target_role:
+                        await message.channel.send(
+                            f"{target_role.mention} — alpha incoming from {message.author.mention}!"
+                        )
+                except Exception:
+                    pass
+            return  # all other !velcor3 commands → skip
 
         handle = parse_x_handle(content)
         poster = message.author
