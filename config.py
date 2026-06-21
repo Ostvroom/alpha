@@ -531,7 +531,7 @@ X_PROJECT_SEARCH_MAX_MENTION_TIMEOUTS_PER_CYCLE = max(2, min(100, _env_int("X_PR
 # Discovery timeline fetches are useful, but they must not stall the whole finder
 # for multiple 35s attempts on one bad profile.
 DISCOVERY_TIMELINE_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("DISCOVERY_TIMELINE_TIMEOUT_SEC", 18.0)))
-DISCOVERY_TIMELINE_RETRIES = max(1, min(3, _env_int("DISCOVERY_TIMELINE_RETRIES", 1)))
+DISCOVERY_TIMELINE_RETRIES = max(1, min(3, _env_int("DISCOVERY_TIMELINE_RETRIES", 2)))
 TWITTER_TIMELINE_CLIENT_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("TWITTER_TIMELINE_CLIENT_TIMEOUT_SEC", 18.0)))
 TWITTER_TIMELINE_CLIENT_RETRIES = max(0, min(3, _env_int("TWITTER_TIMELINE_CLIENT_RETRIES", 1)))
 

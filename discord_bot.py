@@ -2808,6 +2808,7 @@ class BlockBrainBot(commands.Bot):
         discovery_timeline_timeout = float(getattr(config, "DISCOVERY_TIMELINE_TIMEOUT_SEC", 18.0) or 18.0)
         discovery_timeline_retries = int(getattr(config, "DISCOVERY_TIMELINE_RETRIES", 1) or 1)
         if is_personal:
+            fetch_timed_out = False
             for attempt in range(discovery_timeline_retries):
                 try:
                     timeline_tweets = await asyncio.wait_for(
@@ -2817,6 +2818,7 @@ class BlockBrainBot(commands.Bot):
                         timeout=discovery_timeline_timeout,
                     )
                 except asyncio.TimeoutError:
+                    fetch_timed_out = True
                     print(
                         f"         ⚠️ Timeout fetching timeline for @{account.screen_name} "
                         f"(attempt {attempt + 1}/{discovery_timeline_retries})"
@@ -2831,6 +2833,7 @@ class BlockBrainBot(commands.Bot):
                         parts.append(tx)
                 tweet_text_blob = " ".join(parts)[:2500]
                 if tweet_text_blob:
+                    fetch_timed_out = False
                     break
                 if attempt < discovery_timeline_retries - 1:
                     await asyncio.sleep(5)
@@ -2841,6 +2844,11 @@ class BlockBrainBot(commands.Bot):
                     print("         ✅ RESCUED by tweet context: looks like project")
                 else:
                     reason = reason2 or reason
+            elif fetch_timed_out:
+                # We never got to read their tweets — don't drop a possible project
+                # just because the fetch timed out. Defer for re-evaluation next scan.
+                is_personal = False
+                print("         ⏳ Timeline fetch timed out; deferring (will re-check next scan)")
             else:
                 # No tweets yet: be lenient for common bio-only false positives.
                 soft_bio_reasons = {
