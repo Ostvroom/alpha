@@ -239,21 +239,29 @@ class AlphaPingCog(commands.Cog, name="AlphaPing"):
         bot.add_view(AlphaVoteView())
 
     @commands.command(name="alpha")
-    async def alpha(self, ctx: commands.Context, link: Optional[str] = None,
-                    *, text: Optional[str] = None) -> None:
-        # Usage: !velcor3 alpha <link> <text>
+    async def alpha(self, ctx: commands.Context,
+                    *, args: Optional[str] = None) -> None:
+        # The link can appear before or after the alert text.
         if not ctx.guild:
             return
         if ctx.channel.id != ALPHA_CHANNEL_ID:
             await ctx.send("Use this command in the alpha channel.", delete_after=8)
             return
 
-
-        link = (link or "").strip("<>")
-        text = (text or "").strip()
-        if not link or not _URL_RE.fullmatch(link) or not text:
+        parts = (args or "").split()
+        link_index = next(
+            (index for index, part in enumerate(parts)
+             if _URL_RE.fullmatch(part.strip("<>"))),
+            None,
+        )
+        link = parts[link_index].strip("<>") if link_index is not None else ""
+        text = " ".join(
+            part for index, part in enumerate(parts) if index != link_index
+        ).strip()
+        if not link or not text:
             await ctx.send(
-                "Usage: `!velcor3 alpha <link> <text>`\n"
+                "Usage: `!velcor3 alpha <link> <text>` or "
+                "`!velcor3 alpha <text> <link>`\n"
                 "Both the link and text are required.",
                 delete_after=10,
             )
