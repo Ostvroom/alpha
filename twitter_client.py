@@ -1398,7 +1398,18 @@ class TwitterClient:
                 # Use auth_token if available (safer)
                 if account.get('auth_token'):
                     print(f"Using auth_token for @{account['username']}...")
-                    client.set_cookies({'auth_token': account['auth_token']})
+                    cookies = {'auth_token': account['auth_token']}
+                    # ct0 (csrf) is required by X alongside auth_token — set it if present
+                    if account.get('ct0'):
+                        cookies['ct0'] = account['ct0']
+                    client.set_cookies(cookies)
+                    # Save so future startups load from file (with ct0)
+                    try:
+                        with open(cookie_path, 'w') as _f:
+                            import json as _json
+                            _json.dump(cookies, _f)
+                    except Exception:
+                        pass
                     session['logged_in'] = True
                     return True, None
 
