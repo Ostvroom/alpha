@@ -92,23 +92,46 @@ def save_accounts_json(path: str, accounts: list[dict]) -> None:
 
 # ── Core: connect + save cookies ─────────────────────────────────────────────
 
-async def setup_account(acc: dict, proxy: str | None, out_dir: str) -> bool:
+async def setup_account(acc: dict, proxy: str | None, out_dir: str, force_login: bool = False) -> bool:
     username = acc["username"]
     cookie_path = os.path.join(out_dir, f"cookies_{username}.json")
 
-    if os.path.exists(cookie_path):
-        print(f"  [{username}] cookies already exist — skipping login, keeping file")
+    if os.path.exists(cookie_path) and not force_login:
+        print(f"  [{username}] cookies already exist — skipping (use --force to re-login)")
         return True
 
-    try:
-        client = Client("en-US", proxy=proxy or None)
-        client.set_cookies({"auth_token": acc["auth_token"]})
-        client.save_cookies(cookie_path)
-        print(f"  [{username}] OK — cookies saved to {cookie_path}")
-        return True
-    except Exception as e:
-        print(f"  [{username}] ERROR — {e}")
-        return False
+    client = Client("en-US", proxy=proxy or None)
+
+    # Try full login first (generates complete session cookies)
+    if acc.get("password") and acc.get("email"):
+        try:
+            print(f"  [{username}] Logging in with username/password...")
+            await client.login(
+                auth_info_1=username,
+                auth_info_2=acc["email"],
+                password=acc["password"],
+                enable_ui_metrics=True,
+            )
+            client.save_cookies(cookie_path)
+            print(f"  [{username}] OK — full login, cookies saved to {cookie_path}")
+            return True
+        except Exception as e:
+            print(f"  [{username}] Full login failed ({e}) — falling back to auth_token")
+
+    # Fallback: auth_token + ct0 (no full session, but better than nothing)
+    if acc.get("auth_token"):
+        try:
+            cookies = {"auth_token": acc["auth_token"]}
+            if acc.get("ct0"):
+                cookies["ct0"] = acc["ct0"]
+            client.set_cookies(cookies)
+            client.save_cookies(cookie_path)
+            print(f"  [{username}] OK — auth_token cookies saved to {cookie_path}")
+            return True
+        except Exception as e:
+            print(f"  [{username}] ERROR — {e}")
+
+    return False
 
 
 async def run(args):
@@ -140,7 +163,7 @@ async def run(args):
         proxy_idx += 1
         print(f"\n→ {acc['username']} (proxy: {proxy or 'none'})")
 
-        success = await setup_account(acc, proxy, args.out_dir)
+        success = await setup_account(acc, proxy, args.out_dir, force_login=getattr(args, "force", False))
         if success:
             ok += 1
         else:
@@ -172,6 +195,7 @@ def main():
     parser.add_argument("--out-dir", default=".", help="Where to write cookies_*.json + accounts.json (default: .)")
     parser.add_argument("--delay", type=float, default=2.0, help="Seconds between accounts (default: 2)")
     parser.add_argument("--skip-failed", action="store_true", help="Skip failed accounts instead of stopping")
+    parser.add_argument("--force", action="store_true", help="Re-login even if cookie file already exists")
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
