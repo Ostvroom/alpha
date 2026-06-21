@@ -579,12 +579,9 @@ def _parse_time_hhmm(val: str, default: str = "00:00"):
 DAILY_MINTS_AUTO_CHANNEL_ID = parse_channel_id(
     "DAILY_MINTS_AUTO_CHANNEL_ID", default=1490771474804375652
 )
-ENABLE_DAILY_MINTS_AUTO = os.getenv("ENABLE_DAILY_MINTS_AUTO", "0").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-    "on",
-)
+# Force-disabled per request — ignore any env var so it can't be re-enabled
+# accidentally on the host. Set this back to env-driven if you want it again.
+ENABLE_DAILY_MINTS_AUTO = False
 # "today" = only the Minting Today section on /mints (recommended for daily alerts)
 DAILY_MINTS_AUTO_SCOPE = (os.getenv("DAILY_MINTS_AUTO_SCOPE", "today") or "today").strip().lower()
 if DAILY_MINTS_AUTO_SCOPE not in ("all", "today"):
@@ -595,7 +592,8 @@ DAILY_MINTS_AUTO_TIME = _parse_time_hhmm(os.getenv("DAILY_MINTS_AUTO_TIME_UTC", 
 
 # Solana token overview API (KOLFI_API_KEY in .env — x-api-key header)
 KOLFI_API_KEY = (os.getenv("KOLFI_API_KEY") or "").strip()
-ENABLE_KOLFI_FEED = os.getenv("ENABLE_KOLFI_FEED", "0").strip().lower() in ("1", "true", "yes", "on")
+# Force-disabled per request — ignore env so it can't be re-enabled on the host.
+ENABLE_KOLFI_FEED = False
 KOLFI_POLL_MINUTES = max(2, min(120, _env_int("KOLFI_POLL_MINUTES", 10)))
 KOLFI_CHANNEL_LOW_ID = parse_channel_id("KOLFI_CHANNEL_LOW_ID", default=1490737082698825948)
 KOLFI_CHANNEL_100K_ID = parse_channel_id("KOLFI_CHANNEL_100K_ID", default=1490738906818154607)
@@ -658,12 +656,8 @@ KOLFI_TOP_MOVERS_KOL_CALL_MAX_HOURS = max(0.0, _env_float("KOLFI_TOP_MOVERS_KOL_
 KOLFI_ALERT_RECAP_FIRST_CALL_MAX_HOURS = max(0.0, _env_float("KOLFI_ALERT_RECAP_FIRST_CALL_MAX_HOURS", 24.0))
 
 # Daily top movers (24h) — ranked by 24h % change for the best-liquidity pair
-ENABLE_KOLFI_DAILY_TOP_MOVERS = os.getenv("ENABLE_KOLFI_DAILY_TOP_MOVERS", "0").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-    "on",
-)
+# Force-disabled per request — ignore env so it can't be re-enabled on the host.
+ENABLE_KOLFI_DAILY_TOP_MOVERS = False
 KOLFI_DAILY_TOP_MOVERS_CHANNEL_ID = parse_channel_id(
     "KOLFI_DAILY_TOP_MOVERS_CHANNEL_ID", default=1491406034156261487
 )

@@ -489,8 +489,12 @@ class BlockBrainBot(commands.Bot):
         return f"[{datetime.now().strftime('%H:%M:%S')}]"
 
     def _should_log_channel_error(self, channel_id: int) -> bool:
-        """Return True only the first time a channel's load failure is seen,
-        so a missing/inaccessible channel doesn't spam the console each loop."""
+        """Channel load failures (404 not found / 403 missing access) come from
+        misconfigured/inaccessible channel IDs and are not actionable each run.
+        They're silenced by default to keep the console focused on scan activity;
+        set LOG_CHANNEL_ERRORS=1 to surface them once per channel for debugging."""
+        if os.getenv("LOG_CHANNEL_ERRORS", "0").strip().lower() not in ("1", "true", "yes", "on"):
+            return False
         try:
             cid = int(channel_id)
         except Exception:
@@ -714,7 +718,8 @@ class BlockBrainBot(commands.Bot):
             try:
                 ch = self.get_channel(cid) or await self.fetch_channel(cid)
             except Exception as e:
-                print(f"    [WalletTracker] Skipping channel {cid} (no access): {e}")
+                if self._should_log_channel_error(cid):
+                    print(f"    [WalletTracker] Skipping channel {cid} (no access): {e}")
                 ch = None
             if ch:
                 reachable_ids.append(cid)
@@ -1044,8 +1049,12 @@ class BlockBrainBot(commands.Bot):
                     f"[*] Global slash sync ({n_g} command(s)) — `/alerts` & `/owner_license` work in every server."
                 )
             except Exception as e:
-                print(f"[X] Slash sync error: {e}")
-        
+                # 403/Missing Access just means the bot lacks the applications.commands
+                # scope in a server — expected and not actionable, so don't log it.
+                msg = str(e)
+                if "403" not in msg and "Missing Access" not in msg and "50001" not in msg:
+                    print(f"[X] Slash sync error: {e}")
+
         # Manually trigger trending report on startup safely
         await asyncio.sleep(2)
         if not self.trending_report.is_running():

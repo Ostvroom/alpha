@@ -1218,8 +1218,11 @@ class TwitterClient:
                         new_proxy = self._all_proxies[self._proxy_idx % len(self._all_proxies)]
                         self._proxy_idx += 1
                         
-                        err_type = "Timed Out (522)" if "522" in err_msg else ("Flagged (403)" if "403" in err_msg else "Network Failure")
-                        print(f"   WARN Session @{username} {err_type}. Rotating proxy and retrying... (Attempt {attempts}/{max_proxy_fails})")
+                        # Self-healing proxy rotation — quiet by default to keep the
+                        # console focused on scan activity. Set LOG_PROXY_ROTATION=1 to see it.
+                        if os.getenv("LOG_PROXY_ROTATION", "0").strip().lower() in ("1", "true", "yes", "on"):
+                            err_type = "Timed Out (522)" if "522" in err_msg else ("Flagged (403)" if "403" in err_msg else "Network Failure")
+                            print(f"   WARN Session @{username} {err_type}. Rotating proxy and retrying... (Attempt {attempts}/{max_proxy_fails})")
                         
                         # Re-initialize client
                         import random
