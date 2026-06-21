@@ -140,6 +140,64 @@ def get_vote_counts(post_id: int) -> Tuple[int, int]:
 
 
 
+def get_caller_stats(guild_id: int, user_id: int) -> dict:
+    score, calls = get_poster_score(guild_id, user_id)
+    with closing(_db()) as conn, conn:
+        totals = conn.execute(
+            "SELECT "
+            "SUM(CASE WHEN v.vote IN ('cook', 'good') THEN 1 ELSE 0 END) AS cook, "
+            "SUM(CASE WHEN v.vote IN ('skip', 'not') THEN 1 ELSE 0 END) AS skip "
+            "FROM alpha_posts p LEFT JOIN alpha_votes v ON v.post_id = p.id "
+            "WHERE p.guild_id = ? AND p.poster_id = ?",
+            (guild_id, user_id),
+        ).fetchone()
+        best = conn.execute(
+            "SELECT p.channel_id, p.message_id, p.content, "
+            "SUM(CASE WHEN v.vote IN ('cook', 'good') THEN ? "
+            "WHEN v.vote IN ('skip', 'not') THEN ? ELSE 0 END) AS call_score, "
+            "SUM(CASE WHEN v.vote IN ('cook', 'good') THEN 1 ELSE 0 END) AS cook, "
+            "SUM(CASE WHEN v.vote IN ('skip', 'not') THEN 1 ELSE 0 END) AS skip "
+            "FROM alpha_posts p LEFT JOIN alpha_votes v ON v.post_id = p.id "
+            "WHERE p.guild_id = ? AND p.poster_id = ? GROUP BY p.id "
+            "ORDER BY call_score DESC, cook DESC, p.posted_at DESC LIMIT 1",
+            (SCORE_COOK, SCORE_SKIP, guild_id, user_id),
+        ).fetchone()
+        rank = conn.execute(
+            "SELECT 1 + COUNT(*) AS rank FROM alpha_scores "
+            "WHERE guild_id = ? AND (score > ? OR (score = ? AND posts > ?))",
+            (guild_id, score, score, calls),
+        ).fetchone()["rank"]
+
+    cook = int(totals["cook"] or 0)
+    skip = int(totals["skip"] or 0)
+    total_votes = cook + skip
+    return {
+        "score": score,
+        "calls": calls,
+        "rank": rank if calls else None,
+        "cook": cook,
+        "skip": skip,
+        "total_votes": total_votes,
+        "approval": round(cook * 100 / total_votes) if total_votes else None,
+        "average": score / calls if calls else 0.0,
+        "best": dict(best) if best else None,
+    }
+
+
+def _caller_tier(score: int) -> str:
+    if score >= 50:
+        return "🏆 Alpha Legend"
+    if score >= 20:
+        return "💎 Elite Caller"
+    if score >= 10:
+        return "🔥 Trusted Caller"
+    if score >= 3:
+        return "📈 Rising Caller"
+    if score >= 0:
+        return "🌱 New Caller"
+    return "⚠️ Unproven Caller"
+
+
 def build_alpha_embed(caller: discord.Member, link: str, text: str, score: int,
                       cook_votes: int = 0, skip_votes: int = 0) -> discord.Embed:
     embed = discord.Embed(
@@ -304,13 +362,65 @@ class AlphaPingCog(commands.Cog, name="AlphaPing"):
         if not ctx.guild:
             return
         target = member or ctx.author
-        score, posts = get_poster_score(ctx.guild.id, target.id)
-        embed = discord.Embed(title="Alpha Caller", color=0x00C4FF)
-        embed.set_author(
-            name=target.display_name, icon_url=target.display_avatar.url
+        stats = get_caller_stats(ctx.guild.id, target.id)
+        score = stats["score"]
+        color = 0x57F287 if score >= 10 else (0xED4245 if score < 0 else 0x00C4FF)
+        embed = discord.Embed(
+            title=f"{target.display_name}'s Alpha Profile",
+            description=f"{target.mention}\n**{_caller_tier(score)}**",
+            color=color,
+            timestamp=datetime.now(timezone.utc),
         )
-        embed.add_field(name="Score", value=f"`{score:+d}`", inline=True)
-        embed.add_field(name="Calls", value=f"`{posts}`", inline=True)
+        icon = brand_logo_embed_icon()
+        if icon:
+            embed.set_author(name=f"{_BRAND} · Caller Analytics", icon_url=icon)
+        embed.set_thumbnail(url=target.display_avatar.url)
+
+        rank = f"#{stats['rank']}" if stats["rank"] else "Unranked"
+        approval = (
+            f"{stats['approval']}%" if stats["approval"] is not None else "No votes"
+        )
+        embed.add_field(name="Reputation", value=f"**{score:+d} pts**", inline=True)
+        embed.add_field(name="Alpha Calls", value=f"**{stats['calls']}**", inline=True)
+        embed.add_field(name="Server Rank", value=f"**{rank}**", inline=True)
+        embed.add_field(name="🍳 Cook", value=f"**{stats['cook']}**", inline=True)
+        embed.add_field(name="⏭️ Skip", value=f"**{stats['skip']}**", inline=True)
+        embed.add_field(name="Approval", value=f"**{approval}**", inline=True)
+        embed.add_field(
+            name="Performance",
+            value=(
+                f"Average per call: **{stats['average']:+.1f} pts**\n"
+                f"Community votes: **{stats['total_votes']}**"
+            ),
+            inline=False,
+        )
+
+        best = stats["best"]
+        if best:
+            jump_url = (
+                f"https://discord.com/channels/{ctx.guild.id}/"
+                f"{best['channel_id']}/{best['message_id']}"
+            )
+            lines = (best["content"] or "").splitlines()
+            summary = " ".join(lines[1:] if len(lines) > 1 else lines).strip()
+            best_score = int(best["call_score"] or 0)
+            best_value = (
+                f"[Open best call]({jump_url}) · **{best_score:+d} pts**\n"
+                f"🍳 {int(best['cook'] or 0)}  ·  ⏭️ {int(best['skip'] or 0)}"
+            )
+            if summary:
+                best_value += f"\n> {summary[:220]}"
+            embed.add_field(name="🏅 Best Call", value=best_value, inline=False)
+        else:
+            embed.add_field(
+                name="🏅 Best Call",
+                value="No alpha calls yet.",
+                inline=False,
+            )
+
+        embed.set_footer(
+            text=f"Cook {SCORE_COOK:+d} · Skip {SCORE_SKIP:+d} · Live statistics"
+        )
         await ctx.send(embed=embed)
 
 
