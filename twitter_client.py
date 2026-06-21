@@ -1195,8 +1195,22 @@ class TwitterClient:
                             "Timeout",
                         ]
                     )
-                    is_blocked_err = "403" in err_msg and not is_twikit_internal
+                    # Error 353 = CSRF mismatch — stale ct0, not a permanent IP/cookie block.
+                    # Reset session cookies so next attempt re-derives fresh CSRF from X.
+                    is_csrf_err = "353" in err_msg
+                    if is_csrf_err:
+                        session['logged_in'] = False
+                        try:
+                            session['client'].http.cookies.clear()
+                        except Exception:
+                            pass
+                    is_blocked_err = "403" in err_msg and not is_twikit_internal and not is_csrf_err
                     
+                    # CSRF error (353): already reset session above — let it retry once without proxy rotation
+                    if is_csrf_err and attempts == 0:
+                        attempts += 1
+                        continue
+
                     # If network/proxy error and we have more proxies, rotate and retry
                     max_proxy_fails = min(len(self._all_proxies), 3) if self._all_proxies else 0
                     if (is_network_err or is_blocked_err) and self._all_proxies and attempts < max_proxy_fails:
@@ -1226,6 +1240,8 @@ class TwitterClient:
                                 "      TIP This is usually temporary — monkey-patch should handle it. "
                                 "If persistent, re-export cookies or update twikit."
                             )
+                        elif is_csrf_err:
+                            print(f"   WARN Session @{username} CSRF error (353) — stale ct0, session reset{proxy_str}")
                         elif "403" in err_msg:
                             print(f"   WARN Session @{username} is BLOCKED (403): {reason}{proxy_str}")
                         else:
@@ -1396,14 +1412,19 @@ class TwitterClient:
             # No cookies, try login with credentials/auth_token
             if account:
                 # Use auth_token if available (safer)
-                if account.get('auth_token'):
-                    print(f"Using auth_token for @{account['username']}...")
-                    cookies = {'auth_token': account['auth_token']}
-                    # ct0 (csrf) is required by X alongside auth_token — set it if present
-                    if account.get('ct0'):
-                        cookies['ct0'] = account['ct0']
+                if account.get('auth_token') or account.get('ct0'):
+                    username_str = account.get('username', '?')
+                    print(f"Using auth_token for @{username_str}...")
+                    # Vendor format quirk: the 'ct0' field (160-char) is the real X
+                    # auth_token cookie; the 'auth_token' field (40-char) is the CSRF
+                    # token (ct0). Cookie files twikit saves confirm the mapping.
+                    real_auth = account.get('ct0') or account.get('auth_token')
+                    real_ct0 = account.get('auth_token') if account.get('ct0') else None
+                    cookies = {'auth_token': real_auth}
+                    if real_ct0:
+                        cookies['ct0'] = real_ct0
                     client.set_cookies(cookies)
-                    # Save so future startups load from file (with ct0)
+                    # Save so future startups load from file
                     try:
                         with open(cookie_path, 'w') as _f:
                             import json as _json
