@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 _BRAND = "VELCOR3"
 _URL_RE = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
 
-ALPHA_CHANNEL_ID = int(os.getenv("ALPHA_CHANNEL_ID", "1517874398537711706"))
+ALPHA_CHANNEL_ID = int(os.getenv("ALPHA_CHANNEL_ID", "1506376120252239872"))
 ALPHA_TARGET_ROLE_ID = int(os.getenv("ALPHA_TARGET_ROLE_ID", "1505260948707999774"))
 SCORE_COOK = int(os.getenv("ALPHA_SCORE_COOK", os.getenv("ALPHA_SCORE_GOOD", "1")))
 SCORE_SKIP = int(os.getenv("ALPHA_SCORE_SKIP", os.getenv("ALPHA_SCORE_NOT", "-1")))
