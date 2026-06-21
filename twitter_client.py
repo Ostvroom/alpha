@@ -1389,17 +1389,30 @@ class TwitterClient:
         account = session['account']
 
         try:
-            # Try loading cookies first
+            # Load any cookies that exist on disk first.
+            file_cookies = None
             if os.path.exists(cookie_path):
                 with open(cookie_path, 'r') as f:
                     cookies_data = json.load(f)
-                
                 if isinstance(cookies_data, list):
-                    cookies_dict = {c['name']: c['value'] for c in cookies_data if 'name' in c and 'value' in c}
-                    client.set_cookies(cookies_dict)
-                else:
-                    client.set_cookies(cookies_data)
-                
+                    file_cookies = {
+                        c['name']: c['value']
+                        for c in cookies_data if 'name' in c and 'value' in c
+                    }
+                elif isinstance(cookies_data, dict):
+                    file_cookies = dict(cookies_data)
+
+            # twikit builds the X-Csrf-Token header from the ct0 *cookie*. A cookie
+            # set without ct0 → no CSRF header → every request fails with error 353.
+            # The vendor accounts give us auth_token (40-char) + ct0 (160-char) in
+            # accounts.json, so if the on-disk file is missing ct0 (or doesn't exist),
+            # rebuild authoritative cookies from the account credentials.
+            has_token_creds = bool(account and account.get('auth_token'))
+            file_has_ct0 = bool(file_cookies and file_cookies.get('ct0'))
+
+            if file_cookies and (file_has_ct0 or not has_token_creds):
+                # File is usable as-is (real browser export, or already has ct0).
+                client.set_cookies(file_cookies)
                 username = account['username'] if account else 'default'
                 self._health_log(f"OK Loaded cookies for @{username}")
                 session['logged_in'] = True
@@ -1408,31 +1421,41 @@ class TwitterClient:
                 except Exception:
                     pass
                 return True, None
-            
-            # No cookies, try login with credentials/auth_token
+
+            # Build canonical cookies from accounts.json credentials.
+            if has_token_creds:
+                username_str = account.get('username', '?')
+                cookies = {'auth_token': account['auth_token']}
+                # ct0 cookie MUST be present so twikit sends a matching CSRF header.
+                # Use the account's ct0 if given; otherwise generate one (X uses the
+                # double-submit pattern, so any cookie==header value is accepted).
+                ct0 = account.get('ct0')
+                if not ct0:
+                    import secrets
+                    ct0 = secrets.token_hex(80)  # 160 hex chars, X ct0 format
+                cookies['ct0'] = ct0
+                # Preserve passive cookies (guest_id, __cf_bm) from a stale file.
+                if file_cookies:
+                    for k, v in file_cookies.items():
+                        if k not in ('auth_token', 'ct0'):
+                            cookies.setdefault(k, v)
+                print(f"Using auth_token + ct0 for @{username_str}...")
+                client.set_cookies(cookies)
+                # Overwrite the file so future startups load the repaired cookies.
+                try:
+                    with open(cookie_path, 'w') as _f:
+                        import json as _json
+                        _json.dump(cookies, _f)
+                except Exception:
+                    pass
+                session['logged_in'] = True
+                try:
+                    session['cookie_file_mtime'] = os.path.getmtime(cookie_path)
+                except Exception:
+                    pass
+                return True, None
+
             if account:
-                # Use auth_token if available (safer)
-                if account.get('auth_token') or account.get('ct0'):
-                    username_str = account.get('username', '?')
-                    print(f"Using auth_token for @{username_str}...")
-                    # Vendor format quirk: the 'ct0' field (160-char) is the real X
-                    # auth_token cookie; the 'auth_token' field (40-char) is the CSRF
-                    # token (ct0). Cookie files twikit saves confirm the mapping.
-                    real_auth = account.get('ct0') or account.get('auth_token')
-                    real_ct0 = account.get('auth_token') if account.get('ct0') else None
-                    cookies = {'auth_token': real_auth}
-                    if real_ct0:
-                        cookies['ct0'] = real_ct0
-                    client.set_cookies(cookies)
-                    # Save so future startups load from file
-                    try:
-                        with open(cookie_path, 'w') as _f:
-                            import json as _json
-                            _json.dump(cookies, _f)
-                    except Exception:
-                        pass
-                    session['logged_in'] = True
-                    return True, None
 
                 print(f"🔐 Logging in as @{account['username']}...")
                 await client.login(
