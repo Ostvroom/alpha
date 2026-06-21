@@ -55,7 +55,7 @@ class NftscanLiveFeed:
         self.listener: Optional[EthMintListener] = None
         self.enricher: Optional[MintContractEnricher] = None
         self.social_fetcher: Optional[MintSocialFetcher] = None
-        self._seen_mint_txs: Set[str] = set()
+        self._seen_mint_events: Set[tuple] = set()
         # Per-contract mint events for hot spike detection: {ts, amount, key}
         self._mint_tracker: Dict[str, List[Dict]] = {}
         self._hot_alert_cooldown: Dict[str, datetime] = {}
@@ -161,10 +161,14 @@ class NftscanLiveFeed:
 
     @staticmethod
     def _mint_event_key(mint: Dict) -> tuple:
-        return (
-            (mint.get("tx_hash") or mint.get("hash") or "").strip().lower(),
-            str(mint.get("token_id", "")),
+        tx = (mint.get("tx_hash") or mint.get("hash") or "").strip().lower()
+        log_index = mint.get("log_index")
+        event_id = (
+            f"log:{log_index}"
+            if log_index is not None
+            else f"token:{mint.get('token_id', '')}"
         )
+        return tx, event_id
 
     def _record_hot_mint_event(self, contract: str, mint: Dict) -> None:
         """Track mint volume for hot alerts (dedupe by tx+token, count ERC1155 amount)."""
@@ -284,12 +288,12 @@ class NftscanLiveFeed:
 
         new_mints: List[Dict] = []
         for m in raw_mints:
-            tx = m.get("tx_hash", "") or m.get("hash", "")
-            if tx and tx not in self._seen_mint_txs:
-                self._seen_mint_txs.add(tx)
+            event_key = self._mint_event_key(m)
+            if event_key not in self._seen_mint_events:
+                self._seen_mint_events.add(event_key)
                 new_mints.append(m)
-        if len(self._seen_mint_txs) > 5000:
-            self._seen_mint_txs.clear()
+        if len(self._seen_mint_events) > 5000:
+            self._seen_mint_events.clear()
 
         new_hot_mints = list(raw_mints)
 

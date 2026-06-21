@@ -11,16 +11,27 @@ Emits:
 import asyncio
 import json
 import os
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timezone, timedelta
 import websockets
 import logging
 
-# Free HTTP RPC fallbacks for when WebSocket is blocked (cloud IPs)
-_HTTP_POLL_RPCS = [
-    "https://1rpc.io/eth",
-    "https://eth.drpc.org",
-]
+# HTTP RPCs used when WebSocket delivery is unavailable on cloud hosts.
+def _build_http_poll_rpcs() -> List[str]:
+    urls: List[str] = []
+    for key in (
+        "ETHEREUM_MINT_RPC_URLS",
+        "NON_ALCHEMY_ETH_RPC_URL",
+        "ETHEREUM_RPC_URL",
+    ):
+        raw = (os.getenv(key) or "").strip()
+        if raw:
+            urls.extend(part.strip() for part in raw.split(",") if part.strip())
+    urls.extend(("https://1rpc.io/eth", "https://eth.drpc.org"))
+    return list(dict.fromkeys(urls))
+
+
+_HTTP_POLL_RPCS = _build_http_poll_rpcs()
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +42,33 @@ ERC1155_TRANSFER_BATCH = "0x4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e595d983b
 from trackers.eth_address import ZERO_ADDRESS, normalize_eth_address
 
 ZERO_ADDRESS_SHORT = ZERO_ADDRESS
+NULL_ADDRESS_TOPIC = "0x" + ("0" * 64)
+
+def _decode_erc1155_batch(data: str) -> Tuple[List[int], List[int]]:
+    """Decode the token-id and value arrays from TransferBatch event data."""
+    try:
+        payload = bytes.fromhex((data or "").removeprefix("0x"))
+        if len(payload) < 64:
+            return [], []
+        ids_offset = int.from_bytes(payload[0:32], "big")
+        values_offset = int.from_bytes(payload[32:64], "big")
+
+        def read_array(offset: int) -> List[int]:
+            if offset < 0 or offset + 32 > len(payload):
+                return []
+            length = int.from_bytes(payload[offset:offset + 32], "big")
+            if length > 10000 or offset + 32 + (length * 32) > len(payload):
+                return []
+            start = offset + 32
+            return [
+                int.from_bytes(payload[start + (i * 32):start + ((i + 1) * 32)], "big")
+                for i in range(length)
+            ]
+
+        return read_array(ids_offset), read_array(values_offset)
+    except (TypeError, ValueError):
+        return [], []
+
 
 def _build_ws_endpoints() -> List[str]:
     """Build WebSocket endpoint list from env (private RPCs first, then public fallbacks)."""
@@ -107,6 +145,8 @@ class EthMintListener:
         self._task: Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()
         self._sub_id: Optional[str] = None
+        self._last_polled_block: Optional[int] = None  # last fully processed safe block
+        self._http_w3 = None  # cache the last RPC that accepted mint log filters
 
         # Whale tracking
         self.whale_addresses: set = whale_addresses or set()
@@ -228,6 +268,17 @@ class EthMintListener:
     # ──────────────────────────────────────────────────────────────────────────
 
     async def _run_loop(self):
+        # On cloud hosts (Render/AWS) the free public WS nodes often accept the
+        # subscription but never stream events — a silent dead-end where the
+        # WS-error fallback never triggers. HTTP polling is reliable there and,
+        # because it filters to mints (from==0x0) server-side, it's cheaper than
+        # the WS firehose. Default to HTTP-poll mode; set MINT_LISTENER_HTTP_ONLY=0
+        # to use the WebSocket subscription instead.
+        http_only = os.getenv("MINT_LISTENER_HTTP_ONLY", "1").strip().lower() in ("1", "true", "yes", "on")
+        if http_only:
+            await self._http_poll_loop()
+            return
+
         endpoint_idx = 0
         consecutive_errors = 0
         print(f"[MintWS] Listener loop started — {len(WS_ENDPOINTS)} WS endpoint(s) configured.")
@@ -257,81 +308,148 @@ class EthMintListener:
                 await asyncio.sleep(wait)
                 endpoint_idx += 1
 
-    async def _http_poll_once(self) -> None:
-        """Poll recent blocks via HTTP RPC when WebSocket is blocked by IP filtering."""
-        w3 = None
+    async def _http_poll_loop(self) -> None:
+        """Primary mint source on cloud hosts: poll new blocks for mint logs at a
+        fixed interval. Reliable and free (no WS firehose / no paid RPC needed)."""
         try:
-            import trackers.eth_tracker as et
-            w3 = getattr(et, "w3", None)
-            if w3 is not None:
-                try:
-                    if not w3.is_connected():
-                        w3 = None
-                except Exception:
-                    w3 = None
+            interval = max(8, int(os.getenv("LIVE_MINT_INTERVAL", "15")))
         except Exception:
-            w3 = None
-
-        if w3 is None:
+            interval = 15
+        print(f"[MintWS] HTTP-poll mode active (every {interval}s) — reliable on cloud hosts, no WS firehose.")
+        while self._running:
             try:
-                from web3 import Web3
-                for url in _HTTP_POLL_RPCS:
-                    try:
-                        w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 20}))
-                        if w3.is_connected():
-                            break
-                    except Exception:
-                        continue
-            except Exception:
-                pass
+                await self._http_poll_once()
+            except Exception as e:
+                print(f"[MintWS] HTTP poll loop error: {str(e)[:160]}")
+            await asyncio.sleep(interval)
 
-        if w3 is None:
-            print("[MintWS] HTTP poll: no usable RPC (set ETHEREUM_MINT_RPC_URLS for reliable mints).")
+    async def _fetch_mint_logs(self, w3, from_block: int, to_block: int) -> List:
+        """Fetch mint-only logs with the correct indexed-from topic per standard."""
+        filters = (
+            [ERC721_TRANSFER, NULL_ADDRESS_TOPIC],
+            [ERC1155_TRANSFER_SINGLE, None, NULL_ADDRESS_TOPIC],
+            [ERC1155_TRANSFER_BATCH, None, NULL_ADDRESS_TOPIC],
+        )
+        logs: List = []
+        for topics in filters:
+            batch = await asyncio.to_thread(
+                w3.eth.get_logs,
+                {"fromBlock": from_block, "toBlock": to_block, "topics": topics},
+            )
+            logs.extend(batch)
+        return logs
+
+    async def _http_poll_once(self) -> None:
+        """Poll finalized mint logs via HTTP, failing over between configured RPCs."""
+        candidates = []
+        seen = set()
+
+        def add_candidate(candidate) -> None:
+            if candidate is None or id(candidate) in seen:
+                return
+            seen.add(id(candidate))
+            candidates.append(candidate)
+
+        add_candidate(self._http_w3)
+
+        try:
+            from web3 import Web3
+            for url in _HTTP_POLL_RPCS:
+                add_candidate(
+                    Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 20}))
+                )
+        except Exception as exc:
+            logger.debug("[HTTP Poll] Could not build RPC candidates: %s", exc)
+
+        if not candidates:
+            print(
+                "[MintWS] HTTP poll: no usable RPC "
+                "(set ETHEREUM_MINT_RPC_URLS for reliable mints)."
+            )
             return
 
-        try:
-            current = await asyncio.to_thread(lambda: w3.eth.block_number)
-            from_block = max(current - 5, 0)
-            logs = await asyncio.to_thread(
-                lambda: w3.eth.get_logs(
-                    {
-                        "fromBlock": from_block,
-                        "toBlock": current,
-                        "topics": [
-                            [ERC721_TRANSFER, ERC1155_TRANSFER_SINGLE, ERC1155_TRANSFER_BATCH],
-                            NULL_ADDRESS_TOPIC,
-                        ],
-                    }
+        errors = []
+        for index, w3 in enumerate(candidates, start=1):
+            try:
+                current = int(await asyncio.to_thread(lambda: w3.eth.block_number))
+                # Leave the newest block unprocessed until the next poll to reduce
+                # duplicate/reverted alerts from short chain reorganizations.
+                safe_head = max(current - 1, 0)
+                if self._last_polled_block is None:
+                    from_block = max(safe_head - 3, 0)
+                else:
+                    from_block = self._last_polled_block + 1
+                    if safe_head - from_block > 25:
+                        from_block = safe_head - 25
+                if from_block > safe_head:
+                    self._http_w3 = w3
+                    return
+
+                logs = await self._fetch_mint_logs(w3, from_block, safe_head)
+                self._http_w3 = w3
+                self._last_polled_block = safe_head
+
+                def number(value, default: int = 0) -> int:
+                    if value is None:
+                        return default
+                    if isinstance(value, str):
+                        return int(value, 16) if value.startswith("0x") else int(value)
+                    return int(value)
+
+                def hex_value(value) -> str:
+                    if value is None:
+                        return "0x"
+                    rendered = value.hex() if hasattr(value, "hex") else str(value)
+                    return rendered if rendered.startswith("0x") else "0x" + rendered
+
+                logs.sort(
+                    key=lambda item: (
+                        number(item.get("blockNumber")),
+                        number(item.get("logIndex")),
+                    )
                 )
-            )
-            print(f"[MintWS] HTTP poll: {len(logs)} mint log(s) from blocks {from_block}-{current}")
-            if logs:
-                logger.info(
-                    "[HTTP Poll] Fetched %s mint event(s) from blocks %s-%s",
-                    len(logs),
-                    from_block,
-                    current,
-                )
+                if logs:
+                    print(
+                        f"[MintWS] HTTP poll: {len(logs)} mint log(s) "
+                        f"from blocks {from_block}-{safe_head}"
+                    )
+                    logger.info(
+                        "[HTTP Poll] Fetched %s mint event(s) from blocks %s-%s",
+                        len(logs),
+                        from_block,
+                        safe_head,
+                    )
+
                 for log in logs:
                     raw_log = {
                         "address": str(log.get("address", "")).lower(),
                         "topics": [
-                            "0x" + t.hex() if hasattr(t, "hex") else str(t)
-                            for t in (log.get("topics") or [])
+                            hex_value(topic) for topic in (log.get("topics") or [])
                         ],
-                        "data": "0x" + log["data"].hex() if hasattr(log["data"], "hex") else str(log.get("data", "")),
-                        "transactionHash": "0x" + log["transactionHash"].hex()
-                        if hasattr(log["transactionHash"], "hex")
-                        else str(log.get("transactionHash", "")),
-                        "blockNumber": hex(int(log["blockNumber"])),
+                        "data": hex_value(log.get("data")),
+                        "transactionHash": hex_value(log.get("transactionHash")),
+                        "blockNumber": hex(number(log.get("blockNumber"))),
+                        "logIndex": hex(number(log.get("logIndex"))),
                     }
                     try:
                         await self._handle_log(raw_log)
-                    except Exception as e:
-                        logger.debug("[HTTP Poll] _handle_log error: %s", e)
-        except Exception as e:
-            logger.debug("[HTTP Poll] Error: %s", e)
-            print(f"[MintWS] HTTP poll error (RPC may reject broad getLogs): {str(e)[:160]}")
+                    except Exception as exc:
+                        logger.warning(
+                            "[HTTP Poll] Could not parse mint log %s: %s",
+                            raw_log.get("transactionHash", "")[:18],
+                            exc,
+                        )
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if w3 is self._http_w3:
+                    self._http_w3 = None
+                errors.append(f"RPC {index}: {str(exc)[:100]}")
+
+        detail = " | ".join(errors[-3:]) or "unknown RPC error"
+        logger.warning("[HTTP Poll] All RPC candidates failed: %s", detail)
+        print(f"[MintWS] HTTP poll failed on all RPCs: {detail[:240]}")
 
     async def _connect_and_listen(self, uri: str):
         async with websockets.connect(
@@ -437,6 +555,16 @@ class EthMintListener:
         event_sig = topics[0].lower()
         contract = normalize_eth_address(log.get("address", ""))
         tx_hash = log.get("transactionHash", "")
+        raw_block = log.get("blockNumber", "0x0")
+        raw_log_index = log.get("logIndex", "0x0")
+        block_number = (
+            int(raw_block, 16) if isinstance(raw_block, str) else int(raw_block or 0)
+        )
+        log_index = (
+            int(raw_log_index, 16)
+            if isinstance(raw_log_index, str)
+            else int(raw_log_index or 0)
+        )
 
         if self._is_spam_contract(contract):
             return
@@ -457,7 +585,8 @@ class EthMintListener:
                     "token_id": str(token_id),
                     "to": to_addr,
                     "tx_hash": tx_hash,
-                    "block_number": int(log.get("blockNumber", "0x0"), 16),
+                    "block_number": block_number,
+                    "log_index": log_index,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "gas_fee": 0,
                     "mint_cost": 0,
@@ -471,7 +600,8 @@ class EthMintListener:
                     "from": from_addr,
                     "to": to_addr,
                     "tx_hash": tx_hash,
-                    "block_number": int(log.get("blockNumber", "0x0"), 16),
+                    "block_number": block_number,
+                    "log_index": log_index,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 })
 
@@ -486,7 +616,7 @@ class EthMintListener:
                         "from": from_addr,
                         "to": to_addr,
                         "tx_hash": tx_hash,
-                        "block_number": int(log.get("blockNumber", "0x0"), 16),
+                        "block_number": block_number,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                         "is_known_whale": True,
                     })
@@ -499,7 +629,7 @@ class EthMintListener:
                         "from": from_addr,
                         "to": to_addr,
                         "tx_hash": tx_hash,
-                        "block_number": int(log.get("blockNumber", "0x0"), 16),
+                        "block_number": block_number,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                         "is_known_whale": True,
                     })
@@ -523,7 +653,8 @@ class EthMintListener:
                     "amount": value,
                     "to": to_addr,
                     "tx_hash": tx_hash,
-                    "block_number": int(log.get("blockNumber", "0x0"), 16),
+                    "block_number": block_number,
+                    "log_index": log_index,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "gas_fee": 0,
                     "mint_cost": 0,
@@ -539,7 +670,8 @@ class EthMintListener:
                     "from": from_addr,
                     "to": to_addr,
                     "tx_hash": tx_hash,
-                    "block_number": int(log.get("blockNumber", "0x0"), 16),
+                    "block_number": block_number,
+                    "log_index": log_index,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 })
 
@@ -556,7 +688,7 @@ class EthMintListener:
                         "from": from_addr,
                         "to": to_addr,
                         "tx_hash": tx_hash,
-                        "block_number": int(log.get("blockNumber", "0x0"), 16),
+                        "block_number": block_number,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                         "is_known_whale": True,
                     })
@@ -569,7 +701,7 @@ class EthMintListener:
                         "from": from_addr,
                         "to": to_addr,
                         "tx_hash": tx_hash,
-                        "block_number": int(log.get("blockNumber", "0x0"), 16),
+                        "block_number": block_number,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                         "is_known_whale": True,
                     })
@@ -578,6 +710,9 @@ class EthMintListener:
         elif event_sig == ERC1155_TRANSFER_BATCH and len(topics) >= 4:
             from_addr = normalize_eth_address(topics[2])
             to_addr = normalize_eth_address(topics[3])
+            token_ids, values = _decode_erc1155_batch(log.get("data", ""))
+            batch_amount = sum(values) if values else max(len(token_ids), 1)
+            token_label = str(token_ids[0]) if len(token_ids) == 1 else "batch"
             is_mint = from_addr == ZERO_ADDRESS
             is_whale_in = self._is_known_whale(to_addr)
             is_whale_out = self._is_known_whale(from_addr) and not is_mint
@@ -586,10 +721,12 @@ class EthMintListener:
                 await self._enqueue_mint({
                     "type": "erc1155_batch",
                     "contract_address": contract,
-                    "token_id": "?",
+                    "token_id": token_label,
+                    "amount": batch_amount,
                     "to": to_addr,
                     "tx_hash": tx_hash,
-                    "block_number": int(log.get("blockNumber", "0x0"), 16),
+                    "block_number": block_number,
+                    "log_index": log_index,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "gas_fee": 0,
                     "mint_cost": 0,
@@ -601,11 +738,11 @@ class EthMintListener:
                         "type": "wallet_mint" if is_mint else "wallet_buy",
                         "contract_address": contract,
                         "token_id": "?",
-                        "amount": 5,  # assume batch is significant
+                        "amount": batch_amount,
                         "from": from_addr,
                         "to": to_addr,
                         "tx_hash": tx_hash,
-                        "block_number": int(log.get("blockNumber", "0x0"), 16),
+                        "block_number": block_number,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                         "is_known_whale": True,
                     })
@@ -614,11 +751,11 @@ class EthMintListener:
                         "type": "wallet_sell",
                         "contract_address": contract,
                         "token_id": "?",
-                        "amount": 5,  # assume batch is significant
+                        "amount": batch_amount,
                         "from": from_addr,
                         "to": to_addr,
                         "tx_hash": tx_hash,
-                        "block_number": int(log.get("blockNumber", "0x0"), 16),
+                        "block_number": block_number,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                         "is_known_whale": True,
                     })

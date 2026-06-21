@@ -408,7 +408,7 @@ def _env_int(name: str, default: int = 0) -> int:
 ESCALATION_MAX_AGE_DAYS = max(1, min(10000, _env_int("ESCALATION_MAX_AGE_DAYS", SNIPER_MAX_AGE_DAYS)))
 
 
-LIVE_MINT_INTERVAL = max(15, _env_int("LIVE_MINT_INTERVAL", 60))
+LIVE_MINT_INTERVAL = max(15, _env_int("LIVE_MINT_INTERVAL", 15))
 HOT_MINT_THRESHOLD = max(2, _env_int("HOT_MINT_THRESHOLD", 10))
 HOT_MINT_WINDOW = max(60, _env_int("HOT_MINT_WINDOW", 300))
 HOT_MINT_COOLDOWN = max(60, _env_int("HOT_MINT_COOLDOWN", 600))

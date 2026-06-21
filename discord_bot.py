@@ -786,6 +786,12 @@ class BlockBrainBot(commands.Bot):
                         f"    [LiveMints] NFTScan-style feed → live #{getattr(_live_ch, 'name', live_id)} "
                         f"| hot #{getattr(_hot_ch, 'name', hot_id)}"
                     )
+                else:
+                    print(
+                        f"    [LiveMints] LIVE_MINT_CHANNEL_ID={live_id} / "
+                        f"HOT_MINT_CHANNEL_ID={hot_id} not found or no access — "
+                        f"mint feed not started."
+                    )
                 alpha_id = int(getattr(config, "MINT_X_ALPHA_CHANNEL_ID", 0) or 0)
                 if getattr(config, "ENABLE_MINT_X_ALPHA", True) and alpha_id:
                     try:
@@ -812,14 +818,9 @@ class BlockBrainBot(commands.Bot):
                         )
                     else:
                         print(
-                            f"    [MintXAlpha] MINT_X_ALPHA_CHANNEL_ID={alpha_id} not found — "
-                            f"set channel ID in .env or disable ENABLE_MINT_X_ALPHA=0"
+                            f"    [SmartBuy] SMART_WALLET_BUY_CHANNEL_ID={smart_buy_id} not found — "
+                            f"set channel ID in .env or disable ENABLE_MINT_SMART_WALLET_INTEL=0"
                         )
-                else:
-                    print(
-                        f"    [LiveMints] LIVE_MINT_CHANNEL_ID={live_id} / HOT_MINT_CHANNEL_ID={hot_id} "
-                        f"not found or no access — mint feed not started."
-                    )
         elif getattr(config, "ENABLE_ETH_LIVE_MINTS_POLLER", False):
             mints_id = config.DISCORD_MINTS_CHANNEL_ID
             radar_id = config.DISCORD_NEW_MINTS_CHANNEL_ID
