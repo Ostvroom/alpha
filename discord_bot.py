@@ -418,6 +418,10 @@ class BlockBrainBot(commands.Bot):
         self.active_main_channels = []
         self.active_escalation_channels = []
         self._slash_tree_synced = False
+        # Channel IDs whose load failure we've already logged once — keeps the
+        # console clean instead of repeating the same "not found / no access"
+        # warning on every scan loop.
+        self._logged_channel_errors: Set[int] = set()
 
     @staticmethod
     def _sanitize_embed(embed):
@@ -483,6 +487,18 @@ class BlockBrainBot(commands.Bot):
 
     def _get_log_prefix(self):
         return f"[{datetime.now().strftime('%H:%M:%S')}]"
+
+    def _should_log_channel_error(self, channel_id: int) -> bool:
+        """Return True only the first time a channel's load failure is seen,
+        so a missing/inaccessible channel doesn't spam the console each loop."""
+        try:
+            cid = int(channel_id)
+        except Exception:
+            return True
+        if cid in self._logged_channel_errors:
+            return False
+        self._logged_channel_errors.add(cid)
+        return True
 
     async def _try_begin_twitter_job(self, job_name: str) -> bool:
         """Best-effort guard for long-running Twitter/X background jobs."""
@@ -1432,7 +1448,8 @@ class BlockBrainBot(commands.Bot):
                         ch = self.get_channel(channel_id) or await self.fetch_channel(channel_id)
                         if ch: self.active_main_channels.append(ch)
                     except Exception as e:
-                        print(f"      ⚠️ Access Error: Could not load main channel {channel_id}: {e}")
+                        if self._should_log_channel_error(channel_id):
+                            print(f"      ⚠️ Access Error: Could not load main channel {channel_id}: {e}")
             
             if not self.active_escalation_channels:
                 for cid in config.ESCALATION_CHANNEL_IDS:
@@ -1440,7 +1457,8 @@ class BlockBrainBot(commands.Bot):
                         ch = self.get_channel(cid) or await self.fetch_channel(cid)
                         if ch: self.active_escalation_channels.append(ch)
                     except Exception as e:
-                        print(f"      ⚠️ Access Error: Could not load escalation channel {cid}: {e}")
+                        if self._should_log_channel_error(cid):
+                            print(f"      ⚠️ Access Error: Could not load escalation channel {cid}: {e}")
 
             # Let other on_ready tasks (reports, etc.) finish before Twikit-heavy HVA batches.
             await asyncio.sleep(5)
@@ -1682,7 +1700,8 @@ class BlockBrainBot(commands.Bot):
                 ch = self.get_channel(cid) or await self.fetch_channel(cid)
                 if ch: report_channels.append(ch)
             except Exception as e:
-                print(f"      ⚠️ Could not load channel {cid}: {e}")
+                if self._should_log_channel_error(cid):
+                    print(f"      ⚠️ Could not load channel {cid}: {e}")
         
         if not report_channels:
             print(f"      ❌ Skip Report: No valid trending channels found.")
@@ -2037,7 +2056,8 @@ class BlockBrainBot(commands.Bot):
                 except Exception:
                     ch = None
                 if not ch:
-                    print(f"{pfx} [Daily finds] channel {cid} not found")
+                    if self._should_log_channel_error(cid):
+                        print(f"{pfx} [Daily finds] channel {cid} not found")
                     continue
 
                 ch_state = (state or {}).get(int(cid), {}) if isinstance(state, dict) else {}
