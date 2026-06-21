@@ -21,6 +21,11 @@ import json
 import os
 import sys
 
+# Force UTF-8 output on Windows (avoids cp1252 UnicodeEncodeError for arrow/dash chars)
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # Allow running from project root or scripts/
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -29,8 +34,21 @@ from twikit import Client
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+def _normalize_proxy(line: str) -> str:
+    """Convert host:port:user:pass → http://user:pass@host:port if needed."""
+    line = line.strip()
+    if line.startswith("http://") or line.startswith("https://") or line.startswith("socks5://"):
+        return line
+    # Split on ':' but limit to 3 splits so passwords with ':' are kept intact
+    parts = line.split(":", 3)
+    if len(parts) == 4:
+        host, port, user, passwd = parts
+        return f"http://{user}:{passwd}@{host}:{port}"
+    return line
+
+
 def load_proxies(path: str | None) -> list[str]:
-    """Load proxy list from file or PROXIES env var (one per line, http://user:pass@host:port)."""
+    """Load proxy list from file or PROXIES env var. Accepts host:port:user:pass or http://... format."""
     sources = []
     if path and os.path.exists(path):
         with open(path, encoding="utf-8") as f:
@@ -38,7 +56,7 @@ def load_proxies(path: str | None) -> list[str]:
     if not sources:
         raw = os.getenv("PROXIES", "")
         sources = [p.strip() for p in raw.split("\n") if p.strip()]
-    return sources
+    return [_normalize_proxy(s) for s in sources]
 
 
 def parse_vendor_line(line: str) -> dict | None:
@@ -161,7 +179,7 @@ async def run(args):
     for acc in parsed:
         proxy = proxies[proxy_idx % len(proxies)] if proxies else None
         proxy_idx += 1
-        print(f"\n→ {acc['username']} (proxy: {proxy or 'none'})")
+        print(f"\n>> {acc['username']} (proxy: {proxy or 'none'})")
 
         success = await setup_account(acc, proxy, args.out_dir, force_login=getattr(args, "force", False))
         if success:
