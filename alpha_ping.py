@@ -151,7 +151,7 @@ def build_alpha_embed(caller: discord.Member, link: str, text: str, score: int,
     icon = brand_logo_embed_icon()
     if icon:
         embed.set_author(name=f"{_BRAND} Alpha", icon_url=icon)
-    embed.add_field(name="Link", value=f"[Open alpha]({link})", inline=False)
+    embed.add_field(name="Link", value=link, inline=False)
     embed.add_field(name="Caller", value=caller.mention, inline=True)
     embed.add_field(name="Caller Score", value=f"`{score:+d}`", inline=True)
     embed.add_field(
