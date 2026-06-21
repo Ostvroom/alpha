@@ -272,7 +272,7 @@ class NftscanLiveFeed:
             self._sync_tracked_addresses()
         raw_mints = await self.listener.flush_recent_mints(50)
         if raw_mints:
-            logger.info("[LiveMints] Received %s raw mint event(s) from listener", len(raw_mints))
+            print(f"[LiveMints] Received {len(raw_mints)} raw mint event(s) from listener")
         if intel_on:
             tracked_buys = await self.listener.flush_recent_tracked_activity(50)
             wallets = get_tracked_wallet_map()

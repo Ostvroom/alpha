@@ -230,6 +230,7 @@ class EthMintListener:
     async def _run_loop(self):
         endpoint_idx = 0
         consecutive_errors = 0
+        print(f"[MintWS] Listener loop started — {len(WS_ENDPOINTS)} WS endpoint(s) configured.")
         while self._running:
             endpoint = WS_ENDPOINTS[endpoint_idx % len(WS_ENDPOINTS)]
             try:
@@ -242,8 +243,13 @@ class EthMintListener:
                 err_str = str(e) or f"{type(e).__name__}"
                 logger.error(f"Listener error: {err_str}")
                 consecutive_errors += 1
-            # Fallback: if WebSocket is consistently blocked, poll via HTTP RPC
-            if consecutive_errors >= 3 and self._running:
+            # Fallback: if WebSocket is consistently blocked (common on cloud IPs),
+            # poll via HTTP RPC so live/hot mints keep flowing.
+            if consecutive_errors >= 2 and self._running:
+                print(
+                    f"[MintWS] WS unavailable ({consecutive_errors} fails) — "
+                    f"falling back to HTTP poll."
+                )
                 await self._http_poll_once()
             if self._running:
                 wait = min(60, 5 * (2 ** min(consecutive_errors, 5)))
@@ -280,6 +286,7 @@ class EthMintListener:
                 pass
 
         if w3 is None:
+            print("[MintWS] HTTP poll: no usable RPC (set ETHEREUM_MINT_RPC_URLS for reliable mints).")
             return
 
         try:
@@ -297,6 +304,7 @@ class EthMintListener:
                     }
                 )
             )
+            print(f"[MintWS] HTTP poll: {len(logs)} mint log(s) from blocks {from_block}-{current}")
             if logs:
                 logger.info(
                     "[HTTP Poll] Fetched %s mint event(s) from blocks %s-%s",
@@ -323,6 +331,7 @@ class EthMintListener:
                         logger.debug("[HTTP Poll] _handle_log error: %s", e)
         except Exception as e:
             logger.debug("[HTTP Poll] Error: %s", e)
+            print(f"[MintWS] HTTP poll error (RPC may reject broad getLogs): {str(e)[:160]}")
 
     async def _connect_and_listen(self, uri: str):
         async with websockets.connect(
@@ -353,8 +362,9 @@ class EthMintListener:
             self._sub_id = response.get("result")
             if not self._sub_id:
                 logger.error(f"Subscription failed: {response}")
+                print(f"[MintWS] Subscription rejected by {uri}: {str(response)[:160]}")
                 return
-            logger.info(f"Subscribed to mint events via {uri} (id={self._sub_id})")
+            print(f"[MintWS] ✅ Connected & subscribed to live mints via {uri}")
 
             while self._running:
                 try:
