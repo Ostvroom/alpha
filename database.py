@@ -50,7 +50,8 @@ def init_db():
             last_follows_count INTEGER DEFAULT 0,
             status TEXT DEFAULT 'Active',
             quality_score REAL DEFAULT 0.0,
-            error_count INTEGER DEFAULT 0
+            error_count INTEGER DEFAULT 0,
+            scan_count INTEGER DEFAULT 0
         )
     """)
     
@@ -62,6 +63,8 @@ def init_db():
     try: cursor.execute("ALTER TABLE hva_stats ADD COLUMN quality_score REAL DEFAULT 0.0")
     except: pass
     try: cursor.execute("ALTER TABLE hva_stats ADD COLUMN error_count INTEGER DEFAULT 0")
+    except: pass
+    try: cursor.execute("ALTER TABLE hva_stats ADD COLUMN scan_count INTEGER DEFAULT 0")
     except: pass
     
     # Handle old 'last_scan' column removal/replacement
@@ -1103,7 +1106,18 @@ def get_hva_priority_list():
     """
     import random
     from datetime import datetime, timedelta
-    
+    import config
+
+    # Auto-prune: retire HVAs scanned many times with zero discoveries so the
+    # scan budget focuses on productive hunters.
+    if getattr(config, "ENABLE_HVA_AUTOPRUNE", True):
+        pruned = prune_dead_hvas(int(getattr(config, "HVA_AUTOPRUNE_MIN_SCANS", 15) or 15))
+        if pruned:
+            print(f"   🧹 Auto-pruned {len(pruned)} dead HVA(s) (0 finds after "
+                  f"{int(getattr(config, 'HVA_AUTOPRUNE_MIN_SCANS', 15) or 15)}+ scans): "
+                  f"{', '.join('@' + h for h in pruned[:10])}"
+                  f"{' …' if len(pruned) > 10 else ''}")
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
@@ -1117,6 +1131,10 @@ def get_hva_priority_list():
     )
     data = cursor.fetchall()
 
+    # Dead handles — so the config re-add step below doesn't resurrect them.
+    cursor.execute("SELECT hva_handle FROM hva_stats WHERE status = 'Dead'")
+    dead_handles = {str(r[0] or "").strip().lstrip("@").lower() for r in cursor.fetchall()}
+
     block = _hva_blocklist_lower()
     if block:
         data = [row for row in data if row[0].lower() not in block]
@@ -1124,14 +1142,14 @@ def get_hva_priority_list():
     # Keep DB and config list aligned:
     # existing deployments often keep an old hva_stats set (seeded once), so newly
     # added config.HVA_LIST handles never enter priority tiers unless manually added.
-    import config
-
     cfg_norm = []
     for h in (config.HVA_LIST or []):
         k = str(h or "").strip().lstrip("@").lower()
         if not k:
             continue
         if block and k in block:
+            continue
+        if k in dead_handles:  # don't resurrect an auto-pruned HVA
             continue
         cfg_norm.append(k)
 
@@ -1234,9 +1252,11 @@ def add_hva(handle):
         return False
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+    # Reset scan_count on (re)add so a manually revived HVA gets a fresh window
+    # before auto-prune can retire it again.
     cursor.execute("""
         INSERT INTO hva_stats (hva_handle, status) VALUES (?, 'Active')
-        ON CONFLICT(hva_handle) DO UPDATE SET status = 'Active'
+        ON CONFLICT(hva_handle) DO UPDATE SET status = 'Active', scan_count = 0
     """, (h,))
     conn.commit()
     conn.close()
@@ -1831,16 +1851,55 @@ def update_hva_quality_scores():
     conn.close()
 
 def update_hva_scan_timestamp(hva_handle):
-    """Update the last scan timestamp for an HVA after each scan attempt."""
+    """Update the last scan timestamp for an HVA after each scan attempt and
+    bump its scan_count (used by the auto-prune dead-HVA logic)."""
     from datetime import datetime
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+    now = datetime.now().isoformat()
     cursor.execute("""
-        INSERT INTO hva_stats (hva_handle, last_scan_at) VALUES (?, ?)
-        ON CONFLICT(hva_handle) DO UPDATE SET last_scan_at = ?
-    """, (hva_handle.lower(), datetime.now().isoformat(), datetime.now().isoformat()))
+        INSERT INTO hva_stats (hva_handle, last_scan_at, scan_count) VALUES (?, ?, 1)
+        ON CONFLICT(hva_handle) DO UPDATE SET
+            last_scan_at = ?,
+            scan_count = COALESCE(scan_count, 0) + 1
+    """, (hva_handle.lower(), now, now))
     conn.commit()
     conn.close()
+
+
+def prune_dead_hvas(min_scans: int = 15):
+    """Mark HVAs as 'Dead' once they've been scanned `min_scans`+ times and still
+    produced zero discoveries. Dead HVAs drop out of the scan rotation so budget
+    is spent on productive hunters. Returns the list of newly-pruned handles."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            SELECT hva_handle FROM hva_stats
+            WHERE status != 'Dead'
+              AND COALESCE(discovery_count, 0) = 0
+              AND COALESCE(scan_count, 0) >= ?
+            """,
+            (int(min_scans),),
+        )
+        pruned = [row[0] for row in cursor.fetchall()]
+        if pruned:
+            cursor.execute(
+                """
+                UPDATE hva_stats SET status = 'Dead'
+                WHERE status != 'Dead'
+                  AND COALESCE(discovery_count, 0) = 0
+                  AND COALESCE(scan_count, 0) >= ?
+                """,
+                (int(min_scans),),
+            )
+            conn.commit()
+        return pruned
+    except Exception:
+        return []
+    finally:
+        conn.close()
 
 def get_inactive_hva_analysis():
     """Analyze why HVAs are inactive - never scanned vs scanned but found nothing.
