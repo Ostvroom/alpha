@@ -545,7 +545,7 @@ BRAIN_SCAN_HVA_BUDGET_SEC = max(45.0, min(300.0, _env_float("BRAIN_SCAN_HVA_BUDG
 # Auto-prune dead HVAs: retire hunters scanned this many times with 0 discoveries
 # so the scan budget is spent on productive accounts. Set ENABLE_HVA_AUTOPRUNE=0 to disable.
 ENABLE_HVA_AUTOPRUNE = _env_flag("ENABLE_HVA_AUTOPRUNE", "1")
-HVA_AUTOPRUNE_MIN_SCANS = max(3, min(200, _env_int("HVA_AUTOPRUNE_MIN_SCANS", 15)))
+HVA_AUTOPRUNE_MIN_SCANS = max(3, min(200, _env_int("HVA_AUTOPRUNE_MIN_SCANS", 50)))
 BRAIN_SCAN_SKIP_MENTIONS_WHEN_TWEET_WATCHER_ACTIVE = _env_flag("BRAIN_SCAN_SKIP_MENTIONS_WHEN_TWEET_WATCHER_ACTIVE", "1")
 BRAIN_SCAN_DEGRADED_BATCH_SIZE = max(1, min(10, _env_int("BRAIN_SCAN_DEGRADED_BATCH_SIZE", 2)))
 BRAIN_SCAN_DEGRADED_TIMELINE_COUNT = max(3, min(15, _env_int("BRAIN_SCAN_DEGRADED_TIMELINE_COUNT", 8)))

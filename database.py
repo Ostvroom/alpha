@@ -1111,10 +1111,11 @@ def get_hva_priority_list():
     # Auto-prune: retire HVAs scanned many times with zero discoveries so the
     # scan budget focuses on productive hunters.
     if getattr(config, "ENABLE_HVA_AUTOPRUNE", True):
-        pruned = prune_dead_hvas(int(getattr(config, "HVA_AUTOPRUNE_MIN_SCANS", 15) or 15))
+        _min_scans = int(getattr(config, "HVA_AUTOPRUNE_MIN_SCANS", 50) or 50)
+        pruned = prune_dead_hvas(_min_scans)
         if pruned:
             print(f"   🧹 Auto-pruned {len(pruned)} dead HVA(s) (0 finds after "
-                  f"{int(getattr(config, 'HVA_AUTOPRUNE_MIN_SCANS', 15) or 15)}+ scans): "
+                  f"{_min_scans}+ scans): "
                   f"{', '.join('@' + h for h in pruned[:10])}"
                   f"{' …' if len(pruned) > 10 else ''}")
 
@@ -1159,6 +1160,33 @@ def get_hva_priority_list():
         if not hk:
             continue
         by_handle[hk] = (hk, int(disc_count or 0), last_scan, status)
+
+    # Recovery: if too few active HVAs remain (e.g. prune ran too aggressively in prior
+    # deploys), revive all dead config handles and give them a fresh scan window.
+    if len(by_handle) < 10:
+        revived = []
+        for h in (config.HVA_LIST or []):
+            k = str(h or "").strip().lstrip("@").lower()
+            if not k or (block and k in block):
+                continue
+            cursor.execute(
+                """
+                UPDATE hva_stats SET status='Active', scan_count=0
+                WHERE hva_handle=? AND status='Dead'
+                """,
+                (k,),
+            )
+            if cursor.rowcount:
+                revived.append(k)
+                by_handle[k] = (k, 0, None, "Active")
+        if revived:
+            conn.commit()
+            dead_handles -= set(revived)
+            cfg_norm = [h for h in cfg_norm if True]  # cfg_norm already built; just un-block revived
+            for k in revived:
+                if k not in cfg_norm:
+                    cfg_norm.append(k)
+            print(f"   🔄 Revived {len(revived)} dead HVA(s) — active count was critically low.")
 
     missing_cfg = [h for h in cfg_norm if h not in by_handle]
     if missing_cfg:
@@ -1867,13 +1895,22 @@ def update_hva_scan_timestamp(hva_handle):
     conn.close()
 
 
-def prune_dead_hvas(min_scans: int = 15):
+def prune_dead_hvas(min_scans: int = 50):
     """Mark HVAs as 'Dead' once they've been scanned `min_scans`+ times and still
     produced zero discoveries. Dead HVAs drop out of the scan rotation so budget
-    is spent on productive hunters. Returns the list of newly-pruned handles."""
+    is spent on productive hunters. Returns the list of newly-pruned handles.
+
+    Safety: never prunes if fewer than 10 active HVAs would remain afterwards."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     try:
+        cursor.execute("SELECT COUNT(*) FROM hva_stats WHERE status != 'Dead'")
+        total_active = int(cursor.fetchone()[0] or 0)
+
+        # Safety: always keep at least 10 active HVAs to avoid leaving nothing to scan.
+        if total_active <= 10:
+            return []
+
         cursor.execute(
             """
             SELECT hva_handle FROM hva_stats
@@ -1883,16 +1920,17 @@ def prune_dead_hvas(min_scans: int = 15):
             """,
             (int(min_scans),),
         )
-        pruned = [row[0] for row in cursor.fetchall()]
+        candidates = [row[0] for row in cursor.fetchall()]
+
+        # Only prune as many as keep ≥10 active HVAs remaining.
+        max_to_prune = max(0, total_active - 10)
+        pruned = candidates[:max_to_prune]
+
         if pruned:
+            placeholders = ",".join("?" * len(pruned))
             cursor.execute(
-                """
-                UPDATE hva_stats SET status = 'Dead'
-                WHERE status != 'Dead'
-                  AND COALESCE(discovery_count, 0) = 0
-                  AND COALESCE(scan_count, 0) >= ?
-                """,
-                (int(min_scans),),
+                f"UPDATE hva_stats SET status = 'Dead' WHERE hva_handle IN ({placeholders})",
+                pruned,
             )
             conn.commit()
         return pruned
