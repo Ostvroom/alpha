@@ -1411,19 +1411,22 @@ class TwitterClient:
             # accounts.json, so if the on-disk file is missing ct0 (or doesn't exist),
             # rebuild authoritative cookies from the account credentials.
             has_token_creds = bool(account and account.get('auth_token'))
-            file_has_ct0 = bool(file_cookies and file_cookies.get('ct0'))
 
-            if file_cookies and (file_has_ct0 or not has_token_creds):
-                # File is usable as-is (real browser export, or already has ct0).
-                client.set_cookies(file_cookies)
-                username = account['username'] if account else 'default'
-                self._health_log(f"OK Loaded cookies for @{username}")
-                session['logged_in'] = True
-                try:
-                    session['cookie_file_mtime'] = os.path.getmtime(cookie_path)
-                except Exception:
-                    pass
-                return True, None
+            # If accounts.json has auth_token+ct0, always use those — they are the
+            # authoritative vendor credentials. Stale cookie files have caused
+            # "invalid response" blocks when their auth_token expired on X's side.
+            # Fall back to cookie file ONLY when accounts.json has no credentials.
+            if not has_token_creds:
+                if file_cookies:
+                    client.set_cookies(file_cookies)
+                    username = account['username'] if account else 'default'
+                    self._health_log(f"OK Loaded cookies for @{username}")
+                    session['logged_in'] = True
+                    try:
+                        session['cookie_file_mtime'] = os.path.getmtime(cookie_path)
+                    except Exception:
+                        pass
+                    return True, None
 
             # Build canonical cookies from accounts.json credentials.
             if has_token_creds:
