@@ -555,15 +555,19 @@ class TwitterClient:
             proxy_msg = f" (Proxy: {self._redact_proxy(current_proxy)})" if current_proxy else ""
             self._health_log(f"Primary session: cookies.json{proxy_msg}")
         
-        # Backup cookies (data/ or project root)
-        # Supports:
-        # - cookies_backup.json
-        # - cookies_backup2.json, cookies_backup3.json, ... cookies_backup20.json
+        # Backup cookies — only load from /etc/secrets (Render Secret Files).
+        # DATA_DIR persists across deploys so stale backup files there would
+        # keep loading even after they're removed from Secret Files.
+        # Supports: cookies_backup.json, cookies_backup2.json, ... cookies_backup20.json
         backup_names = ["cookies_backup.json"] + [f"cookies_backup{i}.json" for i in range(2, 21)]
         for backup_name in backup_names:
             if not _cookie_allowed(backup_name):
                 continue
-            backup_cookie_path = _pick_cookie_file(backup_name)
+            # Only search /etc/secrets — never DATA_DIR or project root for backups
+            backup_cookie_path = None
+            secrets_path = os.path.join("/etc/secrets", backup_name)
+            if os.path.isfile(secrets_path):
+                backup_cookie_path = secrets_path
             if not backup_cookie_path:
                 continue
             current_proxy = get_next_proxy()
