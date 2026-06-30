@@ -1079,7 +1079,11 @@ class TwitterClient:
         username = session['account']['username'] if session['account'] else 'default'
         self._record_session_failure(session, reason)
         
-        # Proxy / transport errors (include ReadTimeout — else slow proxies block the whole pool)
+        # Proxy / transport errors (include ReadTimeout — else slow proxies block the whole pool).
+        # 407 / "Proxy Authentication Required" is a PROXY failure (iProyal session
+        # expired, concurrent-connection or bandwidth limit hit) — NOT a flagged
+        # cookie. It must rotate the proxy, never burn the X session. Same for the
+        # generic "Proxy" / "ProxyError" transport failures.
         is_proxy_err = any(
             x in reason
             for x in (
@@ -1087,6 +1091,9 @@ class TwitterClient:
                 "502",
                 "504",
                 "500",
+                "407",
+                "Proxy Authentication",
+                "ProxyError",
                 "ConnectTimeout",
                 "ReadTimeout",
                 "Timeout",
