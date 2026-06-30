@@ -44,6 +44,11 @@ from trackers.eth_address import ZERO_ADDRESS, normalize_eth_address
 ZERO_ADDRESS_SHORT = ZERO_ADDRESS
 NULL_ADDRESS_TOPIC = "0x" + ("0" * 64)
 
+# Quiet routine per-poll heartbeats unless LOG_HEARTBEATS is enabled. Mints are
+# still processed and posted; only the chatty "HTTP poll: N mint log(s)" console
+# line is suppressed so the logs stay readable.
+_LOG_HEARTBEATS = os.getenv("LOG_HEARTBEATS", "0").strip().lower() in ("1", "true", "yes", "on")
+
 def _decode_erc1155_batch(data: str) -> Tuple[List[int], List[int]]:
     """Decode the token-id and value arrays from TransferBatch event data."""
     try:
@@ -409,10 +414,11 @@ class EthMintListener:
                     )
                 )
                 if logs:
-                    print(
-                        f"[MintWS] HTTP poll: {len(logs)} mint log(s) "
-                        f"from blocks {from_block}-{safe_head}"
-                    )
+                    if _LOG_HEARTBEATS:
+                        print(
+                            f"[MintWS] HTTP poll: {len(logs)} mint log(s) "
+                            f"from blocks {from_block}-{safe_head}"
+                        )
                     logger.info(
                         "[HTTP Poll] Fetched %s mint event(s) from blocks %s-%s",
                         len(logs),

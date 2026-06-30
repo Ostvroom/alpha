@@ -1585,7 +1585,8 @@ class TwitterClient:
                 # originating IP + TLS fingerprint + expiry. Sending an expired or
                 # mismatched __cf_bm tells CF "this is a replay from a flagged session"
                 # and triggers an immediate 403, even when auth_token+ct0 are valid.
-                print(f"Using auth_token + ct0 for @{username_str}...")
+                if getattr(config, "LOG_HEARTBEATS", False):
+                    print(f"Using auth_token + ct0 for @{username_str}...")
                 client.set_cookies(cookies)
                 session['logged_in'] = True
                 # Set mtime=0 so the stale-cookie warning never fires for

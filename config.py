@@ -516,8 +516,14 @@ BRAIN_SCAN_TWEET_WATCHER_YIELD_SEC = max(
     5.0,
     min(180.0, _env_float("BRAIN_SCAN_TWEET_WATCHER_YIELD_SEC", 75.0)),
 )
+# Master switch for chatty routine heartbeats (mint polling, live-mint feed,
+# wallet "scan complete", per-session login lines). OFF by default so the logs
+# show only meaningful events (brain scan, discoveries, blocks, errors).
+# Set LOG_HEARTBEATS=1 to bring the verbose per-tick lines back for debugging.
+LOG_HEARTBEATS = _env_flag("LOG_HEARTBEATS", "0")
 # Wallet tracker: periodic "scan complete" and ETH/USD refresh (very chatty on Render).
-LOG_ETH_WALLET_HEARTBEAT = _env_flag("LOG_ETH_WALLET_HEARTBEAT", "1")
+# Default now follows the master heartbeat switch (quiet unless explicitly enabled).
+LOG_ETH_WALLET_HEARTBEAT = _env_flag("LOG_ETH_WALLET_HEARTBEAT", "1" if LOG_HEARTBEATS else "0")
 LOG_ETH_USD_REFRESH = _env_flag("LOG_ETH_USD_REFRESH", "0")
 # Per-tx [PRICE] lines next to NFT alerts (set 0 to hide).
 LOG_ETH_TX_PRICE_LINES = _env_flag("LOG_ETH_TX_PRICE_LINES", "1")
