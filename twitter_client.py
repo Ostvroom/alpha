@@ -309,7 +309,7 @@ def _scweet_error_to_str(exc: Exception) -> str:
     return msg
 
 
-async def log_all_proxy_health(timeout: float = 12.0):
+async def log_all_proxy_health(timeout: float = 22.0):
     """One-time, read-only health probe of the whole proxy pool.
 
     Pings every proxy in proxies.txt once (concurrently, short timeout) and
@@ -355,8 +355,12 @@ async def log_all_proxy_health(timeout: float = 12.0):
         return
     alive = sum(1 for r in results if r)
     total = len(proxies)
-    flag = "" if alive == total else ("  ⚠️ replace dead proxies" if alive < total else "")
-    print(f"[ProxyHealth] {alive}/{total} proxies alive{flag}", flush=True)
+    # iProyal residential exits are slow (12–25s) and fluctuate, so 1–2 timing
+    # out on any given probe is normal — NOT dead. Only raise the replace flag
+    # when the pool is genuinely degraded (<70% reachable), so the log doesn't
+    # cry wolf and push the operator to swap healthy-but-slow proxies.
+    flag = "  ⚠️ pool degraded — check/replace proxies" if (total and alive < 0.7 * total) else ""
+    print(f"[ProxyHealth] {alive}/{total} proxies reachable (slow residential — transient timeouts are normal){flag}", flush=True)
 
 
 class TwitterClient:
