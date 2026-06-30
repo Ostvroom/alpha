@@ -9,9 +9,12 @@ daily_finds_digest_state.json
 data/
 assets/
 cookies*.json
-proxies.txt
+proxies*.txt
+proxies*.cleaned.txt
 user_id_cache.json
 accounts.json
+accounts_*.txt
+accounts*.json
 *_state.json
 telegram_calls_state.json
 daily_finds_digest_state.json
