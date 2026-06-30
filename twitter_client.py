@@ -609,6 +609,21 @@ class TwitterClient:
                 with open(accounts_path, 'r') as f:
                     accounts = json.load(f)
 
+                # Purge stale per-account cookie files from DATA_DIR for any
+                # account that has auth_token+ct0 in accounts.json.  Those files
+                # accumulate across deploys and contain expired __cf_bm tokens;
+                # sending them merges stale CF state into fresh auth, causing
+                # immediate re-blocks.  We always re-auth from accounts.json on
+                # startup, so the files are never needed.
+                for acc in accounts:
+                    if acc.get('auth_token'):
+                        stale_path = os.path.join(self._cookies_dir, f"cookies_{acc['username']}.json")
+                        if os.path.isfile(stale_path):
+                            try:
+                                os.remove(stale_path)
+                            except Exception:
+                                pass
+
                 for acc in accounts:
                     # Resolve the account's cookie file wherever it lives (DATA_DIR,
                     # root, or /etc/secrets); fall back to DATA_DIR path for new logins.
@@ -1444,25 +1459,18 @@ class TwitterClient:
                     import secrets
                     ct0 = secrets.token_hex(80)  # 160 hex chars, X ct0 format
                 cookies['ct0'] = ct0
-                # Preserve passive cookies (guest_id, __cf_bm) from a stale file.
-                if file_cookies:
-                    for k, v in file_cookies.items():
-                        if k not in ('auth_token', 'ct0'):
-                            cookies.setdefault(k, v)
+                # Do NOT merge stale passive cookies (__cf_bm, guest_id) from disk.
+                # __cf_bm is Cloudflare's Bot Manager token — it is bound to the
+                # originating IP + TLS fingerprint + expiry. Sending an expired or
+                # mismatched __cf_bm tells CF "this is a replay from a flagged session"
+                # and triggers an immediate 403, even when auth_token+ct0 are valid.
                 print(f"Using auth_token + ct0 for @{username_str}...")
                 client.set_cookies(cookies)
-                # Overwrite the file so future startups load the repaired cookies.
-                try:
-                    with open(cookie_path, 'w') as _f:
-                        import json as _json
-                        _json.dump(cookies, _f)
-                except Exception:
-                    pass
                 session['logged_in'] = True
-                try:
-                    session['cookie_file_mtime'] = os.path.getmtime(cookie_path)
-                except Exception:
-                    pass
+                # Set mtime=0 so the stale-cookie warning never fires for
+                # accounts.json sessions — we always re-auth from credentials,
+                # not from disk files, so the file mtime is irrelevant.
+                session['cookie_file_mtime'] = 0.0
                 return True, None
 
             if account:
