@@ -22,6 +22,7 @@ import os
 import re
 import sys
 import shutil
+import asyncio
 
 _PATCH_LOGS_ENABLED = os.getenv("TWIKIT_PATCH_LOGS", "0").strip().lower() in ("1", "true", "yes", "on")
 
@@ -328,24 +329,38 @@ def _apply_monkey_patch():
         original_init = ClientTransaction.init
 
     async def _safe_init(self, session, headers):
-        try:
-            await original_init(self, session, headers)
-        except Exception as e:
-            msg = str(e)
-            # Allow partial init — set safe defaults so the client can still work
-            if not getattr(self, "DEFAULT_KEY_BYTES_INDICES", None):
-                self.DEFAULT_ROW_INDEX = 0
-                self.DEFAULT_KEY_BYTES_INDICES = []
-            if not getattr(self, "key", None):
-                self.key = ""
-            if not getattr(self, "key_bytes", None):
-                self.key_bytes = []
-            if not getattr(self, "animation_key", None):
-                self.animation_key = "0"
-            # Prevent repeated init attempts (and repeated main.js fetches) on this instance
-            if not getattr(self, "home_page_response", None):
-                self.home_page_response = True
-            _patch_log(f"    [PATCH] ClientTransaction.init recovered from: {msg}")
+        # Retry the transaction-id bootstrap. The x.com home-page fetch is
+        # occasionally flaky through a given residential proxy, but almost
+        # always succeeds within a couple of tries. A genuine init yields a
+        # real self.key — which is exactly what generate_transaction_id needs:
+        #     key = key or self.key or self.get_key(response)
+        # The OLD recovery set self.key = "" and home_page_response = True. But
+        # "" is falsy, so generate_transaction_id fell through to
+        # get_key(None) -> validate_response(None) -> raise "invalid response"
+        # on the VERY NEXT request, and home_page_response = True permanently
+        # poisoned the client so it could never re-init. One transient hiccup
+        # thus turned a session into a permanent "invalid response" generator.
+        last_err = None
+        for attempt in range(3):
+            try:
+                # Clear any partial/poisoned state so the retry re-fetches cleanly.
+                self.home_page_response = None
+                await original_init(self, session, headers)
+                # Real success = a non-empty key AND a real home-page response
+                # (a parsed object, not None and not the poisoned `True`).
+                if getattr(self, "key", None) and getattr(self, "home_page_response", None) not in (None, True):
+                    return
+            except Exception as e:
+                last_err = e
+            await asyncio.sleep(0.4 * (attempt + 1))
+
+        # All retries failed. Do NOT poison the client with home_page_response=True.
+        # Leave it None so the next request re-attempts a fresh init, and raise a
+        # clean retryable error so the caller rotates to a healthy session/proxy
+        # instead of silently generating an invalid transaction id.
+        self.home_page_response = None
+        _patch_log(f"    [PATCH] ClientTransaction.init failed after retries: {last_err}")
+        raise last_err if last_err is not None else Exception("invalid response (init bootstrap failed)")
 
     _safe_init._is_patched = True
     ClientTransaction.init = _safe_init
