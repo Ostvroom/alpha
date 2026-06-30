@@ -309,6 +309,56 @@ def _scweet_error_to_str(exc: Exception) -> str:
     return msg
 
 
+async def log_all_proxy_health(timeout: float = 12.0):
+    """One-time, read-only health probe of the whole proxy pool.
+
+    Pings every proxy in proxies.txt once (concurrently, short timeout) and
+    logs how many are alive. Purely diagnostic — never touches the live
+    sessions or the scan path. Disable with PROXY_HEALTH_CHECK_ON_BOOT=0.
+    Proxy health was the recurring root cause of blocks, so surfacing
+    "X/N alive" at boot lets the operator self-diagnose after any
+    credential change instead of guessing.
+    """
+    if (os.getenv("PROXY_HEALTH_CHECK_ON_BOOT", "1").strip().lower()
+            not in ("1", "true", "yes", "on")):
+        return
+    try:
+        proxies = list(dict.fromkeys(config.get_proxies() or []))
+    except Exception as e:
+        print(f"[ProxyHealth] could not load proxies: {e}", flush=True)
+        return
+    if not proxies:
+        print("[ProxyHealth] no proxies configured", flush=True)
+        return
+    try:
+        from curl_cffi import requests as _creq
+    except Exception:
+        return
+
+    def _ping(p):
+        try:
+            r = _creq.get(
+                "https://api.ipify.org", impersonate="chrome",
+                proxies={"http": p, "https": p}, timeout=timeout,
+            )
+            return r.status_code == 200
+        except Exception:
+            return False
+
+    loop = asyncio.get_event_loop()
+    try:
+        results = await asyncio.gather(
+            *[loop.run_in_executor(None, _ping, p) for p in proxies]
+        )
+    except Exception as e:
+        print(f"[ProxyHealth] probe error: {e}", flush=True)
+        return
+    alive = sum(1 for r in results if r)
+    total = len(proxies)
+    flag = "" if alive == total else ("  ⚠️ replace dead proxies" if alive < total else "")
+    print(f"[ProxyHealth] {alive}/{total} proxies alive{flag}", flush=True)
+
+
 class TwitterClient:
     def __init__(self, cookie_allowlist=None, cookie_blocklist=None, proxy_slice=None, session_slice=None, label="brain"):
         from app_paths import BASE_DIR, DATA_DIR, ensure_dirs

@@ -42,7 +42,7 @@ import re
 import textwrap
 import time
 from typing import List, Dict, Optional, Set, Tuple, Any
-from twitter_client import TwitterClient, AIAnalyzer
+from twitter_client import TwitterClient, AIAnalyzer, log_all_proxy_health
 from datetime import datetime, timedelta, timezone, time as dtime
 import asyncio
 import random
@@ -611,6 +611,11 @@ class BlockBrainBot(commands.Bot):
         return "D", "🌱"
 
     async def setup_hook(self):
+        # Fire-and-forget proxy pool health probe (read-only; logs "X/N alive").
+        try:
+            asyncio.create_task(log_all_proxy_health())
+        except Exception:
+            pass
         database.init_db()
         try:
             import alert_snapshots
