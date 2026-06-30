@@ -369,6 +369,7 @@ class TwitterClient:
         # asyncio lock created lazily (can't use asyncio primitives before event loop starts)
         self._session_lock = None  # will be asyncio.Lock once event loop is running
         self._cf403_last_ts = 0.0
+        self._cf403_window_sessions = {}  # ident -> last CF403 ts, for distinct-session streak detection
         self._cf_hard_blocks_total = 0   # total CF403 hard-blocks across all sessions this run
         self._log_session_rotation = bool(getattr(config, "LOG_TWITTER_SESSION_ROTATION", False))
         self._log_session_health = bool(getattr(config, "LOG_TWITTER_SESSION_HEALTH", False))
@@ -912,28 +913,55 @@ class TwitterClient:
     def _in_global_backoff(self):
         return float(self._global_backoff_until_ts or 0.0) > time.time()
 
-    def _register_cf403_and_maybe_global_cooldown(self):
+    def _register_cf403_and_maybe_global_cooldown(self, session=None):
         now = time.time()
         window_sec = float(getattr(config, "TWIKIT_CF_STREAK_WINDOW_SEC", 120.0) or 120.0)
         trigger_n = int(getattr(config, "TWIKIT_CF_STREAK_FOR_GLOBAL_COOLDOWN", 3) or 3)
         cool_sec = float(getattr(config, "TWIKIT_CF_GLOBAL_COOLDOWN_SEC", 180.0) or 180.0)
 
-        if (now - float(self._cf403_last_ts or 0.0)) <= max(1.0, window_sec):
-            self._cf403_streak += 1
+        # Only treat a CF403 burst as a *global* block when it spans multiple
+        # DISTINCT sessions within the window.  A single session repeatedly
+        # hitting 403s almost always means it rotated onto one flagged
+        # residential exit IP — the right response is to quarantine that one
+        # session (handled by the caller), not to pause all the healthy ones.
+        # Counting raw events let one bad proxy take the whole pool offline for
+        # 5 minutes; counting distinct sessions distinguishes "one bad IP" from
+        # "X is systematically blocking us".
+        ident = None
+        if session is not None:
+            acc = session.get("account") if isinstance(session, dict) else None
+            ident = (acc or {}).get("username") if acc else None
+            ident = ident or id(session)
+
+        # Prune events outside the rolling window.
+        win = max(1.0, window_sec)
+        self._cf403_window_sessions = {
+            k: ts for k, ts in getattr(self, "_cf403_window_sessions", {}).items()
+            if (now - ts) <= win
+        }
+        if ident is not None:
+            self._cf403_window_sessions[ident] = now
+            distinct = len(self._cf403_window_sessions)
         else:
-            self._cf403_streak = 1
+            # No session context — fall back to the old event-count behaviour.
+            if (now - float(self._cf403_last_ts or 0.0)) <= win:
+                self._cf403_streak += 1
+            else:
+                self._cf403_streak = 1
+            distinct = self._cf403_streak
         self._cf403_last_ts = now
 
-        if self._cf403_streak >= max(1, trigger_n):
+        if distinct >= max(1, trigger_n):
             self._cf403_streak = 0
+            self._cf403_window_sessions = {}
             # Don't extend if we're already in a longer backoff window.
             new_until = now + max(5.0, cool_sec)
             if new_until > float(self._global_backoff_until_ts or 0.0):
                 self._global_backoff_until_ts = new_until
                 resume_at = datetime.fromtimestamp(self._global_backoff_until_ts).strftime("%H:%M:%S")
                 print(
-                    f"[{datetime.now().strftime('%H:%M:%S')}] Cloudflare 403 streak detected. "
-                    f"Pausing Twikit pool until {resume_at} (~{int(cool_sec)}s)."
+                    f"[{datetime.now().strftime('%H:%M:%S')}] Cloudflare 403 streak detected "
+                    f"across {distinct} session(s). Pausing Twikit pool until {resume_at} (~{int(cool_sec)}s)."
                 )
 
     def _schedule_session_backoff(self, session, reason):
@@ -1100,7 +1128,7 @@ class TwitterClient:
             session["soft_403_count"] = soft403
             session["cf_consecutive"] = int(session.get("cf_consecutive", 0) or 0) + 1
             self._schedule_session_backoff(session, reason or "Cloudflare 403")
-            self._register_cf403_and_maybe_global_cooldown()
+            self._register_cf403_and_maybe_global_cooldown(session)
             rotated_proxy = self._rotate_proxy_for_session(session, "Cloudflare 403 block")
             cap403 = int(getattr(config, "TWIKIT_403_SOFT_PER_SESSION", 2) or 2)
             if rotated_proxy and soft403 < cap403:
