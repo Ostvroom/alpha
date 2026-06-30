@@ -9,6 +9,40 @@ from datetime import datetime, timezone, timedelta
 import time
 from typing import Any, Optional
 
+
+# ─── TLS-matched User-Agents ──────────────────────────────────────────────────
+# twikit drives requests through curl_cffi with impersonate='chrome', so the
+# TLS/JA3 handshake, HTTP/2 frame order, and sec-ch-ua client hints all look like
+# a specific Chrome build (curl_cffi's DEFAULT_CHROME).  Cloudflare cross-checks
+# that fingerprint against the User-Agent *header* — if the TLS says "Chrome 142"
+# but the UA says "Firefox" or an old "Chrome 124", it's an instant bot flag and
+# a 403.  We therefore derive the UA from the *exact* Chrome version curl_cffi is
+# impersonating, so the two can never drift apart (and auto-track curl_cffi
+# upgrades).  Windows-only because curl_cffi's chrome profiles report
+# sec-ch-ua-platform: "Windows" — keeping the UA platform identical avoids a
+# second client-hint mismatch.
+def _chrome_impersonate_major() -> int:
+    """Major Chrome version curl_cffi's TLS layer is impersonating (e.g. 142)."""
+    try:
+        from curl_cffi.requests.impersonate import DEFAULT_CHROME
+        m = re.search(r"(\d+)", str(DEFAULT_CHROME))
+        if m:
+            return int(m.group(1))
+    except Exception:
+        pass
+    return 131  # safe, widely-deployed fallback if curl_cffi changes its API
+
+
+def _build_tls_matched_user_agents() -> list:
+    major = _chrome_impersonate_major()
+    ua = (
+        f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        f"(KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36"
+    )
+    # One canonical UA: every residential session reports the most common real
+    # browser on earth (Windows Chrome), fully consistent with its TLS handshake.
+    return [ua]
+
 # Auto-apply twikit reduce() patch on every startup (safe if already patched)
 try:
     import patch_twikit
@@ -313,17 +347,15 @@ class TwitterClient:
         self._proxy_idx = 0
         
         # User-Agents for stealth
-        self._user_agents = [
-            # Keep these up-to-date with real Chrome/Firefox releases — stale UAs are a CF signal
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4; rv:125.0) Gecko/20100101 Firefox/125.0',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0'
-        ]
+        # UA is derived from the Chrome version curl_cffi's TLS layer impersonates
+        # (see _build_tls_matched_user_agents) so the User-Agent header can never
+        # contradict the JA3/HTTP2 fingerprint — the #1 cause of CF403 blocks.
+        self._user_agents = _build_tls_matched_user_agents()
+        try:
+            _ua_major = _chrome_impersonate_major()
+            print(f"[TwitterClient] UA pinned to Chrome {_ua_major} (matches curl_cffi TLS impersonation)", flush=True)
+        except Exception:
+            pass
         
         # Session rotation
         self._sessions = []  # List of (client, account_info, logged_in, rate_limited)
