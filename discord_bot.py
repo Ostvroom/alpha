@@ -43,7 +43,7 @@ import textwrap
 import time
 from typing import List, Dict, Optional, Set, Tuple, Any
 from twitter_client import TwitterClient, AIAnalyzer
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time as dtime
 import asyncio
 import random
 import aiohttp
@@ -367,6 +367,20 @@ async def _run_daily_mints_post(
                 posted_urls.add(d.source_url)
             await asyncio.sleep(0.65)
     return posted, ""
+
+
+def _brain_scan_loop_kwargs():
+    """Schedule kwargs for the brain-scan tasks.loop.
+
+    Default: run ONCE DAILY at each hour in config.BRAIN_SCAN_DAILY_HOURS (UTC).
+    Fallback: fixed interval when BRAIN_SCAN_INTERVAL_SECONDS was set in the env
+    (config.BRAIN_SCAN_USE_DAILY is then False). Times are tz-aware UTC so the
+    schedule is unambiguous regardless of the host's local timezone.
+    """
+    if getattr(config, "BRAIN_SCAN_USE_DAILY", True):
+        hours = getattr(config, "BRAIN_SCAN_DAILY_HOURS", [12]) or [12]
+        return {"time": [dtime(hour=h, minute=0, tzinfo=timezone.utc) for h in hours]}
+    return {"seconds": config.CHECK_INTERVAL_SECONDS}
 
 
 class BlockBrainBot(commands.Bot):
@@ -915,7 +929,12 @@ class BlockBrainBot(commands.Bot):
                 "brain scan will skip until cookies/auth recover or cooldown expires."
             )
         else:
-            print(f"{self._get_log_prefix()} ✔ Twikit: {n_tw} cookie session(s) for brain scan (interval {config.CHECK_INTERVAL_SECONDS}s).")
+            if getattr(config, "BRAIN_SCAN_USE_DAILY", True):
+                _hrs = ", ".join(f"{h:02d}:00 UTC" for h in getattr(config, "BRAIN_SCAN_DAILY_HOURS", [12]))
+                _sched = f"daily at {_hrs}"
+            else:
+                _sched = f"every {config.CHECK_INTERVAL_SECONDS}s"
+            print(f"{self._get_log_prefix()} ✔ Twikit: {n_tw} cookie session(s) for brain scan ({_sched}).")
         print(f"👉 Try typing '!velcor3 ping' in your server to test responsiveness.")
         if config.ENABLE_DAILY_MINTS_AUTO and config.DAILY_MINTS_AUTO_CHANNEL_ID:
             print(
@@ -1399,7 +1418,7 @@ class BlockBrainBot(commands.Bot):
             await ctx.send(f"❌ **Bot Error:** {str(error)}")
         except: pass
 
-    @tasks.loop(seconds=config.CHECK_INTERVAL_SECONDS)
+    @tasks.loop(**_brain_scan_loop_kwargs())
     async def monitor_twitter(self):
         if not await self._try_begin_twitter_job("BrainScan"):
             return
@@ -1684,9 +1703,15 @@ class BlockBrainBot(commands.Bot):
                         if remaining > 0:
                             print(f"      ...resting ({remaining}s remaining)")
 
-            next_scan = datetime.now() + timedelta(seconds=config.CHECK_INTERVAL_SECONDS)
+            # In daily mode the loop fires at fixed UTC times — use the loop's
+            # own next_iteration so the log is accurate (not a fake +interval).
+            nxt = getattr(self.monitor_twitter, "next_iteration", None)
+            if nxt is not None:
+                next_label = nxt.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+            else:
+                next_label = (datetime.now() + timedelta(seconds=config.CHECK_INTERVAL_SECONDS)).strftime('%H:%M:%S')
             print(f"\n{self._get_log_prefix()} --- ✅ SCAN COMPLETE ({self.current_scan_discoveries} new) ---")
-            print(f"{self._get_log_prefix()} 💤 Sleeping... Next scan starts around: {next_scan.strftime('%H:%M:%S')}")
+            print(f"{self._get_log_prefix()} 💤 Sleeping... Next scan: {next_label}")
 
         except Exception as e:
             print(f"❌ CRITICAL Error in monitor_twitter: {e}")

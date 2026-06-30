@@ -218,6 +218,25 @@ try:
 except ValueError:
     _brain_scan_sec = 14400
 CHECK_INTERVAL_SECONDS = max(300, min(86400, _brain_scan_sec))
+
+# Brain-scan SCHEDULE MODE.
+#   Default  → run ONCE DAILY at BRAIN_SCAN_DAILY_HOUR (UTC). Times are UTC
+#              because Render runs in UTC (the logs you see are UTC too).
+#   Interval → set BRAIN_SCAN_INTERVAL_SECONDS in the env to fall back to the
+#              old fixed-interval loop (useful for quick testing).
+# BRAIN_SCAN_DAILY_HOUR accepts a single UTC hour (0–23) or a comma list for
+# multiple runs per day, e.g. "12" (noon UTC) or "0,12" (midnight + noon UTC).
+BRAIN_SCAN_USE_DAILY = (os.getenv("BRAIN_SCAN_INTERVAL_SECONDS") is None)
+def _parse_daily_hours():
+    raw = (os.getenv("BRAIN_SCAN_DAILY_HOUR") or "12").strip()
+    out = []
+    for part in raw.split(","):
+        part = part.strip()
+        if part.isdigit() and 0 <= int(part) <= 23 and int(part) not in out:
+            out.append(int(part))
+    return out or [12]
+BRAIN_SCAN_DAILY_HOURS = _parse_daily_hours()
+
 MAX_ACCOUNT_AGE_DAYS = 30      # Consider "newly created" if < 30 days old
 
 # Off-Peak Scanning (Unified to 2 hours as requested)
