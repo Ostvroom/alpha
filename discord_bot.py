@@ -462,9 +462,10 @@ class BlockBrainBot(commands.Bot):
             pass
         return embed
 
-    async def safe_send(self, target, *, embed=None, content=None, view=None, files=None):
+    async def safe_send(self, target, *, embed=None, embeds=None, content=None, view=None, files=None):
         """Shared Discord sender with global 429 backoff handling."""
         embed = self._sanitize_embed(embed)
+        embeds = [self._sanitize_embed(item) for item in (embeds or [])]
         max_retries = 4
         for attempt in range(max_retries):
             now = time.time()
@@ -476,6 +477,8 @@ class BlockBrainBot(commands.Bot):
                     kwargs["content"] = content
                 if embed is not None:
                     kwargs["embed"] = embed
+                elif embeds:
+                    kwargs["embeds"] = embeds[:10]
                 if view is not None:
                     kwargs["view"] = view
                 if files:

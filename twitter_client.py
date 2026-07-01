@@ -149,6 +149,9 @@ class _ScweetTweet:
         "user",
         "retweeted_tweet",
         "retweeted_status",
+        "quoted_tweet",
+        "quoted_status",
+        "is_quote_status",
         "media",
         "extended_entities",
         "created_at",
@@ -186,7 +189,12 @@ class _ScweetTweet:
 
         self.retweeted_tweet = None
         self.retweeted_status = None
-        self.media = data.get("media") or _extract_graphql_media(raw)
+        self.quoted_tweet = None
+        self.quoted_status = None
+        self.is_quote_status = False
+        # Prefer raw GraphQL entities: Scweet's normalized TweetMedia keeps only
+        # image URLs and otherwise drops video type/variants metadata.
+        self.media = _extract_graphql_media(raw) or data.get("media") or []
         self.extended_entities = {"media": self.media} if self.media else {}
 
         if isinstance(raw, dict):
@@ -195,6 +203,20 @@ class _ScweetTweet:
             if isinstance(rt_result, dict) and rt_result:
                 self.retweeted_tweet = _build_retweet_tweet(rt_result)
                 self.retweeted_status = self.retweeted_tweet
+
+            # X puts quoted_status_result alongside legacy, while retweets are
+            # still nested inside legacy.retweeted_status_result.
+            quote_result = raw.get("quoted_status_result", {})
+            if not quote_result:
+                quote_result = legacy.get("quoted_status_result", {})
+            if isinstance(quote_result, dict) and quote_result:
+                self.quoted_tweet = _build_nested_tweet(quote_result)
+                self.quoted_status = self.quoted_tweet
+            self.is_quote_status = bool(
+                self.quoted_tweet
+                or legacy.get("is_quote_status")
+                or legacy.get("quoted_status_id_str")
+            )
 
     def __repr__(self):
         return f"<_ScweetTweet {self.id}>"
@@ -244,11 +266,11 @@ def _extract_graphql_media(result: Any) -> list:
     return []
 
 
-def _build_retweet_tweet(rt_result: dict) -> Optional[_ScweetTweet]:
-    """Build a fake tweet object from a retweeted_status_result GraphQL node."""
-    if not isinstance(rt_result, dict):
+def _build_nested_tweet(nested_result: dict) -> Optional[_ScweetTweet]:
+    """Build a tweet object from a quoted/retweeted GraphQL result node."""
+    if not isinstance(nested_result, dict):
         return None
-    result = _normalize_graphql_tweet_result(rt_result.get("result", {}))
+    result = _normalize_graphql_tweet_result(nested_result.get("result", nested_result))
     if not isinstance(result, dict):
         return None
     legacy = result.get("legacy", {}) or {}
@@ -284,6 +306,11 @@ def _build_retweet_tweet(rt_result: dict) -> Optional[_ScweetTweet]:
     )
     tweet.user = user
     return tweet
+
+
+def _build_retweet_tweet(rt_result: dict) -> Optional[_ScweetTweet]:
+    """Backward-compatible alias for older callers/tests."""
+    return _build_nested_tweet(rt_result)
 
 
 def _scweet_error_to_str(exc: Exception) -> str:

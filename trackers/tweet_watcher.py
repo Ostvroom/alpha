@@ -19,10 +19,8 @@ import config
 import database
 
 
-# Match t.co short URLs Twitter appends to tweet text (we hide them — image
-# is rendered via set_image, and the “Engage” button carries the canonical URL)
-_TCO_RE = re.compile(r"https?://t\.co/\S+", re.IGNORECASE)
 _TWITTER_BLUE = 0x1D9BF0
+_DESCRIPTION_LIMIT = 2200  # leaves room under Discord's 6000-char multi-embed cap
 
 
 def _fmt_count(n: Any) -> str:
@@ -77,6 +75,9 @@ def _extract_media(tweet: Any) -> List[Any]:
     media = getattr(tweet, "media", None)
     if isinstance(media, dict) and isinstance(media.get("image_links"), list):
         return [{"media_url_https": u, "type": "photo"} for u in media.get("image_links") or []]
+    image_links = getattr(media, "image_links", None)
+    if isinstance(image_links, list):
+        return [{"media_url_https": u, "type": "photo"} for u in image_links]
     if not media:
         ext = getattr(tweet, "extended_entities", None)
         if isinstance(ext, dict):
@@ -103,8 +104,27 @@ def _media_type(m: Any) -> str:
     return str(getattr(m, "type", "") or "").lower()
 
 
+def _video_url(m: Any) -> str:
+    """Return the highest-quality direct MP4 variant when X supplies one."""
+    info = m.get("video_info", {}) if isinstance(m, dict) else getattr(m, "video_info", {})
+    variants = info.get("variants", []) if isinstance(info, dict) else []
+    candidates = [
+        item for item in variants
+        if isinstance(item, dict)
+        and "video/mp4" in str(item.get("content_type") or "")
+        and item.get("url")
+    ]
+    if not candidates:
+        return ""
+    return str(max(candidates, key=lambda item: int(item.get("bitrate") or 0)).get("url") or "")
+
+
 def _retweet_source(tweet: Any) -> Optional[Any]:
     return getattr(tweet, "retweeted_tweet", None) or getattr(tweet, "retweeted_status", None)
+
+
+def _quote_source(tweet: Any) -> Optional[Any]:
+    return getattr(tweet, "quoted_tweet", None) or getattr(tweet, "quoted_status", None)
 
 
 def _tweet_user(tweet: Any, fallback: Any) -> Any:
@@ -360,61 +380,153 @@ async def _fetch_recent_tweets(
         return []
 
 
-def _build_tweet_embed(tweet: Any, user: Any) -> Tuple[Embed, str]:
-    """Build a clean Discord embed. Returns (embed, tweet_url)."""
+def _clean_tweet_text(tweet: Any, *, has_attachment: bool = False) -> str:
+    text = _tweet_text(tweet).strip()
+    # X appends one trailing t.co URL for native media and quoted posts. Remove
+    # only that attachment token; retain links that are part of the actual text.
+    if has_attachment:
+        text = re.sub(r"(?:\s+|^)https?://t\.co/\S+\s*$", "", text, flags=re.IGNORECASE).strip()
+    return re.sub(r"\n{3,}", "\n\n", text)
+
+
+def _text_continuations(tweet: Any) -> List[str]:
+    """Return Discord-sized continuation messages so long Notes are never lost."""
+    retweeted = _retweet_source(tweet)
+    display_tweet = retweeted or tweet
+    quoted = _quote_source(display_tweet)
+    entries = [
+        (
+            "Tweet continued",
+            _clean_tweet_text(
+                display_tweet,
+                has_attachment=bool(_extract_media(display_tweet) or quoted),
+            ),
+        )
+    ]
+    if quoted:
+        entries.append(
+            (
+                "Quoted post continued",
+                _clean_tweet_text(quoted, has_attachment=bool(_extract_media(quoted))),
+            )
+        )
+
+    messages: List[str] = []
+    for label, full_text in entries:
+        remaining = full_text[_DESCRIPTION_LIMIT:]
+        part = 2
+        while remaining:
+            prefix = f"**{label} (part {part})**\n"
+            room = 2000 - len(prefix)
+            chunk = remaining[:room]
+            split_at = chunk.rfind("\n")
+            if split_at < room // 2:
+                split_at = chunk.rfind(" ")
+            if split_at >= room // 2:
+                chunk = chunk[:split_at]
+            messages.append(prefix + chunk)
+            remaining = remaining[len(chunk):].lstrip()
+            part += 1
+    return messages
+
+
+def _set_embed_author(embed: Embed, tweet: Any, fallback_user: Any, url: str = "") -> Tuple[Any, str]:
+    author = _tweet_user(tweet, fallback_user)
+    handle = getattr(author, "screen_name", "") or getattr(author, "username", "") or "unknown"
+    name = getattr(author, "name", "") or handle
+    pfp = getattr(author, "profile_image_url_https", "") or getattr(author, "profile_image_url", "") or ""
+    verified = bool(getattr(author, "verified", False) or getattr(author, "is_blue_verified", False))
+    kwargs: dict = {
+        "name": (f"{name} (@{handle})" + (" ✓" if verified else ""))[:256],
+        "url": url or f"https://x.com/{handle}",
+    }
+    if pfp:
+        kwargs["icon_url"] = pfp
+    embed.set_author(**kwargs)
+    return author, handle
+
+
+def _add_media_embeds(
+    embeds: List[Embed], owner_embed: Embed, media: List[Any], *, label: str,
+) -> None:
+    """Render every image/video poster; Discord allows one image per embed."""
+    seen: set[str] = set()
+    media_items: List[Tuple[str, Any]] = []
+    video_links: List[str] = []
+    for item in media:
+        image_url = _media_url(item)
+        if image_url and image_url not in seen:
+            seen.add(image_url)
+            media_items.append((image_url, item))
+        direct_video = _video_url(item)
+        if direct_video and direct_video not in video_links:
+            video_links.append(direct_video)
+
+    if media_items:
+        owner_embed.set_image(url=media_items[0][0])
+    for index, (image_url, _item) in enumerate(media_items[1:], start=2):
+        if len(embeds) >= 10:
+            break
+        media_embed = Embed(color=_TWITTER_BLUE)
+        media_embed.set_image(url=image_url)
+        media_embed.set_footer(text=f"{label} media {index}/{len(media_items)}")
+        embeds.append(media_embed)
+
+    if video_links:
+        links = [f"[Play video {i} in full quality]({url})" for i, url in enumerate(video_links, 1)]
+        owner_embed.add_field(name="Video", value="\n".join(links)[:1024], inline=False)
+
+
+def _build_tweet_embeds(tweet: Any, user: Any) -> Tuple[List[Embed], str]:
+    """Build the tweet, quote, and all media as one Discord multi-embed alert."""
     kind_label, _kind_emoji = _classify_tweet(tweet)
     retweeted = _retweet_source(tweet)
     display_tweet = retweeted or tweet
     display_user = _tweet_user(display_tweet, user)
+    quoted = _quote_source(display_tweet)
     retweeter_handle = getattr(user, "screen_name", "") or getattr(user, "username", "") or "unknown"
     handle = getattr(display_user, "screen_name", "") or getattr(display_user, "username", "") or retweeter_handle
-    name = getattr(display_user, "name", "") or handle
-    text_raw = _tweet_text(display_tweet)
-    pfp = getattr(display_user, "profile_image_url_https", "") or getattr(display_user, "profile_image_url", "") or ""
-    verified = bool(getattr(display_user, "verified", False) or getattr(display_user, "is_blue_verified", False))
 
     alert_url = _tweet_url(tweet, user)
     original_url = _tweet_url(display_tweet, display_user)
     tweet_url = alert_url or original_url
-
-    # Strip t.co URLs and tidy whitespace
-    text = _TCO_RE.sub("", text_raw).strip()
-    text = re.sub(r"\n{3,}", "\n\n", text)
+    display_media = _extract_media(display_tweet)
+    if not display_media and retweeted:
+        display_media = _extract_media(tweet)
+    text = _clean_tweet_text(display_tweet, has_attachment=bool(display_media or quoted))
 
     title = f"X Alert - {kind_label}"
     if retweeted:
         title = f"X Alert - Retweet by @{retweeter_handle}"
     embed = Embed(title=title, color=_TWITTER_BLUE, timestamp=datetime.now(timezone.utc))
-
-    # Author line: "Name (@handle) ✓"
-    author_name = f"{name} (@{handle})" + (" ✓" if verified else "")
-    author_kwargs: dict = {"name": author_name[:256], "url": original_url or f"https://x.com/{handle}"}
-    if pfp:
-        author_kwargs["icon_url"] = pfp
-    embed.set_author(**author_kwargs)
-
-    # Tweet body
-    embed.description = text[:4000] if text else "*(no text)*"
+    embeds = [embed]
+    _set_embed_author(embed, display_tweet, display_user, original_url)
+    embed.description = text[:_DESCRIPTION_LIMIT] if text else "*(no text)*"
     if retweeted:
         embed.add_field(name="Retweeted by", value=f"[@{retweeter_handle}](https://x.com/{retweeter_handle})", inline=False)
-
-    # First image (if any). For retweets the source tweet's media often isn't
-    # carried on the nested object (Scweet flattens image_links onto the outer
-    # RT wrapper), so fall back to the wrapper's media when the source has none.
-    media_candidates = _extract_media(display_tweet)
-    if not media_candidates and retweeted:
-        media_candidates = _extract_media(tweet)
-    for m in media_candidates:
-        url = _media_url(m)
-        if url and any(ext in url.lower() for ext in (".jpg", ".jpeg", ".png", ".webp")):
-            try:
-                embed.set_image(url=url)
-            except Exception:
-                pass
-            break
-
     embed.set_footer(text=f"@{handle} - {kind_label} - X")
-    return embed, tweet_url
+    _add_media_embeds(embeds, embed, display_media, label="Tweet")
+
+    if quoted and len(embeds) < 10:
+        quoted_user = _tweet_user(quoted, display_user)
+        quoted_url = _tweet_url(quoted, quoted_user)
+        quoted_media = _extract_media(quoted)
+        quote_embed = Embed(title="Quoted post", color=0x536471, url=quoted_url or None)
+        _set_embed_author(quote_embed, quoted, quoted_user, quoted_url)
+        quote_text = _clean_tweet_text(quoted, has_attachment=bool(quoted_media))
+        quote_embed.description = quote_text[:_DESCRIPTION_LIMIT] if quote_text else "*(no text)*"
+        quote_handle = getattr(quoted_user, "screen_name", "") or getattr(quoted_user, "username", "") or "unknown"
+        quote_embed.set_footer(text=f"@{quote_handle} - Quoted post - X")
+        embeds.append(quote_embed)
+        _add_media_embeds(embeds, quote_embed, quoted_media, label="Quoted post")
+
+    return embeds[:10], tweet_url
+
+
+def _build_tweet_embed(tweet: Any, user: Any) -> Tuple[Embed, str]:
+    """Backward-compatible single-embed builder."""
+    embeds, tweet_url = _build_tweet_embeds(tweet, user)
+    return embeds[0], tweet_url
 
 
 async def check_watched_accounts(
@@ -551,7 +663,7 @@ async def check_watched_accounts(
         for tweet in new_tweets:
             tid = _tweet_id(tweet)
             try:
-                embed, tweet_url = _build_tweet_embed(tweet, user)
+                embeds, tweet_url = _build_tweet_embeds(tweet, user)
                 view = _build_engage_view(tweet_url)
                 content = None
                 r_id = _role_id()
@@ -559,12 +671,13 @@ async def check_watched_accounts(
                     content = f"<@&{r_id}>"
 
                 if hasattr(bot, "safe_send"):
-                    await bot.safe_send(channel, content=content, embed=embed, view=view)
+                    await bot.safe_send(channel, content=content, embeds=embeds, view=view)
+                    for continuation in _text_continuations(tweet):
+                        await bot.safe_send(channel, content=continuation)
                 else:
-                    if view is not None:
-                        await channel.send(content=content, embed=embed, view=view)
-                    else:
-                        await channel.send(content=content, embed=embed)
+                    await channel.send(content=content, embeds=embeds, view=view)
+                    for continuation in _text_continuations(tweet):
+                        await channel.send(content=continuation)
 
                 posted += 1
                 newest_posted_tid = tid
@@ -649,18 +762,19 @@ async def post_latest_for_handle(
     if not user:
         user = latest
 
-    embed, tweet_url = _build_tweet_embed(latest, user)
-    embed.title = f"TweetWatcher Test - {embed.title.replace('X Alert - ', '')}"
+    embeds, tweet_url = _build_tweet_embeds(latest, user)
+    embeds[0].title = f"TweetWatcher Test - {embeds[0].title.replace('X Alert - ', '')}"
     view = _build_engage_view(tweet_url)
     content = f"TweetWatcher: latest fetched post/RT for `@{h}`"
 
     if hasattr(bot, "safe_send"):
-        await bot.safe_send(channel, content=content, embed=embed, view=view)
+        await bot.safe_send(channel, content=content, embeds=embeds, view=view)
+        for continuation in _text_continuations(latest):
+            await bot.safe_send(channel, content=continuation)
     else:
-        if view is not None:
-            await channel.send(content=content, embed=embed, view=view)
-        else:
-            await channel.send(content=content, embed=embed)
+        await channel.send(content=content, embeds=embeds, view=view)
+        for continuation in _text_continuations(latest):
+            await channel.send(content=continuation)
 
     tid = _tweet_id(latest)
     if update_state and tid:
