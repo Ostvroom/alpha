@@ -447,12 +447,12 @@ def _env_float(name: str, default: float) -> float:
 
 
 # HVA brain-scan batching — lower / slower = gentler on X + residential proxies (optional .env)
-BATCH_SIZE = max(1, min(25, _env_int("HVA_BATCH_SIZE", 10)))
-BATCH_BREAK_SECONDS = max(30, min(900, _env_int("HVA_BATCH_BREAK_SECONDS", 120)))
+BATCH_SIZE = max(1, min(25, _env_int("HVA_BATCH_SIZE", 5)))
+BATCH_BREAK_SECONDS = max(30, min(900, _env_int("HVA_BATCH_BREAK_SECONDS", 240)))
 
 # Twikit (cookie / web-style X traffic) — reduce 429 bursts and “all sessions blocked” cooldowns
 # Minimum pause before each Twikit call in the hot paths below (seconds).
-TWIKIT_REQUEST_GAP_SEC = max(0.0, min(20.0, _env_float("TWIKIT_REQUEST_GAP_SEC", 4.0)))
+TWIKIT_REQUEST_GAP_SEC = max(0.0, min(20.0, _env_float("TWIKIT_REQUEST_GAP_SEC", 9.0)))
 # Extra random jitter added to each call gap (seconds).
 TWIKIT_REQUEST_GAP_JITTER_SEC = max(0.0, min(10.0, _env_float("TWIKIT_REQUEST_GAP_JITTER_SEC", 0.75)))
 # Multiplier applied to request gap to lower burst pressure.
@@ -469,7 +469,7 @@ TWIKIT_BACKOFF_MAX_SEC = max(10.0, min(1800.0, _env_float("TWIKIT_BACKOFF_MAX_SE
 # If Cloudflare 403 repeats quickly, pause all Twikit calls for a short cooldown window.
 TWIKIT_CF_STREAK_FOR_GLOBAL_COOLDOWN = max(1, min(20, _env_int("TWIKIT_CF_STREAK_FOR_GLOBAL_COOLDOWN", 3)))
 TWIKIT_CF_STREAK_WINDOW_SEC = max(10.0, min(1800.0, _env_float("TWIKIT_CF_STREAK_WINDOW_SEC", 60.0)))
-TWIKIT_CF_GLOBAL_COOLDOWN_SEC = max(15.0, min(3600.0, _env_float("TWIKIT_CF_GLOBAL_COOLDOWN_SEC", 300.0)))
+TWIKIT_CF_GLOBAL_COOLDOWN_SEC = max(15.0, min(3600.0, _env_float("TWIKIT_CF_GLOBAL_COOLDOWN_SEC", 120.0)))
 # Extra random rest added AFTER the global CF cooldown ends, before the first new request.
 # Prevents the bot from bursting again immediately and re-triggering the streak.
 TWIKIT_CF_POST_COOLDOWN_JITTER_SEC = max(0.0, min(600.0, _env_float("TWIKIT_CF_POST_COOLDOWN_JITTER_SEC", 120.0)))
