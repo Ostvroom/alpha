@@ -12,6 +12,8 @@ VELCOR_AUTO_ROLE_ID = int(os.getenv("VELCOR_AUTO_ROLE_ID", "0") or 0)
 VELCOR_WELCOME_CHANNEL_ID = int(os.getenv("VELCOR_WELCOME_CHANNEL_ID", "0") or 0)
 VELCOR_AUTO_REACT_CHANNEL_ID = int(os.getenv("VELCOR_AUTO_REACT_CHANNEL_ID", "0") or 0)
 VELCOR_WELCOME_BANNER_PATH = os.getenv("VELCOR_WELCOME_BANNER_PATH", "")
+# #about-velcorians — linked in the welcome message so new members can learn more
+VELCOR_ABOUT_CHANNEL_ID = int(os.getenv("VELCOR_ABOUT_CHANNEL_ID", "1521819046922817598") or 0)
 
 # Claim-roles panel (`!velcor3 pingroles`, `!velcor3 post_claim_roles`, `/claim_roles_panel`)
 def _env_or_default(key: str, default: str) -> str:

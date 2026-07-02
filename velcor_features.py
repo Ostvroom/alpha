@@ -33,6 +33,7 @@ PERMISSION_MESSAGE = "I need the `Manage Messages` permission to delete links!"
 AUTO_ROLE_ID = getattr(config, "VELCOR_AUTO_ROLE_ID", 0)
 WELCOME_CHANNEL_ID = getattr(config, "VELCOR_WELCOME_CHANNEL_ID", 0)
 AUTO_REACT_CHANNEL_ID = getattr(config, "VELCOR_AUTO_REACT_CHANNEL_ID", 0)
+ABOUT_CHANNEL_ID = getattr(config, "VELCOR_ABOUT_CHANNEL_ID", 0)
 
 
 def _auto_react_emoji() -> discord.PartialEmoji | str:
@@ -1258,9 +1259,12 @@ class VelcorFeatures(commands.Cog):
         if WELCOME_CHANNEL_ID:
             welcome_channel = guild.get_channel(WELCOME_CHANNEL_ID)
             if welcome_channel:
+                description = f"Welcome to **{guild.name}**, **{member.display_name}**!\n\nWe're glad to have you here."
+                if ABOUT_CHANNEL_ID:
+                    description += f"\n\nLearn more about Velcorians here <#{ABOUT_CHANNEL_ID}>"
                 embed = discord.Embed(
                     title="✨ New Member Joined!",
-                    description=f"Welcome to **{guild.name}**, **{member.display_name}**!\n\nWe're glad to have you here.",
+                    description=description,
                     color=0x2F3136,
                     timestamp=datetime.now(timezone.utc),
                 )
