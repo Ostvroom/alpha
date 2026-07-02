@@ -449,6 +449,10 @@ def _env_float(name: str, default: float) -> float:
 # HVA brain-scan batching — lower / slower = gentler on X + residential proxies (optional .env)
 BATCH_SIZE = max(1, min(25, _env_int("HVA_BATCH_SIZE", 5)))
 BATCH_BREAK_SECONDS = max(30, min(900, _env_int("HVA_BATCH_BREAK_SECONDS", 240)))
+# Max time the brain scan will WAIT for a pool-wide CF cooldown to clear before
+# giving up on the rest of the day's batches. The scan runs once/day now, so
+# waiting out a cooldown (rather than abandoning 90% of HVAs) is affordable.
+BRAIN_SCAN_MAX_COOLDOWN_WAIT_SEC = max(60.0, min(7200.0, _env_float("BRAIN_SCAN_MAX_COOLDOWN_WAIT_SEC", 2700.0)))
 
 # Twikit (cookie / web-style X traffic) — reduce 429 bursts and “all sessions blocked” cooldowns
 # Minimum pause before each Twikit call in the hot paths below (seconds).

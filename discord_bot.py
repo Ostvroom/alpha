@@ -1504,9 +1504,25 @@ class BlockBrainBot(commands.Bot):
                 await asyncio.sleep(0) # Yield for heartbeats
                 self.twitter.check_cooldown()
                 if self.twitter.is_rate_limited:
-                    print(f"{self._get_log_prefix()} ⛔ Rate limited. Skipping remaining batches for this cycle.")
-                    break
-                
+                    # The brain scan is now DAILY (was every 4h), so a global pool
+                    # cooldown (up to TWIKIT_ALL_SESSIONS_COOLDOWN_MIN, default 45m)
+                    # is affordable to wait out — abandoning the remaining batches
+                    # here used to cost 4h, now it costs the rest of the day.
+                    # Wait it out (bounded) and resume instead of giving up.
+                    ce = self.twitter.cooldown_ends
+                    wait_s = max(0.0, (ce - datetime.now()).total_seconds()) if ce else 0.0
+                    max_wait = float(getattr(config, "BRAIN_SCAN_MAX_COOLDOWN_WAIT_SEC", 2700.0) or 2700.0)
+                    if 0 < wait_s <= max_wait:
+                        print(
+                            f"{self._get_log_prefix()} ⏸️ Pool cooldown active ({int(wait_s)}s) — "
+                            f"waiting to resume remaining batches (daily scan has budget for this)."
+                        )
+                        await asyncio.sleep(wait_s + 5)
+                        self.twitter.check_cooldown()
+                    if self.twitter.is_rate_limited:
+                        print(f"{self._get_log_prefix()} ⛔ Still rate limited. Skipping remaining batches for this cycle.")
+                        break
+
                 batch = priority_list[batch_num*scan_batch_size : (batch_num+1)*scan_batch_size]
                 print(f"\n{self._get_log_prefix()} 📦 [BATCH {batch_num + 1}/{total_batches}] Checking {len(batch)} {BRAND_NAME} hunters...")
                 mention_timeouts_this_batch = 0
