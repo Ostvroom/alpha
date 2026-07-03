@@ -222,21 +222,21 @@ except ValueError:
 CHECK_INTERVAL_SECONDS = max(300, min(86400, _brain_scan_sec))
 
 # Brain-scan SCHEDULE MODE.
-#   Default  → run ONCE DAILY at BRAIN_SCAN_DAILY_HOUR (UTC). Times are UTC
-#              because Render runs in UTC (the logs you see are UTC too).
+#   Default  → run every 6 hours at 00:00, 06:00, 12:00, and 18:00 UTC.
+#              Times are UTC because Render runs in UTC.
 #   Interval → set BRAIN_SCAN_INTERVAL_SECONDS in the env to fall back to the
 #              old fixed-interval loop (useful for quick testing).
 # BRAIN_SCAN_DAILY_HOUR accepts a single UTC hour (0–23) or a comma list for
-# multiple runs per day, e.g. "12" (noon UTC) or "0,12" (midnight + noon UTC).
+# multiple runs per day, e.g. "0,6,12,18" (every six hours).
 BRAIN_SCAN_USE_DAILY = (os.getenv("BRAIN_SCAN_INTERVAL_SECONDS") is None)
 def _parse_daily_hours():
-    raw = (os.getenv("BRAIN_SCAN_DAILY_HOUR") or "12").strip()
+    raw = (os.getenv("BRAIN_SCAN_DAILY_HOUR") or "0,6,12,18").strip()
     out = []
     for part in raw.split(","):
         part = part.strip()
         if part.isdigit() and 0 <= int(part) <= 23 and int(part) not in out:
             out.append(int(part))
-    return out or [12]
+    return out or [0, 6, 12, 18]
 BRAIN_SCAN_DAILY_HOURS = _parse_daily_hours()
 
 MAX_ACCOUNT_AGE_DAYS = 30      # Consider "newly created" if < 30 days old
@@ -451,10 +451,9 @@ def _env_float(name: str, default: float) -> float:
 # HVA brain-scan batching — lower / slower = gentler on X + residential proxies (optional .env)
 BATCH_SIZE = max(1, min(25, _env_int("HVA_BATCH_SIZE", 5)))
 BATCH_BREAK_SECONDS = max(30, min(900, _env_int("HVA_BATCH_BREAK_SECONDS", 240)))
-# Max time the brain scan will WAIT for a pool-wide CF cooldown to clear before
-# giving up on the rest of the day's batches. The scan runs once/day now, so
-# waiting out a cooldown (rather than abandoning 90% of HVAs) is affordable.
-BRAIN_SCAN_MAX_COOLDOWN_WAIT_SEC = max(60.0, min(7200.0, _env_float("BRAIN_SCAN_MAX_COOLDOWN_WAIT_SEC", 2700.0)))
+# Optional time to wait for a pool-wide CF cooldown. Default 0: release the
+# background job immediately instead of making BrainScan look hung for minutes.
+BRAIN_SCAN_MAX_COOLDOWN_WAIT_SEC = max(0.0, min(7200.0, _env_float("BRAIN_SCAN_MAX_COOLDOWN_WAIT_SEC", 0.0)))
 
 # Twikit (cookie / web-style X traffic) — reduce 429 bursts and “all sessions blocked” cooldowns
 # Minimum pause before each Twikit call in the hot paths below (seconds).
@@ -573,6 +572,10 @@ BRAIN_SCAN_FOLLOWING_TIMEOUT_SEC = max(10.0, min(90.0, _env_float("BRAIN_SCAN_FO
 BRAIN_SCAN_TIMELINE_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("BRAIN_SCAN_TIMELINE_TIMEOUT_SEC", 28.0)))
 BRAIN_SCAN_TIMELINE_ATTEMPTS = max(1, min(3, _env_int("BRAIN_SCAN_TIMELINE_ATTEMPTS", 2)))
 BRAIN_SCAN_HVA_BUDGET_SEC = max(45.0, min(300.0, _env_float("BRAIN_SCAN_HVA_BUDGET_SEC", 120.0)))
+# Bound nested discovery work so it cannot defeat the per-HVA budget.
+BRAIN_SCAN_DISCOVERY_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("BRAIN_SCAN_DISCOVERY_TIMEOUT_SEC", 25.0)))
+DISCOVERY_PROFILE_TIMEOUT_SEC = max(5.0, min(30.0, _env_float("DISCOVERY_PROFILE_TIMEOUT_SEC", 10.0)))
+AI_PROJECT_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("AI_PROJECT_TIMEOUT_SEC", 20.0)))
 # Auto-prune dead HVAs: retire hunters scanned this many times with 0 discoveries
 # so the scan budget is spent on productive accounts. Set ENABLE_HVA_AUTOPRUNE=0 to disable.
 ENABLE_HVA_AUTOPRUNE = _env_flag("ENABLE_HVA_AUTOPRUNE", "1")
@@ -581,7 +584,8 @@ BRAIN_SCAN_SKIP_MENTIONS_WHEN_TWEET_WATCHER_ACTIVE = _env_flag("BRAIN_SCAN_SKIP_
 BRAIN_SCAN_DEGRADED_BATCH_SIZE = max(1, min(10, _env_int("BRAIN_SCAN_DEGRADED_BATCH_SIZE", 2)))
 BRAIN_SCAN_DEGRADED_TIMELINE_COUNT = max(3, min(15, _env_int("BRAIN_SCAN_DEGRADED_TIMELINE_COUNT", 8)))
 BRAIN_SCAN_DEGRADED_SKIP_MENTIONS = _env_flag("BRAIN_SCAN_DEGRADED_SKIP_MENTIONS", "1")
-BRAIN_SCAN_DEGRADED_EXTRA_REST_SEC = max(0.0, min(300.0, _env_float("BRAIN_SCAN_DEGRADED_EXTRA_REST_SEC", 60.0)))
+BRAIN_SCAN_DEGRADED_EXTRA_REST_SEC = max(0.0, min(300.0, _env_float("BRAIN_SCAN_DEGRADED_EXTRA_REST_SEC", 0.0)))
+BRAIN_SCAN_DEGRADED_BATCH_BREAK_SEC = max(0, min(120, _env_int("BRAIN_SCAN_DEGRADED_BATCH_BREAK_SEC", 30)))
 
 # HVA scan @mention resolution — tune these to reduce timeout waste
 # Hard timeout (seconds) per mention resolve. Lower = less wasted time per bad proxy.

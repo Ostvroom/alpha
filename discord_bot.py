@@ -372,13 +372,13 @@ async def _run_daily_mints_post(
 def _brain_scan_loop_kwargs():
     """Schedule kwargs for the brain-scan tasks.loop.
 
-    Default: run ONCE DAILY at each hour in config.BRAIN_SCAN_DAILY_HOURS (UTC).
+    Default: run every six hours using config.BRAIN_SCAN_DAILY_HOURS (UTC).
     Fallback: fixed interval when BRAIN_SCAN_INTERVAL_SECONDS was set in the env
     (config.BRAIN_SCAN_USE_DAILY is then False). Times are tz-aware UTC so the
     schedule is unambiguous regardless of the host's local timezone.
     """
     if getattr(config, "BRAIN_SCAN_USE_DAILY", True):
-        hours = getattr(config, "BRAIN_SCAN_DAILY_HOURS", [12]) or [12]
+        hours = getattr(config, "BRAIN_SCAN_DAILY_HOURS", [0, 6, 12, 18]) or [0, 6, 12, 18]
         return {"time": [dtime(hour=h, minute=0, tzinfo=timezone.utc) for h in hours]}
     return {"seconds": config.CHECK_INTERVAL_SECONDS}
 
@@ -574,6 +574,25 @@ class BlockBrainBot(commands.Bot):
                 print(f"{self._get_log_prefix()} [BrainScan] TweetWatcher yield window expired; resuming scan.")
                 return
             await asyncio.sleep(min(2.0, remaining))
+
+    async def _process_brain_discovery(self, account, hva_handle, interaction_type, channels,
+                                       hva_started_at: float, hva_budget_sec: float) -> bool:
+        """Run one discovery inside both a per-item and current-HVA deadline."""
+        remaining = hva_budget_sec - (time.monotonic() - hva_started_at)
+        if remaining <= 0:
+            return False
+        item_limit = float(getattr(config, "BRAIN_SCAN_DISCOVERY_TIMEOUT_SEC", 25.0) or 25.0)
+        timeout_s = max(0.1, min(item_limit, remaining))
+        handle = getattr(account, "screen_name", None) or getattr(account, "id", "unknown")
+        try:
+            await asyncio.wait_for(
+                self.process_discovery(account, hva_handle, interaction_type, channels),
+                timeout=timeout_s,
+            )
+            return True
+        except asyncio.TimeoutError:
+            print(f"      ⚠️ Discovery deadline reached for @{handle} after {timeout_s:.0f}s; continuing scan.")
+            return False
 
     def brand_logo_file(self) -> Optional[discord.File]:
         if not BRAND_LOGO_PATH or not BRAND_LOGO_FILE:
@@ -938,8 +957,8 @@ class BlockBrainBot(commands.Bot):
             )
         else:
             if getattr(config, "BRAIN_SCAN_USE_DAILY", True):
-                _hrs = ", ".join(f"{h:02d}:00 UTC" for h in getattr(config, "BRAIN_SCAN_DAILY_HOURS", [12]))
-                _sched = f"daily at {_hrs}"
+                _hrs = ", ".join(f"{h:02d}:00 UTC" for h in getattr(config, "BRAIN_SCAN_DAILY_HOURS", [0, 6, 12, 18]))
+                _sched = f"at {_hrs}"
             else:
                 _sched = f"every {config.CHECK_INTERVAL_SECONDS}s"
             print(f"{self._get_log_prefix()} ✔ Twikit: {n_tw} cookie session(s) for brain scan ({_sched}).")
@@ -1504,15 +1523,12 @@ class BlockBrainBot(commands.Bot):
                 await asyncio.sleep(0) # Yield for heartbeats
                 self.twitter.check_cooldown()
                 if self.twitter.is_rate_limited:
-                    # The brain scan is now DAILY (was every 4h), so a global pool
-                    # cooldown (up to TWIKIT_ALL_SESSIONS_COOLDOWN_MIN, default 45m)
-                    # is affordable to wait out — abandoning the remaining batches
-                    # here used to cost 4h, now it costs the rest of the day.
-                    # Wait it out (bounded) and resume instead of giving up.
+                    # Waiting is opt-in. The default releases this background job
+                    # immediately instead of holding it through a long CF cooldown.
                     ce = self.twitter.cooldown_ends
                     wait_s = max(0.0, (ce - datetime.now()).total_seconds()) if ce else 0.0
-                    max_wait = float(getattr(config, "BRAIN_SCAN_MAX_COOLDOWN_WAIT_SEC", 2700.0) or 2700.0)
-                    if 0 < wait_s <= max_wait:
+                    max_wait = float(getattr(config, "BRAIN_SCAN_MAX_COOLDOWN_WAIT_SEC", 0.0))
+                    if max_wait > 0 and 0 < wait_s <= max_wait:
                         print(
                             f"{self._get_log_prefix()} ⏸️ Pool cooldown active ({int(wait_s)}s) — "
                             f"waiting to resume remaining batches (daily scan has budget for this)."
@@ -1579,7 +1595,12 @@ class BlockBrainBot(commands.Bot):
                                 unique_following.append(account)
                             print(f"      ✅ SCAN COMPLETE: Found {len(unique_following)} potential projects from @{hva_handle}")
                             for account in unique_following:
-                                await self.process_discovery(account, hva_handle, 'follow', self.active_main_channels)
+                                completed = await self._process_brain_discovery(
+                                    account, hva_handle, 'follow', self.active_main_channels,
+                                    hva_started_at, hva_budget_sec,
+                                )
+                                if not completed:
+                                    break
                         else:
                             print(f"      ℹ️ SCAN COMPLETE: No new projects found from @{hva_handle} (This scan logged in database)")
                         
@@ -1636,7 +1657,12 @@ class BlockBrainBot(commands.Bot):
                                     if rid_key in seen_rt_user_ids:
                                         continue
                                     seen_rt_user_ids.add(rid_key)
-                                await self.process_discovery(retweeted_user, hva_handle, 'retweet', self.active_main_channels)
+                                completed = await self._process_brain_discovery(
+                                    retweeted_user, hva_handle, 'retweet', self.active_main_channels,
+                                    hva_started_at, hva_budget_sec,
+                                )
+                                if not completed:
+                                    break
 
                             # Also catch projects HVAs talk about without following/RT:
                             # extract @mentions from tweet text and resolve to accounts.
@@ -1703,29 +1729,47 @@ class BlockBrainBot(commands.Bot):
                                         continue
                                     if user_obj:
                                         mention_resolved_count += 1
-                                        await self.process_discovery(
-                                            user_obj, hva_handle, "mention", self.active_main_channels
+                                        completed = await self._process_brain_discovery(
+                                            user_obj, hva_handle, "mention", self.active_main_channels,
+                                            hva_started_at, hva_budget_sec,
                                         )
+                                        if not completed:
+                                            break
                     except Exception as e:
                         print(f"      ❌ Scan error for @{hva_handle}: {e}")
                     
                     await asyncio.sleep(random.uniform(15, 35))
                 
                 if batch_num < total_batches - 1:
+                    self.twitter.check_cooldown()
+                    if self.twitter.is_rate_limited:
+                        print(f"{self._get_log_prefix()} ⛔ X pool rate limited; ending this scan without a batch sleep.")
+                        break
+                    is_degraded = bool(getattr(self.twitter, "is_degraded_mode", lambda: False)())
                     degraded_extra_rest = (
-                        float(getattr(config, "BRAIN_SCAN_DEGRADED_EXTRA_REST_SEC", 60.0) or 60.0)
-                        if bool(getattr(self.twitter, "is_degraded_mode", lambda: False)())
+                        float(getattr(config, "BRAIN_SCAN_DEGRADED_EXTRA_REST_SEC", 0.0))
+                        if is_degraded
                         else 0.0
                     )
                     if degraded_extra_rest > 0:
                         print(f"{self._get_log_prefix()} [BrainScan] X degraded; extra rest {degraded_extra_rest:.0f}s before batch break.")
                         await asyncio.sleep(degraded_extra_rest)
-                    print(f"{self._get_log_prefix()} ☕ Batch complete. Resting for {config.BATCH_BREAK_SECONDS}s...")
-                    for i in range(config.BATCH_BREAK_SECONDS // 30):
+                    batch_break_seconds = (
+                        int(getattr(config, "BRAIN_SCAN_DEGRADED_BATCH_BREAK_SEC", 30) or 0)
+                        if is_degraded else int(config.BATCH_BREAK_SECONDS)
+                    )
+                    print(f"{self._get_log_prefix()} ☕ Batch complete. Resting for {batch_break_seconds}s...")
+                    for i in range(batch_break_seconds // 30):
                         await asyncio.sleep(30)
-                        remaining = config.BATCH_BREAK_SECONDS - ((i + 1) * 30)
+                        self.twitter.check_cooldown()
+                        if self.twitter.is_rate_limited:
+                            print(f"{self._get_log_prefix()} ⛔ X pool rate limited during batch rest; ending this scan.")
+                            break
+                        remaining = batch_break_seconds - ((i + 1) * 30)
                         if remaining > 0:
                             print(f"      ...resting ({remaining}s remaining)")
+                    if self.twitter.is_rate_limited:
+                        break
 
             # In daily mode the loop fires at fixed UTC times — use the loop's
             # own next_iteration so the log is accurate (not a fake +interval).
@@ -2845,8 +2889,21 @@ class BlockBrainBot(commands.Bot):
         await asyncio.sleep(delay + jitter)
 
     async def process_discovery(self, account, hva_handle, interaction_type, channels):
-        account = await self._hydrate_account_profile(account)
-        await self._refresh_account_followers(account)
+        # Determine this before network hydration. Already-tracked accounts were
+        # needlessly making two retrying profile calls on every scan.
+        is_new = database.is_project_new(account.id)
+        if is_new:
+            profile_timeout = float(getattr(config, "DISCOVERY_PROFILE_TIMEOUT_SEC", 10.0) or 10.0)
+            try:
+                account = await asyncio.wait_for(self._hydrate_account_profile(account), timeout=profile_timeout)
+            except asyncio.TimeoutError:
+                print(f"      ⚠️ Profile hydration timed out for @{getattr(account, 'screen_name', '?')}; using follow data.")
+            try:
+                await asyncio.wait_for(self._refresh_account_followers(account), timeout=profile_timeout)
+            except asyncio.TimeoutError:
+                print(f"      ⚠️ Follower refresh timed out for @{getattr(account, 'screen_name', '?')}; using cached count.")
+        else:
+            self._fill_account_from_legacy_payload(account)
         # VERBOSE: Log every account we check
         age = self.get_account_age_days(account.created_at)
         bio_preview = (account.description or "")[:40].replace("\n", " ")
@@ -2928,7 +2985,6 @@ class BlockBrainBot(commands.Bot):
         age = self.get_account_age_days(account.created_at)
 
         # Tweet-aware second pass for NEW accounts: catch personals that bio-only checks miss.
-        is_new = database.is_project_new(account.id)
         if is_new and age < config.SNIPER_MAX_AGE_DAYS:
             if timeline_tweets is None:
                 try:
@@ -3041,7 +3097,14 @@ class BlockBrainBot(commands.Bot):
                     tweets = []
                 except Exception:
                     tweets = []
-            ai_data = await self.ai.analyze_project(account, tweets)
+            try:
+                ai_data = await asyncio.wait_for(
+                    self.ai.analyze_project(account, tweets),
+                    timeout=float(getattr(config, "AI_PROJECT_TIMEOUT_SEC", 20.0) or 20.0),
+                )
+            except asyncio.TimeoutError:
+                print(f"         ⚠️ AI analysis timed out for @{account.screen_name}; continuing without AI data")
+                ai_data = None
             
             if ai_data:
                 # Enhanced logging with all AI decision details
