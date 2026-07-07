@@ -482,6 +482,9 @@ TWIKIT_CF_POST_COOLDOWN_JITTER_SEC = max(0.0, min(600.0, _env_float("TWIKIT_CF_P
 TWIKIT_CF_SESSION_QUARANTINE_SEC = max(60.0, min(86400.0, _env_float("TWIKIT_CF_SESSION_QUARANTINE_SEC", 1800.0)))
 # When every session is hard-blocked, pause the whole Twikit pool (minutes) before retrying.
 TWIKIT_ALL_SESSIONS_COOLDOWN_MIN = max(5, min(180, _env_int("TWIKIT_ALL_SESSIONS_COOLDOWN_MIN", 45)))
+# If legacy/in-memory state marks the whole pool blocked without a cooldown
+# timestamp, recover instead of skipping BrainScan/XSearch forever.
+TWIKIT_RECOVER_STUCK_RATE_LIMIT = _env_flag("TWIKIT_RECOVER_STUCK_RATE_LIMIT", "1")
 # Health scoring routes traffic away from sessions that recently timed out / 403 / 429.
 TWITTER_SESSION_HEALTH_SCORING = _env_flag("TWITTER_SESSION_HEALTH_SCORING", "1")
 TWITTER_SESSION_HEALTH_FAILURE_PENALTY = max(1, min(50, _env_int("TWITTER_SESSION_HEALTH_FAILURE_PENALTY", 8)))

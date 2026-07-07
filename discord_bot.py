@@ -2707,8 +2707,10 @@ class BlockBrainBot(commands.Bot):
             return
         pfx = self._get_log_prefix()
         try:
+            self.twitter.check_cooldown()
             if self.twitter.is_rate_limited:
-                print(f"{pfx} [XSearch] Skipped: rate limited.")
+                ce = getattr(self.twitter, "cooldown_ends", None)
+                print(f"{pfx} [XSearch] Skipped: rate limited (until {ce}).")
                 return
 
             try:

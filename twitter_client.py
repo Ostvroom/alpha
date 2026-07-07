@@ -907,6 +907,29 @@ class TwitterClient:
 
     def check_cooldown(self):
         """Checks if the cooldown period has expired and resets flags."""
+        if self.is_rate_limited and not self.cooldown_ends:
+            if not self._sessions:
+                self.is_rate_limited = False
+                return
+            if getattr(config, "TWIKIT_RECOVER_STUCK_RATE_LIMIT", True):
+                print(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] WARN Twikit rate-limit state had no cooldown expiry; "
+                    "clearing transient blocks and retrying pool."
+                )
+                self.is_rate_limited = False
+                self._global_backoff_until_ts = 0.0
+                for s in self._sessions:
+                    s['rate_limited'] = False
+                    s['soft_429_count'] = 0
+                    s['soft_403_count'] = 0
+                    s['backoff_exp'] = 0
+                    s['backoff_until_ts'] = 0.0
+                    s['cf_consecutive'] = 0
+                    s['cf_quarantine_until_ts'] = 0.0
+                    s['logged_in'] = False
+                self._normalize_session_idx()
+                return
+
         if self.cooldown_ends:
             if datetime.now() > self.cooldown_ends:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] Cooldown expired. Resuming operations.")
