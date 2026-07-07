@@ -428,6 +428,7 @@ class BlockBrainBot(commands.Bot):
         self._twitter_job_lock: asyncio.Lock = asyncio.Lock()
         self._twitter_job_name: Optional[str] = None
         self._twitter_active_jobs: Set[str] = set()
+        self._brain_scan_startup_task: Optional[asyncio.Task] = None
         # Active channel caches (populated in on_ready)
         self.active_main_channels = []
         self.active_escalation_channels = []
@@ -680,6 +681,8 @@ class BlockBrainBot(commands.Bot):
         if getattr(config, "TWEET_WATCHER_ENABLED", False) and config.TWEET_WATCHER_CHANNEL_ID:
             self.tweet_watcher_task.start()
         self.monitor_twitter.start()
+        if getattr(config, "BRAIN_SCAN_STARTUP_CATCHUP", True):
+            self._brain_scan_startup_task = asyncio.create_task(self._brain_scan_startup_catchup())
         self.trending_report.start()
         self.daily_x_trending_task.start()
         if config.ENABLE_X_PROJECT_SEARCH:
@@ -2519,6 +2522,39 @@ class BlockBrainBot(commands.Bot):
     async def before_monitor(self):
         await self.wait_until_ready()
         await self.twitter.verify_all_sessions()
+
+    async def _brain_scan_startup_catchup(self):
+        """Run one BrainScan after deploy when the next fixed UTC slot is still far away."""
+        try:
+            await self.wait_until_ready()
+            delay = float(getattr(config, "BRAIN_SCAN_STARTUP_CATCHUP_DELAY_SEC", 180.0) or 0.0)
+            if delay > 0:
+                await asyncio.sleep(delay)
+
+            for _ in range(120):
+                if getattr(self.monitor_twitter, "next_iteration", None) is not None:
+                    break
+                await asyncio.sleep(2)
+
+            next_it = getattr(self.monitor_twitter, "next_iteration", None)
+            if next_it is not None:
+                if next_it.tzinfo is None:
+                    next_it = next_it.replace(tzinfo=timezone.utc)
+                secs_until_next = (next_it - datetime.now(timezone.utc)).total_seconds()
+                skip_window = float(getattr(config, "BRAIN_SCAN_STARTUP_CATCHUP_SKIP_IF_NEXT_WITHIN_SEC", 900.0) or 0.0)
+                if 0 <= secs_until_next <= skip_window:
+                    print(
+                        f"{self._get_log_prefix()} BrainScan startup catch-up skipped; "
+                        f"next scheduled scan is in {int(secs_until_next)}s."
+                    )
+                    return
+
+            print(f"{self._get_log_prefix()} BrainScan startup catch-up running once after deploy.")
+            await self.monitor_twitter()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"{self._get_log_prefix()} BrainScan startup catch-up failed: {type(e).__name__}: {e}")
 
     # ─────────────────────────────────────────────────────────────────────────
     # TWEET WATCHER  (monitor specific X accounts → auto-post to Discord)

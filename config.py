@@ -454,6 +454,9 @@ BATCH_BREAK_SECONDS = max(30, min(900, _env_int("HVA_BATCH_BREAK_SECONDS", 240))
 # Optional time to wait for a pool-wide CF cooldown. Default 0: release the
 # background job immediately instead of making BrainScan look hung for minutes.
 BRAIN_SCAN_MAX_COOLDOWN_WAIT_SEC = max(0.0, min(7200.0, _env_float("BRAIN_SCAN_MAX_COOLDOWN_WAIT_SEC", 0.0)))
+BRAIN_SCAN_STARTUP_CATCHUP = _env_flag("BRAIN_SCAN_STARTUP_CATCHUP", "1")
+BRAIN_SCAN_STARTUP_CATCHUP_DELAY_SEC = max(0.0, min(1800.0, _env_float("BRAIN_SCAN_STARTUP_CATCHUP_DELAY_SEC", 180.0)))
+BRAIN_SCAN_STARTUP_CATCHUP_SKIP_IF_NEXT_WITHIN_SEC = max(0.0, min(3600.0, _env_float("BRAIN_SCAN_STARTUP_CATCHUP_SKIP_IF_NEXT_WITHIN_SEC", 900.0)))
 
 # Twikit (cookie / web-style X traffic) — reduce 429 bursts and “all sessions blocked” cooldowns
 # Minimum pause before each Twikit call in the hot paths below (seconds).
