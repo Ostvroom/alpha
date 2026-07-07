@@ -586,6 +586,9 @@ AI_PROJECT_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("AI_PROJECT_TIMEOUT_SEC",
 # so the scan budget is spent on productive accounts. Set ENABLE_HVA_AUTOPRUNE=0 to disable.
 ENABLE_HVA_AUTOPRUNE = _env_flag("ENABLE_HVA_AUTOPRUNE", "1")
 HVA_AUTOPRUNE_MIN_SCANS = max(3, min(200, _env_int("HVA_AUTOPRUNE_MIN_SCANS", 50)))
+# If old prune state leaves too few configured HVAs active, revive dead config
+# handles. Default 50% means a 100-HVA list will not collapse to 10 active scans.
+HVA_AUTOPRUNE_MIN_ACTIVE_RATIO = max(0.0, min(1.0, _env_float("HVA_AUTOPRUNE_MIN_ACTIVE_RATIO", 0.50)))
 BRAIN_SCAN_SKIP_MENTIONS_WHEN_TWEET_WATCHER_ACTIVE = _env_flag("BRAIN_SCAN_SKIP_MENTIONS_WHEN_TWEET_WATCHER_ACTIVE", "1")
 BRAIN_SCAN_DEGRADED_BATCH_SIZE = max(1, min(10, _env_int("BRAIN_SCAN_DEGRADED_BATCH_SIZE", 2)))
 BRAIN_SCAN_DEGRADED_TIMELINE_COUNT = max(3, min(15, _env_int("BRAIN_SCAN_DEGRADED_TIMELINE_COUNT", 8)))

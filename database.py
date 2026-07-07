@@ -1143,6 +1143,7 @@ def get_hva_priority_list():
     # Keep DB and config list aligned:
     # existing deployments often keep an old hva_stats set (seeded once), so newly
     # added config.HVA_LIST handles never enter priority tiers unless manually added.
+    all_cfg_norm = []
     cfg_norm = []
     for h in (config.HVA_LIST or []):
         k = str(h or "").strip().lstrip("@").lower()
@@ -1150,6 +1151,7 @@ def get_hva_priority_list():
             continue
         if block and k in block:
             continue
+        all_cfg_norm.append(k)
         if k in dead_handles:  # don't resurrect an auto-pruned HVA
             continue
         cfg_norm.append(k)
@@ -1161,9 +1163,13 @@ def get_hva_priority_list():
             continue
         by_handle[hk] = (hk, int(disc_count or 0), last_scan, status)
 
-    # Recovery: if too few active HVAs remain (e.g. prune ran too aggressively in prior
-    # deploys), revive all dead config handles and give them a fresh scan window.
-    if len(by_handle) < 10:
+    # Recovery: if too few configured HVAs remain active (e.g. prune ran too
+    # aggressively in prior deploys), revive dead config handles and give them a
+    # fresh scan window. The old hard-coded <10 guard failed when exactly 10
+    # survived, leaving a 100-HVA list scanning only 10 accounts.
+    min_ratio = float(getattr(config, "HVA_AUTOPRUNE_MIN_ACTIVE_RATIO", 0.50) or 0.0)
+    min_active = min(len(all_cfg_norm), max(10, int(len(all_cfg_norm) * min_ratio))) if all_cfg_norm else 10
+    if len(by_handle) < min_active:
         revived = []
         for h in (config.HVA_LIST or []):
             k = str(h or "").strip().lstrip("@").lower()
@@ -1171,7 +1177,7 @@ def get_hva_priority_list():
                 continue
             cursor.execute(
                 """
-                UPDATE hva_stats SET status='Active', scan_count=0
+                UPDATE hva_stats SET status='Active', scan_count=0, last_scan_at=NULL
                 WHERE hva_handle=? AND status='Dead'
                 """,
                 (k,),
