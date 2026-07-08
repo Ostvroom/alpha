@@ -174,7 +174,9 @@ def _holder_role_id() -> int:
 
 
 def _holder_welcome_enabled() -> bool:
-    return bool(getattr(config, "ENABLE_HOLDER_WELCOME", True))
+    if bool(getattr(config, "HOLDER_WELCOME_PAUSED", True)):
+        return False
+    return bool(getattr(config, "ENABLE_HOLDER_WELCOME", False))
 
 
 def _build_holder_welcome_message(member: discord.Member) -> str:
