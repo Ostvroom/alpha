@@ -245,6 +245,17 @@ def get_caller_stats(guild_id: int, user_id: int, kind: str = "alpha") -> dict:
     }
 
 
+def get_leaderboard(guild_id: int, kind: str = "alpha", limit: int = 10) -> list:
+    with closing(_db()) as conn, conn:
+        rows = conn.execute(
+            "SELECT user_id, score, posts FROM alpha_scores "
+            "WHERE guild_id = ? AND kind = ? AND posts > 0 "
+            "ORDER BY score DESC, posts DESC LIMIT ?",
+            (guild_id, kind, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def _caller_tier(score: int) -> str:
     if score >= 50:
         return "🏆 Alpha Legend"
@@ -554,6 +565,49 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
         member: Optional[discord.Member] = None,
     ) -> None:
         await self._send_caller_profile(ctx, "meme", member)
+
+    async def _send_leaderboard(self, ctx: commands.Context, kind: str,
+                                limit: int) -> None:
+        if not ctx.guild:
+            return
+        meta = KIND_META.get(kind, KIND_META["alpha"])
+        limit = max(1, min(20, limit))
+        rows = get_leaderboard(ctx.guild.id, kind, limit)
+
+        embed = discord.Embed(
+            title=f"🏆 {meta['verb']} Leaderboard",
+            color=meta["color"],
+            timestamp=datetime.now(timezone.utc),
+        )
+        icon = brand_logo_embed_icon()
+        if icon:
+            embed.set_author(name=f"{_BRAND} · Top Callers", icon_url=icon)
+
+        if not rows:
+            embed.description = f"No {meta['verb'].lower()} calls tracked yet."
+        else:
+            medals = {0: "🥇", 1: "🥈", 2: "🥉"}
+            lines = []
+            for index, row in enumerate(rows):
+                member = ctx.guild.get_member(row["user_id"])
+                name = member.mention if member else f"<@{row['user_id']}>"
+                rank_label = medals.get(index, f"`#{index + 1}`")
+                lines.append(
+                    f"{rank_label} {name} — **{row['score']:+d} pts** "
+                    f"({row['posts']} call{'s' if row['posts'] != 1 else ''})"
+                )
+            embed.description = "\n".join(lines)
+
+        embed.set_footer(text=f"Cook {SCORE_COOK:+d} · Skip {SCORE_SKIP:+d} · Top {limit}")
+        await ctx.send(embed=embed)
+
+    @commands.command(name="alphaleaderboard", aliases=["alphalb"])
+    async def alpha_leaderboard(self, ctx: commands.Context, limit: int = 10) -> None:
+        await self._send_leaderboard(ctx, "alpha", limit)
+
+    @commands.command(name="memeleaderboard", aliases=["memelb"])
+    async def meme_leaderboard(self, ctx: commands.Context, limit: int = 10) -> None:
+        await self._send_leaderboard(ctx, "meme", limit)
 
 
 async def setup(bot: commands.Bot) -> None:
