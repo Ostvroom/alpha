@@ -1,4 +1,4 @@
-# Explicit alpha alerts, community voting, and caller score tracking.
+# Explicit alpha + meme-coin alerts, community voting, and caller score tracking.
 from __future__ import annotations
 
 import logging
@@ -9,11 +9,13 @@ from contextlib import closing
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 
+import aiohttp
 import discord
 from discord.ext import commands
 
 from app_paths import DATA_DIR
 from brand_assets import brand_logo_embed_icon
+from trackers.daily_mints_client import twitter_handle_from_url
 
 logger = logging.getLogger(__name__)
 _BRAND = "VELCOR3"
@@ -21,9 +23,31 @@ _URL_RE = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
 
 ALPHA_CHANNEL_ID = int(os.getenv("ALPHA_CHANNEL_ID", "1506376120252239872"))
 ALPHA_TARGET_ROLE_ID = int(os.getenv("ALPHA_TARGET_ROLE_ID", "1505260948707999774"))
+MEME_CHANNEL_ID = int(os.getenv("MEME_CHANNEL_ID", "1248943502084018186"))
+# Optional — leave unset (0) to post meme calls without pinging a role.
+MEME_TARGET_ROLE_ID = int(os.getenv("MEME_TARGET_ROLE_ID", "0"))
 SCORE_COOK = int(os.getenv("ALPHA_SCORE_COOK", os.getenv("ALPHA_SCORE_GOOD", "1")))
 SCORE_SKIP = int(os.getenv("ALPHA_SCORE_SKIP", os.getenv("ALPHA_SCORE_NOT", "-1")))
 DB_PATH = DATA_DIR / "user_stats.db"
+
+# Per-alert-type presentation. Both kinds share one voting/scoring engine
+# (same DB tables, `kind` column) but keep separate leaderboards/scores.
+KIND_META = {
+    "alpha": {
+        "label": "Alpha Call",
+        "verb": "Alpha",
+        "color": 0x00C4FF,
+        "emoji": "🧠",
+        "profile_title": "Alpha Profile",
+    },
+    "meme": {
+        "label": "Meme Call",
+        "verb": "Meme",
+        "color": 0xF5A623,
+        "emoji": "🚀",
+        "profile_title": "Meme Profile",
+    },
+}
 
 
 def _db() -> sqlite3.Connection:
@@ -32,13 +56,45 @@ def _db() -> sqlite3.Connection:
     return conn
 
 
+def _column_names(conn: sqlite3.Connection, table: str) -> set:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _migrate_alpha_posts_kind(conn: sqlite3.Connection) -> None:
+    cols = _column_names(conn, "alpha_posts")
+    if cols and "kind" not in cols:
+        conn.execute("ALTER TABLE alpha_posts ADD COLUMN kind TEXT NOT NULL DEFAULT 'alpha'")
+
+
+def _migrate_alpha_scores_kind(conn: sqlite3.Connection) -> None:
+    # alpha_scores' PRIMARY KEY must grow to (guild_id, user_id, kind) so alpha
+    # and meme reputations are tracked separately. SQLite can't ALTER a PK, so
+    # older installs get rebuilt: rename -> recreate -> copy (kind='alpha') -> drop.
+    cols = _column_names(conn, "alpha_scores")
+    if not cols or "kind" in cols:
+        return
+    conn.execute("ALTER TABLE alpha_scores RENAME TO alpha_scores_legacy")
+    conn.execute(
+        "CREATE TABLE alpha_scores (guild_id INTEGER NOT NULL, "
+        "user_id INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'alpha', "
+        "score INTEGER DEFAULT 0, posts INTEGER DEFAULT 0, "
+        "PRIMARY KEY (guild_id, user_id, kind))"
+    )
+    conn.execute(
+        "INSERT INTO alpha_scores (guild_id, user_id, kind, score, posts) "
+        "SELECT guild_id, user_id, 'alpha', score, posts FROM alpha_scores_legacy"
+    )
+    conn.execute("DROP TABLE alpha_scores_legacy")
+
+
 def init_alpha_tables() -> None:
     with closing(_db()) as conn, conn:
         conn.execute(
             "CREATE TABLE IF NOT EXISTS alpha_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "guild_id INTEGER NOT NULL, channel_id INTEGER NOT NULL, "
             "message_id INTEGER NOT NULL UNIQUE, poster_id INTEGER NOT NULL, "
-            "content TEXT NOT NULL, handle TEXT, posted_at TEXT NOT NULL)"
+            "content TEXT NOT NULL, handle TEXT, kind TEXT NOT NULL DEFAULT 'alpha', "
+            "posted_at TEXT NOT NULL)"
         )
         conn.execute(
             "CREATE TABLE IF NOT EXISTS alpha_votes (post_id INTEGER NOT NULL, "
@@ -47,27 +103,33 @@ def init_alpha_tables() -> None:
         )
         conn.execute(
             "CREATE TABLE IF NOT EXISTS alpha_scores (guild_id INTEGER NOT NULL, "
-            "user_id INTEGER NOT NULL, score INTEGER DEFAULT 0, posts INTEGER DEFAULT 0, "
-            "PRIMARY KEY (guild_id, user_id))"
+            "user_id INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'alpha', "
+            "score INTEGER DEFAULT 0, posts INTEGER DEFAULT 0, "
+            "PRIMARY KEY (guild_id, user_id, kind))"
         )
+        try:
+            _migrate_alpha_posts_kind(conn)
+            _migrate_alpha_scores_kind(conn)
+        except Exception:
+            logger.exception("[AlphaPing] Schema migration for kind column failed")
 
 
 def save_alpha_post(guild_id: int, channel_id: int, message_id: int,
-                    poster_id: int, content: str) -> None:
+                    poster_id: int, content: str, kind: str = "alpha") -> None:
     with closing(_db()) as conn, conn:
         cursor = conn.execute(
             "INSERT OR IGNORE INTO alpha_posts "
-            "(guild_id, channel_id, message_id, poster_id, content, handle, posted_at) "
-            "VALUES (?, ?, ?, ?, ?, NULL, ?)",
-            (guild_id, channel_id, message_id, poster_id, content[:4000],
+            "(guild_id, channel_id, message_id, poster_id, content, handle, kind, posted_at) "
+            "VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
+            (guild_id, channel_id, message_id, poster_id, content[:4000], kind,
              datetime.now(timezone.utc).isoformat()),
         )
         if cursor.rowcount:
             conn.execute(
-                "INSERT INTO alpha_scores (guild_id, user_id, score, posts) "
-                "VALUES (?, ?, 0, 1) ON CONFLICT(guild_id, user_id) "
+                "INSERT INTO alpha_scores (guild_id, user_id, kind, score, posts) "
+                "VALUES (?, ?, ?, 0, 1) ON CONFLICT(guild_id, user_id, kind) "
                 "DO UPDATE SET posts = posts + 1",
-                (guild_id, poster_id),
+                (guild_id, poster_id, kind),
             )
 
 
@@ -78,11 +140,11 @@ def get_post_by_message(message_id: int) -> Optional[sqlite3.Row]:
         ).fetchone()
 
 
-def get_poster_score(guild_id: int, user_id: int) -> Tuple[int, int]:
+def get_poster_score(guild_id: int, user_id: int, kind: str = "alpha") -> Tuple[int, int]:
     with closing(_db()) as conn, conn:
         row = conn.execute(
-            "SELECT score, posts FROM alpha_scores WHERE guild_id = ? AND user_id = ?",
-            (guild_id, user_id),
+            "SELECT score, posts FROM alpha_scores WHERE guild_id = ? AND user_id = ? AND kind = ?",
+            (guild_id, user_id, kind),
         ).fetchone()
     return (row["score"], row["posts"]) if row else (0, 0)
 
@@ -93,7 +155,7 @@ def _vote_delta(vote: str) -> int:
 
 
 def cast_vote(post_id: int, voter_id: int, vote: str,
-              poster_id: int, guild_id: int) -> str:
+              poster_id: int, guild_id: int, kind: str = "alpha") -> str:
     with closing(_db()) as conn, conn:
         existing = conn.execute(
             "SELECT vote FROM alpha_votes WHERE post_id = ? AND voter_id = ?",
@@ -118,10 +180,10 @@ def cast_vote(post_id: int, voter_id: int, vote: str,
             )
             result = "new"
         conn.execute(
-            "INSERT INTO alpha_scores (guild_id, user_id, score, posts) "
-            "VALUES (?, ?, ?, 0) ON CONFLICT(guild_id, user_id) "
+            "INSERT INTO alpha_scores (guild_id, user_id, kind, score, posts) "
+            "VALUES (?, ?, ?, ?, 0) ON CONFLICT(guild_id, user_id, kind) "
             "DO UPDATE SET score = score + ?",
-            (guild_id, poster_id, net, net),
+            (guild_id, poster_id, kind, net, net),
         )
         return result
 
@@ -139,17 +201,16 @@ def get_vote_counts(post_id: int) -> Tuple[int, int]:
     )
 
 
-
-def get_caller_stats(guild_id: int, user_id: int) -> dict:
-    score, calls = get_poster_score(guild_id, user_id)
+def get_caller_stats(guild_id: int, user_id: int, kind: str = "alpha") -> dict:
+    score, calls = get_poster_score(guild_id, user_id, kind)
     with closing(_db()) as conn, conn:
         totals = conn.execute(
             "SELECT "
             "SUM(CASE WHEN v.vote IN ('cook', 'good') THEN 1 ELSE 0 END) AS cook, "
             "SUM(CASE WHEN v.vote IN ('skip', 'not') THEN 1 ELSE 0 END) AS skip "
             "FROM alpha_posts p LEFT JOIN alpha_votes v ON v.post_id = p.id "
-            "WHERE p.guild_id = ? AND p.poster_id = ?",
-            (guild_id, user_id),
+            "WHERE p.guild_id = ? AND p.poster_id = ? AND p.kind = ?",
+            (guild_id, user_id, kind),
         ).fetchone()
         best = conn.execute(
             "SELECT p.channel_id, p.message_id, p.content, "
@@ -158,14 +219,14 @@ def get_caller_stats(guild_id: int, user_id: int) -> dict:
             "SUM(CASE WHEN v.vote IN ('cook', 'good') THEN 1 ELSE 0 END) AS cook, "
             "SUM(CASE WHEN v.vote IN ('skip', 'not') THEN 1 ELSE 0 END) AS skip "
             "FROM alpha_posts p LEFT JOIN alpha_votes v ON v.post_id = p.id "
-            "WHERE p.guild_id = ? AND p.poster_id = ? GROUP BY p.id "
+            "WHERE p.guild_id = ? AND p.poster_id = ? AND p.kind = ? GROUP BY p.id "
             "ORDER BY call_score DESC, cook DESC, p.posted_at DESC LIMIT 1",
-            (SCORE_COOK, SCORE_SKIP, guild_id, user_id),
+            (SCORE_COOK, SCORE_SKIP, guild_id, user_id, kind),
         ).fetchone()
         rank = conn.execute(
             "SELECT 1 + COUNT(*) AS rank FROM alpha_scores "
-            "WHERE guild_id = ? AND (score > ? OR (score = ? AND posts > ?))",
-            (guild_id, score, score, calls),
+            "WHERE guild_id = ? AND kind = ? AND (score > ? OR (score = ? AND posts > ?))",
+            (guild_id, kind, score, score, calls),
         ).fetchone()["rank"]
 
     cook = int(totals["cook"] or 0)
@@ -198,31 +259,65 @@ def _caller_tier(score: int) -> str:
     return "⚠️ Unproven Caller"
 
 
-def build_alpha_embed(caller: discord.Member, link: str, text: str, score: int,
-                      cook_votes: int = 0, skip_votes: int = 0) -> discord.Embed:
+async def resolve_project_pfp(link: str) -> Optional[str]:
+    """Best-effort project avatar for the shared link (X/Twitter profiles only).
+
+    Uses unavatar.io — a public, unauthenticated avatar proxy — so this NEVER
+    touches the Twikit session pool / residential proxies reserved for the
+    brain scan and TweetWatcher. Returns None (caller falls back to their own
+    Discord avatar) if the link isn't an X profile or has no resolvable pfp.
+    """
+    handle = twitter_handle_from_url(link)
+    if not handle:
+        return None
+    url = f"https://unavatar.io/twitter/{handle}"
+    check_url = f"{url}?fallback=false"
+    try:
+        timeout = aiohttp.ClientTimeout(total=6)
+        async with aiohttp.ClientSession(timeout=timeout) as http:
+            async with http.head(check_url, allow_redirects=True) as resp:
+                if resp.status == 200:
+                    return url
+    except Exception:
+        pass
+    return None
+
+
+def build_alert_embed(kind: str, caller: discord.Member, link: str, text: str,
+                      score: int, cook_votes: int = 0, skip_votes: int = 0,
+                      thumbnail_url: Optional[str] = None) -> discord.Embed:
+    meta = KIND_META.get(kind, KIND_META["alpha"])
     embed = discord.Embed(
-        title="Alpha Call",
+        title=f"{meta['emoji']} {meta['label']}",
         description=text[:3500],
-        color=0x00C4FF,
+        color=meta["color"],
         timestamp=datetime.now(timezone.utc),
     )
     icon = brand_logo_embed_icon()
     if icon:
-        embed.set_author(name=f"{_BRAND} Alpha", icon_url=icon)
-    embed.add_field(name="Link", value=link, inline=False)
-    embed.add_field(name="Caller", value=caller.mention, inline=True)
-    embed.add_field(name="Caller Score", value=f"`{score:+d}`", inline=True)
+        embed.set_author(name=f"{_BRAND} {meta['verb']}", icon_url=icon)
+    embed.add_field(name="🔗 Link", value=f"[View project]({link})", inline=False)
     embed.add_field(
-        name="Votes",
-        value=f"🍳 Cook **{cook_votes}**  ·  ⏭️ Skip **{skip_votes}**",
+        name="👤 Caller",
+        value=f"{caller.mention}\n{_caller_tier(score)}",
+        inline=True,
+    )
+    embed.add_field(name="📊 Caller Score", value=f"`{score:+d}`", inline=True)
+    embed.add_field(
+        name="🗳️ Votes",
+        value=f"🍳 Cook **{cook_votes}**   ·   ⏭️ Skip **{skip_votes}**",
         inline=False,
     )
-    embed.set_thumbnail(url=caller.display_avatar.url)
-    embed.set_footer(text=f"Cook {SCORE_COOK:+d} · Skip {SCORE_SKIP:+d}")
+    embed.set_thumbnail(url=thumbnail_url or caller.display_avatar.url)
+    embed.set_footer(text=f"Cook {SCORE_COOK:+d} · Skip {SCORE_SKIP:+d} · React below to vote")
     return embed
 
 
-class AlphaVoteView(discord.ui.View):
+class AlertVoteView(discord.ui.View):
+    """Single persistent view shared by alpha + meme calls. The alert `kind`
+    is looked up from the post row (by message id) rather than encoded in the
+    custom_id, so one registered view instance handles both alert types."""
+
     def __init__(self) -> None:
         super().__init__(timeout=None)
 
@@ -244,18 +339,19 @@ class AlphaVoteView(discord.ui.View):
         post = get_post_by_message(interaction.message.id)
         if not post:
             await interaction.response.send_message(
-                "This alpha call is no longer active.", ephemeral=True
+                "This call is no longer active.", ephemeral=True
             )
             return
         if interaction.user.id == post["poster_id"]:
             await interaction.response.send_message(
-                "You cannot vote on your own alpha call.", ephemeral=True
+                "You cannot vote on your own call.", ephemeral=True
             )
             return
 
+        kind = post["kind"] if "kind" in post.keys() else "alpha"
         result = cast_vote(
             post["id"], interaction.user.id, vote,
-            post["poster_id"], post["guild_id"],
+            post["poster_id"], post["guild_id"], kind,
         )
         label = "Cook" if vote == "cook" else "Skip"
         if result == "already_same":
@@ -266,19 +362,25 @@ class AlphaVoteView(discord.ui.View):
 
         await interaction.response.defer(ephemeral=True)
         cook_votes, skip_votes = get_vote_counts(post["id"])
-        score, _ = get_poster_score(post["guild_id"], post["poster_id"])
+        score, _ = get_poster_score(post["guild_id"], post["poster_id"], kind)
         if interaction.message.embeds:
             embed = interaction.message.embeds[0].copy()
             for index, field in enumerate(embed.fields):
-                if field.name == "Caller Score":
+                if field.name == "📊 Caller Score":
                     embed.set_field_at(
-                        index, name="Caller Score",
+                        index, name="📊 Caller Score",
                         value=f"`{score:+d}`", inline=True,
                     )
-                elif field.name == "Votes":
+                elif field.name == "👤 Caller":
                     embed.set_field_at(
-                        index, name="Votes",
-                        value=f"🍳 Cook **{cook_votes}**  ·  ⏭️ Skip **{skip_votes}**",
+                        index, name="👤 Caller",
+                        value=f"{interaction.guild.get_member(post['poster_id']).mention if interaction.guild.get_member(post['poster_id']) else '<@' + str(post['poster_id']) + '>'}\n{_caller_tier(score)}",
+                        inline=True,
+                    )
+                elif field.name == "🗳️ Votes":
+                    embed.set_field_at(
+                        index, name="🗳️ Votes",
+                        value=f"🍳 Cook **{cook_votes}**   ·   ⏭️ Skip **{skip_votes}**",
                         inline=False,
                     )
             await interaction.message.edit(embed=embed, view=self)
@@ -289,49 +391,55 @@ class AlphaVoteView(discord.ui.View):
         )
 
 
+def _parse_link_and_text(args: Optional[str]) -> Tuple[str, str]:
+    """The link can appear before or after the alert text."""
+    parts = (args or "").split()
+    link_index = next(
+        (index for index, part in enumerate(parts)
+         if _URL_RE.fullmatch(part.strip("<>"))),
+        None,
+    )
+    link = parts[link_index].strip("<>") if link_index is not None else ""
+    text = " ".join(
+        part for index, part in enumerate(parts) if index != link_index
+    ).strip()
+    return link, text
 
-class AlphaPingCog(commands.Cog, name="AlphaPing"):
+
+class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         init_alpha_tables()
-        bot.add_view(AlphaVoteView())
+        bot.add_view(AlertVoteView())
 
-    @commands.command(name="alpha")
-    async def alpha(self, ctx: commands.Context,
-                    *, args: Optional[str] = None) -> None:
-        # The link can appear before or after the alert text.
+    async def _post_alert(self, ctx: commands.Context, kind: str,
+                          channel_id: int, role_id: int,
+                          args: Optional[str], usage_name: str) -> None:
         if not ctx.guild:
             return
-        if ctx.channel.id != ALPHA_CHANNEL_ID:
-            await ctx.send("Use this command in the alpha channel.", delete_after=8)
+        if ctx.channel.id != channel_id:
+            await ctx.send(f"Use this command in the {usage_name} channel.", delete_after=8)
             return
 
-        parts = (args or "").split()
-        link_index = next(
-            (index for index, part in enumerate(parts)
-             if _URL_RE.fullmatch(part.strip("<>"))),
-            None,
-        )
-        link = parts[link_index].strip("<>") if link_index is not None else ""
-        text = " ".join(
-            part for index, part in enumerate(parts) if index != link_index
-        ).strip()
+        link, text = _parse_link_and_text(args)
         if not link or not text:
             await ctx.send(
-                "Usage: `!velcor3 alpha <link> <text>` or "
-                "`!velcor3 alpha <text> <link>`\n"
+                f"Usage: `!velcor3 {usage_name} <link> <text>` or "
+                f"`!velcor3 {usage_name} <text> <link>`\n"
                 "Both the link and text are required.",
                 delete_after=10,
             )
             return
 
-        target_role = ctx.guild.get_role(ALPHA_TARGET_ROLE_ID)
-        if target_role is None:
-            await ctx.send("The degen alert role is not configured.", delete_after=8)
+        target_role = ctx.guild.get_role(role_id) if role_id else None
+        if role_id and target_role is None:
+            await ctx.send("The alert role is not configured.", delete_after=8)
             return
 
-        score, _ = get_poster_score(ctx.guild.id, ctx.author.id)
-        embed = build_alpha_embed(ctx.author, link, text, score)
+        score, _ = get_poster_score(ctx.guild.id, ctx.author.id, kind)
+        thumbnail_url = await resolve_project_pfp(link)
+        embed = build_alert_embed(kind, ctx.author, link, text, score,
+                                  thumbnail_url=thumbnail_url)
         try:
             await ctx.message.delete()
         except (discord.Forbidden, discord.NotFound):
@@ -339,34 +447,44 @@ class AlphaPingCog(commands.Cog, name="AlphaPing"):
 
         try:
             posted = await ctx.send(
-                target_role.mention,
+                target_role.mention if target_role else None,
                 embed=embed,
-                view=AlphaVoteView(),
+                view=AlertVoteView(),
                 allowed_mentions=discord.AllowedMentions(
                     everyone=False, users=False, roles=True, replied_user=False
                 ),
             )
             save_alpha_post(
                 ctx.guild.id, ctx.channel.id, posted.id, ctx.author.id,
-                f"{link}\n{text}",
+                f"{link}\n{text}", kind,
             )
         except Exception:
-            logger.exception("[AlphaPing] Failed to create alpha alert")
-            await ctx.send("Could not create the alpha alert.", delete_after=8)
+            logger.exception(f"[AlphaPing] Failed to create {kind} alert")
+            await ctx.send("Could not create the alert.", delete_after=8)
 
-    @commands.command(name="alphascore")
-    async def alpha_score(
-        self, ctx: commands.Context,
-        member: Optional[discord.Member] = None,
-    ) -> None:
+    @commands.command(name="alpha")
+    async def alpha(self, ctx: commands.Context,
+                    *, args: Optional[str] = None) -> None:
+        await self._post_alert(ctx, "alpha", ALPHA_CHANNEL_ID, ALPHA_TARGET_ROLE_ID,
+                               args, "alpha")
+
+    @commands.command(name="meme")
+    async def meme(self, ctx: commands.Context,
+                   *, args: Optional[str] = None) -> None:
+        await self._post_alert(ctx, "meme", MEME_CHANNEL_ID, MEME_TARGET_ROLE_ID,
+                               args, "meme")
+
+    async def _send_caller_profile(self, ctx: commands.Context, kind: str,
+                                   member: Optional[discord.Member]) -> None:
         if not ctx.guild:
             return
+        meta = KIND_META.get(kind, KIND_META["alpha"])
         target = member or ctx.author
-        stats = get_caller_stats(ctx.guild.id, target.id)
+        stats = get_caller_stats(ctx.guild.id, target.id, kind)
         score = stats["score"]
-        color = 0x57F287 if score >= 10 else (0xED4245 if score < 0 else 0x00C4FF)
+        color = 0x57F287 if score >= 10 else (0xED4245 if score < 0 else meta["color"])
         embed = discord.Embed(
-            title=f"{target.display_name}'s Alpha Profile",
+            title=f"{target.display_name}'s {meta['profile_title']}",
             description=f"{target.mention}\n**{_caller_tier(score)}**",
             color=color,
             timestamp=datetime.now(timezone.utc),
@@ -381,7 +499,7 @@ class AlphaPingCog(commands.Cog, name="AlphaPing"):
             f"{stats['approval']}%" if stats["approval"] is not None else "No votes"
         )
         embed.add_field(name="Reputation", value=f"**{score:+d} pts**", inline=True)
-        embed.add_field(name="Alpha Calls", value=f"**{stats['calls']}**", inline=True)
+        embed.add_field(name=f"{meta['verb']} Calls", value=f"**{stats['calls']}**", inline=True)
         embed.add_field(name="Server Rank", value=f"**{rank}**", inline=True)
         embed.add_field(name="🍳 Cook", value=f"**{stats['cook']}**", inline=True)
         embed.add_field(name="⏭️ Skip", value=f"**{stats['skip']}**", inline=True)
@@ -410,11 +528,11 @@ class AlphaPingCog(commands.Cog, name="AlphaPing"):
             )
             if summary:
                 best_value += f"\n> {summary[:220]}"
-            embed.add_field(name="🏅 Best Call", value=best_value, inline=False)
+            embed.add_field(name=f"🏅 Best {meta['verb']} Call", value=best_value, inline=False)
         else:
             embed.add_field(
-                name="🏅 Best Call",
-                value="No alpha calls yet.",
+                name=f"🏅 Best {meta['verb']} Call",
+                value=f"No {meta['verb'].lower()} calls yet.",
                 inline=False,
             )
 
@@ -423,6 +541,20 @@ class AlphaPingCog(commands.Cog, name="AlphaPing"):
         )
         await ctx.send(embed=embed)
 
+    @commands.command(name="alphascore")
+    async def alpha_score(
+        self, ctx: commands.Context,
+        member: Optional[discord.Member] = None,
+    ) -> None:
+        await self._send_caller_profile(ctx, "alpha", member)
+
+    @commands.command(name="memescore")
+    async def meme_score(
+        self, ctx: commands.Context,
+        member: Optional[discord.Member] = None,
+    ) -> None:
+        await self._send_caller_profile(ctx, "meme", member)
+
 
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(AlphaPingCog(bot))
+    await bot.add_cog(MarketAlertsCog(bot))
