@@ -294,56 +294,106 @@ async def resolve_project_pfp(link: str) -> Optional[str]:
     return None
 
 
+def _vote_bar(pct: int) -> str:
+    filled = max(0, min(10, round(pct / 10)))
+    return "█" * filled + "░" * (10 - filled)
+
+
+def _sentiment_field(cook_votes: int, skip_votes: int) -> str:
+    total = cook_votes + skip_votes
+    cook_pct = round(cook_votes * 100 / total) if total else 0
+    skip_pct = round(skip_votes * 100 / total) if total else 0
+    return (
+        f"**🍳 Cook**  `{cook_votes}`  ({cook_pct}%)\n{_vote_bar(cook_pct)}\n\n"
+        f"**⏭️ Skip**  `{skip_votes}`  ({skip_pct}%)\n{_vote_bar(skip_pct)}"
+    )
+
+
 def build_alert_embed(kind: str, caller: discord.Member, link: str, text: str,
                       score: int, cook_votes: int = 0, skip_votes: int = 0,
-                      thumbnail_url: Optional[str] = None) -> discord.Embed:
+                      thumbnail_url: Optional[str] = None,
+                      image_url: Optional[str] = None) -> discord.Embed:
     meta = KIND_META.get(kind, KIND_META["alpha"])
+    description = (
+        f"{text[:1500]}\n\n"
+        "```\nLive community voting panel\n```\n"
+        "━━━━━━━━━━━━━━━━━━"
+    )
     embed = discord.Embed(
         title=f"{meta['emoji']} {meta['label']}",
-        description=text[:3500],
+        description=description[:4000],
         color=meta["color"],
         timestamp=datetime.now(timezone.utc),
     )
     icon = brand_logo_embed_icon()
+    author_name = f"{_BRAND} {meta['verb'].upper()} CALL"
     if icon:
-        embed.set_author(name=f"{_BRAND} {meta['verb']}", icon_url=icon)
-    embed.add_field(name="🔗 Link", value=f"[View project]({link})", inline=False)
+        embed.set_author(name=author_name, icon_url=icon)
+    else:
+        embed.set_author(name=author_name)
+    # Link is shown as a plain, fully-visible URL (not masked behind text).
+    embed.add_field(name="🔗 Project", value=link, inline=True)
+    embed.add_field(name="👤 Caller", value=caller.mention, inline=True)
     embed.add_field(
-        name="👤 Caller",
-        value=f"{caller.mention}\n{_caller_tier(score)}",
+        name="📊 Score",
+        value=f"`{score:+d}`\n{_caller_tier(score)}",
         inline=True,
     )
-    embed.add_field(name="📊 Caller Score", value=f"`{score:+d}`", inline=True)
     embed.add_field(
-        name="🗳️ Votes",
-        value=f"🍳 Cook **{cook_votes}**   ·   ⏭️ Skip **{skip_votes}**",
+        name="🗳️ Community Sentiment",
+        value=_sentiment_field(cook_votes, skip_votes),
+        inline=False,
+    )
+    embed.add_field(
+        name="📌 Status",
+        value="`LIVE VOTING` • `COMMUNITY SIGNAL`",
         inline=False,
     )
     embed.set_thumbnail(url=thumbnail_url or caller.display_avatar.url)
-    embed.set_footer(text=f"Cook {SCORE_COOK:+d} · Skip {SCORE_SKIP:+d} · React below to vote")
+    if image_url:
+        embed.set_image(url=image_url)
+    embed.set_footer(text=f"{_BRAND} • Cook {SCORE_COOK:+d} · Skip {SCORE_SKIP:+d} · Vote below")
     return embed
 
 
 class AlertVoteView(discord.ui.View):
     """Single persistent view shared by alpha + meme calls. The alert `kind`
     is looked up from the post row (by message id) rather than encoded in the
-    custom_id, so one registered view instance handles both alert types."""
+    custom_id, so one registered view instance routes clicks for both alert
+    types. cook_votes/skip_votes/link only shape THIS message's rendered
+    button labels + Link button at send time — Discord preserves each sent
+    message's components independently of the bot process, so a fresh
+    zero-state view registered at boot (see MarketAlertsCog.__init__) is all
+    that's needed for interaction routing to keep working across restarts.
+    """
 
-    def __init__(self) -> None:
+    def __init__(self, cook_votes: int = 0, skip_votes: int = 0,
+                link: Optional[str] = None) -> None:
         super().__init__(timeout=None)
+        self.cook_button = discord.ui.Button(
+            label=f"Cook {cook_votes}", emoji="🍳",
+            style=discord.ButtonStyle.success, custom_id="alpha_vote_cook",
+        )
+        self.cook_button.callback = self._on_cook
+        self.skip_button = discord.ui.Button(
+            label=f"Skip {skip_votes}", emoji="⏭️",
+            style=discord.ButtonStyle.secondary, custom_id="alpha_vote_skip",
+        )
+        self.skip_button.callback = self._on_skip
+        self.add_item(self.cook_button)
+        self.add_item(self.skip_button)
+        if link:
+            # Link-style buttons open the URL client-side; Discord never
+            # routes them through the bot, so no custom_id/persistence needed.
+            self.add_item(discord.ui.Button(
+                label="Project", emoji="🔗",
+                style=discord.ButtonStyle.link, url=link,
+            ))
 
-    @discord.ui.button(label="Cook", emoji="🍳",
-                       style=discord.ButtonStyle.success,
-                       custom_id="alpha_vote_cook")
-    async def vote_cook(self, interaction: discord.Interaction,
-                        _: discord.ui.Button) -> None:
+    async def _on_cook(self, interaction: discord.Interaction) -> None:
         await self._handle(interaction, "cook")
 
-    @discord.ui.button(label="Skip", emoji="⏭️",
-                       style=discord.ButtonStyle.secondary,
-                       custom_id="alpha_vote_skip")
-    async def vote_skip(self, interaction: discord.Interaction,
-                        _: discord.ui.Button) -> None:
+    async def _on_skip(self, interaction: discord.Interaction) -> None:
         await self._handle(interaction, "skip")
 
     async def _handle(self, interaction: discord.Interaction, vote: str) -> None:
@@ -374,24 +424,20 @@ class AlertVoteView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         cook_votes, skip_votes = get_vote_counts(post["id"])
         score, _ = get_poster_score(post["guild_id"], post["poster_id"], kind)
+        self.cook_button.label = f"Cook {cook_votes}"
+        self.skip_button.label = f"Skip {skip_votes}"
         if interaction.message.embeds:
             embed = interaction.message.embeds[0].copy()
             for index, field in enumerate(embed.fields):
-                if field.name == "📊 Caller Score":
+                if field.name == "📊 Score":
                     embed.set_field_at(
-                        index, name="📊 Caller Score",
-                        value=f"`{score:+d}`", inline=True,
+                        index, name="📊 Score",
+                        value=f"`{score:+d}`\n{_caller_tier(score)}", inline=True,
                     )
-                elif field.name == "👤 Caller":
+                elif field.name == "🗳️ Community Sentiment":
                     embed.set_field_at(
-                        index, name="👤 Caller",
-                        value=f"{interaction.guild.get_member(post['poster_id']).mention if interaction.guild.get_member(post['poster_id']) else '<@' + str(post['poster_id']) + '>'}\n{_caller_tier(score)}",
-                        inline=True,
-                    )
-                elif field.name == "🗳️ Votes":
-                    embed.set_field_at(
-                        index, name="🗳️ Votes",
-                        value=f"🍳 Cook **{cook_votes}**   ·   ⏭️ Skip **{skip_votes}**",
+                        index, name="🗳️ Community Sentiment",
+                        value=_sentiment_field(cook_votes, skip_votes),
                         inline=False,
                     )
             await interaction.message.edit(embed=embed, view=self)
@@ -449,8 +495,13 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
 
         score, _ = get_poster_score(ctx.guild.id, ctx.author.id, kind)
         thumbnail_url = await resolve_project_pfp(link)
+        image_url = next(
+            (a.url for a in ctx.message.attachments
+             if (a.content_type or "").startswith("image/")),
+            None,
+        )
         embed = build_alert_embed(kind, ctx.author, link, text, score,
-                                  thumbnail_url=thumbnail_url)
+                                  thumbnail_url=thumbnail_url, image_url=image_url)
         try:
             await ctx.message.delete()
         except (discord.Forbidden, discord.NotFound):
@@ -460,7 +511,7 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
             posted = await ctx.send(
                 target_role.mention if target_role else None,
                 embed=embed,
-                view=AlertVoteView(),
+                view=AlertVoteView(cook_votes=0, skip_votes=0, link=link),
                 allowed_mentions=discord.AllowedMentions(
                     everyone=False, users=False, roles=True, replied_user=False
                 ),
