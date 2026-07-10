@@ -316,8 +316,7 @@ def _sentiment_field(cook_votes: int, skip_votes: int, *, compact: bool = False)
 def build_alert_embed(kind: str, caller: discord.Member, link: str, text: str,
                       score: int, cook_votes: int = 0, skip_votes: int = 0,
                       thumbnail_url: Optional[str] = None,
-                      image_url: Optional[str] = None,
-                      contract_address: Optional[str] = None) -> discord.Embed:
+                      image_url: Optional[str] = None) -> discord.Embed:
     meta = KIND_META.get(kind, KIND_META["alpha"])
     if kind == "meme":
         title = None
@@ -342,7 +341,6 @@ def build_alert_embed(kind: str, caller: discord.Member, link: str, text: str,
     else:
         embed.set_author(name=author_name)
     if kind == "meme":
-        embed.add_field(name="CA", value=f"`{contract_address or link}`", inline=False)
         embed.add_field(
             name="Caller",
             value=f"{caller.mention}  ·  Score `{score:+d}`  ·  {_caller_tier(score)}",
@@ -559,16 +557,22 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
         embed = build_alert_embed(
             kind, ctx.author, link, text, score,
             thumbnail_url=thumbnail_url, image_url=image_url,
-            contract_address=contract_address,
         )
         try:
             await ctx.message.delete()
         except (discord.Forbidden, discord.NotFound):
             pass
 
+        message_content = "\n".join(
+            part for part in (
+                target_role.mention if target_role else "",
+                contract_address if kind == "meme" else "",
+            )
+            if part
+        ) or None
         try:
             posted = await ctx.send(
-                target_role.mention if target_role else None,
+                message_content,
                 embed=embed,
                 view=AlertVoteView(cook_votes=0, skip_votes=0, link=link or None),
                 allowed_mentions=discord.AllowedMentions(
