@@ -580,6 +580,7 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
                 )
                 return
             link = market["url"]
+            contract_address = market.get("token_address") or contract_address
             text = text or f"{market['name']} (${market['symbol']})"
             usage_detail = "<contract-address> [description]"
             required_detail = "A valid contract address is required."

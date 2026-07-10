@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 from typing import Any, Optional
 
 import aiohttp
 
 
 DEX_SEARCH_URL = "https://api.dexscreener.com/latest/dex/search"
+logger = logging.getLogger(__name__)
 
 
 def _number(value: Any) -> float:
@@ -23,19 +25,30 @@ def _same_address(left: str, right: str) -> bool:
 
 
 async def find_dexscreener_token(contract_address: str) -> Optional[dict[str, Any]]:
-    """Find an exact token address and select its strongest liquidity pool."""
+    """Resolve a token or pair address and select its strongest liquidity pool."""
     timeout = aiohttp.ClientTimeout(total=10)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(
                 DEX_SEARCH_URL,
                 params={"q": contract_address},
-                headers={"Accept": "application/json"},
+                headers={
+                    "Accept": "application/json",
+                    "User-Agent": "Velcor3/1.0 (+https://nerdsalpha.xyz)",
+                },
             ) as response:
                 if response.status != 200:
+                    logger.warning(
+                        "[Dexscreener] Search failed status=%s address=%s",
+                        response.status, contract_address,
+                    )
                     return None
                 payload = await response.json()
-    except (aiohttp.ClientError, TimeoutError, ValueError):
+    except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
+        logger.warning(
+            "[Dexscreener] Search request failed address=%s error=%s",
+            contract_address, type(exc).__name__,
+        )
         return None
 
     if not isinstance(payload, dict):
@@ -50,10 +63,12 @@ async def find_dexscreener_token(contract_address: str) -> Optional[dict[str, An
         if (
             _same_address(str(base.get("address", "")), contract_address)
             or _same_address(str(quote.get("address", "")), contract_address)
+            or _same_address(str(pair.get("pairAddress", "")), contract_address)
         ):
             exact_pairs.append(pair)
 
     if not exact_pairs:
+        logger.info("[Dexscreener] No exact token or pair match for %s", contract_address)
         return None
 
     pair = max(
@@ -65,11 +80,17 @@ async def find_dexscreener_token(contract_address: str) -> Optional[dict[str, An
     )
     base = pair.get("baseToken") or {}
     quote = pair.get("quoteToken") or {}
-    token = (
-        base
-        if _same_address(str(base.get("address", "")), contract_address)
-        else quote
-    )
+    if _same_address(str(base.get("address", "")), contract_address):
+        token = base
+        submitted_as_pair = False
+    elif _same_address(str(quote.get("address", "")), contract_address):
+        token = quote
+        submitted_as_pair = False
+    else:
+        # Dexscreener search also accepts pair addresses. Its base token is the
+        # project represented by the pair page, so expose that token CA.
+        token = base
+        submitted_as_pair = True
 
     created_at = _number(pair.get("pairCreatedAt"))
     age_hours = None
@@ -89,6 +110,8 @@ async def find_dexscreener_token(contract_address: str) -> Optional[dict[str, An
         "url": str(pair.get("url") or ""),
         "name": str(token.get("name") or "Unknown token"),
         "symbol": str(token.get("symbol") or "?"),
+        "token_address": str(token.get("address") or contract_address),
+        "submitted_as_pair": submitted_as_pair,
         "price": _number(pair.get("priceUsd")),
         "fdv": _number(pair.get("fdv")),
         "market_cap": _number(pair.get("marketCap")) or _number(pair.get("fdv")),
