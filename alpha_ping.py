@@ -340,9 +340,10 @@ def build_alert_embed(kind: str, caller: discord.Member, link: str, text: str,
         description = _quote_text(text)
     else:
         title = f"{meta['emoji']} {meta['label']}"
+        body = text.strip()[:1500]
         description = (
-            f"{text[:1500]}\n\n"
-            "```\nLive community voting panel\n```\n"
+            (f"{body}\n\n" if body else "")
+            + "```\nLive community voting panel\n```\n"
             "━━━━━━━━━━━━━━━━━━"
         )
     embed = discord.Embed(
@@ -370,8 +371,9 @@ def build_alert_embed(kind: str, caller: discord.Member, link: str, text: str,
             # visible AND clickable — Discord auto-links a bare URL value.
             embed.add_field(name="🔗 Link", value=link, inline=False)
     else:
-        # Link is shown as a plain, fully-visible URL (not masked behind text).
-        embed.add_field(name="🔗 Project", value=link, inline=True)
+        if link:
+            # Link is shown as a plain, fully-visible URL (not masked behind text).
+            embed.add_field(name="🔗 Project", value=link, inline=True)
         embed.add_field(name="👤 Caller", value=caller.mention, inline=True)
         embed.add_field(
             name="📊 Score",
@@ -587,17 +589,8 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
                 )
                 return
         else:
+            # Link and text are both optional — post whatever's given.
             link, text = _parse_link_and_text(args)
-            usage_detail = "<link> <text>"
-            required_detail = "Both the link and text are required."
-            if not link or not text:
-                await ctx.send(
-                    f"Usage: `!velcor3 {usage_name} {usage_detail}` or "
-                    f"`!velcor3 {usage_name} <description> {usage_detail.split()[0]}`\n"
-                    f"{required_detail}",
-                    delete_after=10,
-                )
-                return
 
         target_role = ctx.guild.get_role(role_id) if role_id else None
         if role_id and target_role is None:
