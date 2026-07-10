@@ -1,6 +1,7 @@
 # Explicit alpha + meme-coin alerts, community voting, and caller score tracking.
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -31,6 +32,13 @@ MEME_TARGET_ROLE_ID = int(os.getenv("MEME_TARGET_ROLE_ID", "0"))
 SCORE_COOK = int(os.getenv("ALPHA_SCORE_COOK", os.getenv("ALPHA_SCORE_GOOD", "1")))
 SCORE_SKIP = int(os.getenv("ALPHA_SCORE_SKIP", os.getenv("ALPHA_SCORE_NOT", "-1")))
 DB_PATH = DATA_DIR / "user_stats.db"
+
+# Rick (or any other CA-scanning bot) needs to see the CA in a normal chat
+# message to react to it. Set RICK_BOT_ID to that bot's Discord user id for a
+# precise match; leave at 0 to fall back to "any bot message in the channel
+# that mentions this CA" (less precise, but works with zero configuration).
+RICK_BOT_ID = int(os.getenv("RICK_BOT_ID", "0") or 0)
+RICK_WAIT_TIMEOUT_SEC = max(10, min(180, int(os.getenv("RICK_WAIT_TIMEOUT_SEC", "45") or "45")))
 
 # Per-alert-type presentation. Both kinds share one voting/scoring engine
 # (same DB tables, `kind` column) but keep separate leaderboards/scores.
@@ -311,16 +319,25 @@ def _sentiment_field(cook_votes: int, skip_votes: int) -> str:
     )
 
 
+def _quote_text(text: str, limit: int = 1500) -> str:
+    """Blockquote-style description: visually distinct (left border, like a
+    'box') WITHOUT a code fence, so Discord still auto-links any URL that
+    happens to be inside the text and it reads as normal prose, not monospace."""
+    body = (text or "").strip()[:limit]
+    if not body:
+        return "> *Live community voting panel*"
+    return "\n".join(f"> {line}" if line else ">" for line in body.splitlines())
+
+
 def build_alert_embed(kind: str, caller: discord.Member, link: str, text: str,
                       score: int, cook_votes: int = 0, skip_votes: int = 0,
                       thumbnail_url: Optional[str] = None,
-                      image_url: Optional[str] = None) -> discord.Embed:
+                      image_url: Optional[str] = None,
+                      contract_address: Optional[str] = None) -> discord.Embed:
     meta = KIND_META.get(kind, KIND_META["alpha"])
     if kind == "meme":
         title = None
-        description_text = (text.strip() or "Live community voting panel")[:1700]
-        description_text = description_text.replace("```", "'''")
-        description = f"```\n{description_text}\n```"
+        description = _quote_text(text)
     else:
         title = f"{meta['emoji']} {meta['label']}"
         description = (
@@ -346,6 +363,12 @@ def build_alert_embed(kind: str, caller: discord.Member, link: str, text: str,
             value=f"{caller.mention}  ·  Score `{score:+d}`  ·  {_caller_tier(score)}",
             inline=False,
         )
+        if contract_address:
+            embed.add_field(name="📋 Contract Address", value=f"`{contract_address}`", inline=False)
+        if link:
+            # Its own field (not masked behind link text) so it's fully
+            # visible AND clickable — Discord auto-links a bare URL value.
+            embed.add_field(name="🔗 Link", value=link, inline=False)
     else:
         # Link is shown as a plain, fully-visible URL (not masked behind text).
         embed.add_field(name="🔗 Project", value=link, inline=True)
@@ -486,8 +509,9 @@ def _parse_link_and_text(args: Optional[str]) -> Tuple[str, str]:
     return link, text
 
 
-def _parse_ca_and_text(args: Optional[str]) -> Tuple[str, str]:
-    """The contract address can appear before or after the alert text."""
+def _parse_meme_args(args: Optional[str]) -> Tuple[str, str, str]:
+    """Extract an optional contract address AND an optional URL from the free
+    text (either can appear anywhere); whatever's left is the description."""
     parts = (args or "").split()
     ca_index = None
     ca = ""
@@ -498,10 +522,44 @@ def _parse_ca_and_text(args: Optional[str]) -> Tuple[str, str]:
             ca_index = index
             ca = match.group(0) if match else candidate
             break
+    remaining = [part for index, part in enumerate(parts) if index != ca_index]
+    link_index = None
+    link = ""
+    for index, part in enumerate(remaining):
+        if _URL_RE.fullmatch(part.strip("<>")):
+            link_index = index
+            link = part.strip("<>")
+            break
     text = " ".join(
-        part for index, part in enumerate(parts) if index != ca_index
+        part for index, part in enumerate(remaining) if index != link_index
     ).strip()
-    return ca, text
+    return ca, link, text
+
+
+def _rick_reply_check(channel_id: int, contract_address: str):
+    """Build a discord.py `wait_for` check that matches Rick's (or a
+    fallback bot's) reply for this specific CA in this channel."""
+    ca_lower = contract_address.lower()
+
+    def check(message: discord.Message) -> bool:
+        if message.channel.id != channel_id or not message.author.bot:
+            return False
+        if RICK_BOT_ID:
+            return message.author.id == RICK_BOT_ID
+        # No specific bot configured — fall back to "any bot message that
+        # mentions this CA" (content, or anywhere in an embed).
+        haystack = [message.content or ""]
+        for embed in message.embeds:
+            haystack.append(embed.title or "")
+            haystack.append(embed.description or "")
+            if embed.footer and embed.footer.text:
+                haystack.append(embed.footer.text)
+            for field in embed.fields:
+                haystack.append(field.name or "")
+                haystack.append(field.value or "")
+        return ca_lower in " ".join(haystack).lower()
+
+    return check
 
 
 class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
@@ -521,14 +579,13 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
 
         contract_address = None
         if kind == "meme":
-            contract_address, text = _parse_ca_and_text(args)
+            contract_address, link, text = _parse_meme_args(args)
             if not contract_address:
                 await ctx.send(
-                    "Usage: `!velcor3 meme <contract-address> [description]`",
+                    "Usage: `!velcor3 meme <contract-address> [link] [description]`",
                     delete_after=10,
                 )
                 return
-            link = ""
         else:
             link, text = _parse_link_and_text(args)
             usage_detail = "<link> <text>"
@@ -557,11 +614,19 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
         embed = build_alert_embed(
             kind, ctx.author, link, text, score,
             thumbnail_url=thumbnail_url, image_url=image_url,
+            contract_address=contract_address,
         )
-        try:
-            await ctx.message.delete()
-        except (discord.Forbidden, discord.NotFound):
-            pass
+
+        # For meme calls with a CA, keep the member's raw command message
+        # alive so Rick (or another CA-scanning bot) can see it and reply —
+        # then delete it once that happens (or after a bounded wait), so the
+        # channel ends up with just Rick's info + our embed.
+        wait_for_rick = bool(kind == "meme" and contract_address)
+        if not wait_for_rick:
+            try:
+                await ctx.message.delete()
+            except (discord.Forbidden, discord.NotFound):
+                pass
 
         message_content = "\n".join(
             part for part in (
@@ -586,6 +651,32 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
         except Exception:
             logger.exception(f"[AlphaPing] Failed to create {kind} alert")
             await ctx.send("Could not create the alert.", delete_after=8)
+            return
+
+        if wait_for_rick:
+            asyncio.create_task(
+                self._wait_for_rick_then_cleanup(ctx.message, ctx.channel.id, contract_address)
+            )
+
+    async def _wait_for_rick_then_cleanup(self, message: discord.Message,
+                                          channel_id: int, contract_address: str) -> None:
+        """Wait (bounded) for Rick's token-info reply for this CA, then
+        delete the member's raw alert message. Always cleans up eventually
+        even if Rick never replies, so raw command text doesn't pile up."""
+        try:
+            await self.bot.wait_for(
+                "message",
+                check=_rick_reply_check(channel_id, contract_address),
+                timeout=RICK_WAIT_TIMEOUT_SEC,
+            )
+        except asyncio.TimeoutError:
+            pass
+        except Exception:
+            logger.exception("[AlphaPing] Error waiting for Rick reply")
+        try:
+            await message.delete()
+        except (discord.Forbidden, discord.NotFound):
+            pass
 
     @commands.command(name="alpha")
     async def alpha(self, ctx: commands.Context,
