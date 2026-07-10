@@ -24,8 +24,33 @@ def _same_address(left: str, right: str) -> bool:
     return left == right
 
 
-async def find_dexscreener_token(contract_address: str) -> Optional[dict[str, Any]]:
-    """Resolve a token or pair address and select its strongest liquidity pool."""
+async def _fetch_search_payload(contract_address: str) -> Optional[dict[str, Any]]:
+    """Fetch through browser TLS on cloud hosts, with aiohttp as fallback."""
+    try:
+        from curl_cffi import requests as curl_requests
+
+        async with curl_requests.AsyncSession(impersonate="chrome") as session:
+            response = await session.get(
+                DEX_SEARCH_URL,
+                params={"q": contract_address},
+                headers={"Accept": "application/json"},
+                timeout=10,
+            )
+        if response.status_code == 200:
+            payload = response.json()
+            if isinstance(payload, dict):
+                return payload
+        logger.warning(
+            "[Dexscreener] Browser search failed status=%s address=%s",
+            response.status_code, contract_address,
+        )
+    except Exception as exc:
+        logger.info(
+            "[Dexscreener] Browser transport unavailable; using aiohttp "
+            "address=%s error=%s",
+            contract_address, type(exc).__name__,
+        )
+
     timeout = aiohttp.ClientTimeout(total=10)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -39,19 +64,24 @@ async def find_dexscreener_token(contract_address: str) -> Optional[dict[str, An
             ) as response:
                 if response.status != 200:
                     logger.warning(
-                        "[Dexscreener] Search failed status=%s address=%s",
+                        "[Dexscreener] Aiohttp search failed status=%s address=%s",
                         response.status, contract_address,
                     )
                     return None
                 payload = await response.json()
+                return payload if isinstance(payload, dict) else None
     except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
         logger.warning(
-            "[Dexscreener] Search request failed address=%s error=%s",
+            "[Dexscreener] Both transports failed address=%s error=%s",
             contract_address, type(exc).__name__,
         )
         return None
 
-    if not isinstance(payload, dict):
+
+async def find_dexscreener_token(contract_address: str) -> Optional[dict[str, Any]]:
+    """Resolve a token or pair address and select its strongest liquidity pool."""
+    payload = await _fetch_search_payload(contract_address)
+    if payload is None:
         return None
 
     exact_pairs = []
