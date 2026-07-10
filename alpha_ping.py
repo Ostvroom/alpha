@@ -15,19 +15,20 @@ from discord.ext import commands
 
 from app_paths import DATA_DIR
 from brand_assets import brand_logo_embed_icon
+from dexscreener_client import find_dexscreener_token
 from trackers.daily_mints_client import twitter_handle_from_url
 
 logger = logging.getLogger(__name__)
 _BRAND = "VELCOR3"
 _URL_RE = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
 _EVM_CA_RE = re.compile(r"0x[a-fA-F0-9]{40}")
+_SOLANA_CA_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 
 ALPHA_CHANNEL_ID = int(os.getenv("ALPHA_CHANNEL_ID", "1506376120252239872"))
 ALPHA_TARGET_ROLE_ID = int(os.getenv("ALPHA_TARGET_ROLE_ID", "1505260948707999774"))
 MEME_CHANNEL_ID = int(os.getenv("MEME_CHANNEL_ID", "1248943502084018186"))
 # Optional — leave unset (0) to post meme calls without pinging a role.
 MEME_TARGET_ROLE_ID = int(os.getenv("MEME_TARGET_ROLE_ID", "0"))
-MEME_DEX_CHAIN = (os.getenv("MEME_DEX_CHAIN", "base") or "base").strip().lower()
 SCORE_COOK = int(os.getenv("ALPHA_SCORE_COOK", os.getenv("ALPHA_SCORE_GOOD", "1")))
 SCORE_SKIP = int(os.getenv("ALPHA_SCORE_SKIP", os.getenv("ALPHA_SCORE_NOT", "-1")))
 DB_PATH = DATA_DIR / "user_stats.db"
@@ -313,11 +314,22 @@ def _sentiment_field(cook_votes: int, skip_votes: int, *, compact: bool = False)
     )
 
 
+def _format_market_usd(value: float) -> str:
+    if value >= 1_000_000_000:
+        return f"${value / 1_000_000_000:.2f}B"
+    if value >= 1_000_000:
+        return f"${value / 1_000_000:.2f}M"
+    if value >= 1_000:
+        return f"${value / 1_000:.1f}K"
+    return f"${value:.2f}"
+
+
 def build_alert_embed(kind: str, caller: discord.Member, link: str, text: str,
                       score: int, cook_votes: int = 0, skip_votes: int = 0,
                       thumbnail_url: Optional[str] = None,
                       image_url: Optional[str] = None,
-                      contract_address: Optional[str] = None) -> discord.Embed:
+                      contract_address: Optional[str] = None,
+                      market: Optional[dict] = None) -> discord.Embed:
     meta = KIND_META.get(kind, KIND_META["alpha"])
     if kind == "meme":
         title = None
@@ -342,6 +354,35 @@ def build_alert_embed(kind: str, caller: discord.Member, link: str, text: str,
     else:
         embed.set_author(name=author_name)
     if kind == "meme":
+        if market:
+            age_hours = market.get("age_hours")
+            if age_hours is None:
+                age_text = "Unknown"
+            elif age_hours < 48:
+                age_text = f"{age_hours:.0f}h"
+            else:
+                age_text = f"{age_hours / 24:.0f}d"
+            chains = market.get("detected_chains") or []
+            chain_note = (
+                f" · Best of {len(chains)} chains" if len(chains) > 1 else ""
+            )
+            embed.add_field(
+                name=f"\U0001f7e2 {market['name']} (${market['symbol']})",
+                value=(
+                    f"**Chain:** `{market['chain']}` · **DEX:** `{market['dex']}`{chain_note}\n"
+                    f"\U0001f4b0 **USD:** `${market['price']:.10g}`\n"
+                    f"\U0001f48e **MC:** {_format_market_usd(market['market_cap'])} · "
+                    f"**FDV:** {_format_market_usd(market['fdv'])}\n"
+                    f"\U0001f4a7 **Liquidity:** {_format_market_usd(market['liquidity'])}\n"
+                    f"\U0001f4ca **Volume 24H:** {_format_market_usd(market['volume_h24'])} · "
+                    f"**Age:** {age_text}\n"
+                    f"\U0001f4c8 **1H:** {market['change_h1']:+.1f}% · "
+                    f"**24H:** {market['change_h24']:+.1f}%\n"
+                    f"\U0001f7e2 **Buys:** {market['buys_h24']} · "
+                    f"\U0001f534 **Sells:** {market['sells_h24']}"
+                ),
+                inline=False,
+            )
         embed.add_field(name="CA", value=f"`{contract_address or link}`", inline=False)
         embed.add_field(
             name="Caller",
@@ -387,7 +428,7 @@ class AlertVoteView(discord.ui.View):
     """
 
     def __init__(self, cook_votes: int = 0, skip_votes: int = 0,
-                link: Optional[str] = None) -> None:
+                link: Optional[str] = None, link_label: str = "Project") -> None:
         super().__init__(timeout=None)
         self.cook_button = discord.ui.Button(
             label=f"Cook {cook_votes}", emoji="🍳",
@@ -405,7 +446,7 @@ class AlertVoteView(discord.ui.View):
             # Link-style buttons open the URL client-side; Discord never
             # routes them through the bot, so no custom_id/persistence needed.
             self.add_item(discord.ui.Button(
-                label="Project", emoji="🔗",
+                label=link_label, emoji="🔗",
                 style=discord.ButtonStyle.link, url=link,
             ))
 
@@ -488,20 +529,17 @@ def _parse_link_and_text(args: Optional[str]) -> Tuple[str, str]:
     return link, text
 
 
-def _dexscreener_url_from_ca(contract_address: str, chain: str = MEME_DEX_CHAIN) -> str:
-    return f"https://dexscreener.com/{chain}/{contract_address}"
-
-
 def _parse_ca_and_text(args: Optional[str]) -> Tuple[str, str]:
     """The contract address can appear before or after the alert text."""
     parts = (args or "").split()
     ca_index = None
     ca = ""
     for index, part in enumerate(parts):
-        match = _EVM_CA_RE.search(part.strip("<>"))
-        if match:
+        candidate = part.strip("<>")
+        match = _EVM_CA_RE.search(candidate)
+        if match or _SOLANA_CA_RE.fullmatch(candidate):
             ca_index = index
-            ca = match.group(0)
+            ca = match.group(0) if match else candidate
             break
     text = " ".join(
         part for index, part in enumerate(parts) if index != ca_index
@@ -525,11 +563,26 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
             return
 
         contract_address = None
+        market = None
         if kind == "meme":
             contract_address, text = _parse_ca_and_text(args)
-            link = _dexscreener_url_from_ca(contract_address) if contract_address else ""
-            usage_detail = "<contract-address> <description>"
-            required_detail = "Both the contract address and description are required."
+            if not contract_address:
+                await ctx.send(
+                    "Usage: `!velcor3 meme <contract-address> [description]`",
+                    delete_after=10,
+                )
+                return
+            market = await find_dexscreener_token(contract_address)
+            if not market or not market.get("url"):
+                await ctx.send(
+                    "I could not find an exact Dexscreener pool for that CA.",
+                    delete_after=10,
+                )
+                return
+            link = market["url"]
+            text = text or f"{market['name']} (${market['symbol']})"
+            usage_detail = "<contract-address> [description]"
+            required_detail = "A valid contract address is required."
         else:
             link, text = _parse_link_and_text(args)
             usage_detail = "<link> <text>"
@@ -549,7 +602,11 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
             return
 
         score, _ = get_poster_score(ctx.guild.id, ctx.author.id, kind)
-        thumbnail_url = None if kind == "meme" else await resolve_project_pfp(link)
+        thumbnail_url = (
+            market.get("image_url")
+            if kind == "meme" and market
+            else await resolve_project_pfp(link)
+        )
         image_url = next(
             (a.url for a in ctx.message.attachments
              if (a.content_type or "").startswith("image/")),
@@ -559,6 +616,7 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
             kind, ctx.author, link, text, score,
             thumbnail_url=thumbnail_url, image_url=image_url,
             contract_address=contract_address,
+            market=market,
         )
         try:
             await ctx.message.delete()
@@ -569,7 +627,10 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
             posted = await ctx.send(
                 target_role.mention if target_role else None,
                 embed=embed,
-                view=AlertVoteView(cook_votes=0, skip_votes=0, link=link),
+                view=AlertVoteView(
+                    cook_votes=0, skip_votes=0, link=link,
+                    link_label="Chart" if kind == "meme" else "Project",
+                ),
                 allowed_mentions=discord.AllowedMentions(
                     everyone=False, users=False, roles=True, replied_user=False
                 ),
