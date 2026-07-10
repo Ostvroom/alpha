@@ -20,12 +20,14 @@ from trackers.daily_mints_client import twitter_handle_from_url
 logger = logging.getLogger(__name__)
 _BRAND = "VELCOR3"
 _URL_RE = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
+_EVM_CA_RE = re.compile(r"0x[a-fA-F0-9]{40}")
 
 ALPHA_CHANNEL_ID = int(os.getenv("ALPHA_CHANNEL_ID", "1506376120252239872"))
 ALPHA_TARGET_ROLE_ID = int(os.getenv("ALPHA_TARGET_ROLE_ID", "1505260948707999774"))
 MEME_CHANNEL_ID = int(os.getenv("MEME_CHANNEL_ID", "1248943502084018186"))
 # Optional — leave unset (0) to post meme calls without pinging a role.
 MEME_TARGET_ROLE_ID = int(os.getenv("MEME_TARGET_ROLE_ID", "0"))
+MEME_DEX_CHAIN = (os.getenv("MEME_DEX_CHAIN", "base") or "base").strip().lower()
 SCORE_COOK = int(os.getenv("ALPHA_SCORE_COOK", os.getenv("ALPHA_SCORE_GOOD", "1")))
 SCORE_SKIP = int(os.getenv("ALPHA_SCORE_SKIP", os.getenv("ALPHA_SCORE_NOT", "-1")))
 DB_PATH = DATA_DIR / "user_stats.db"
@@ -299,10 +301,12 @@ def _vote_bar(pct: int) -> str:
     return "█" * filled + "░" * (10 - filled)
 
 
-def _sentiment_field(cook_votes: int, skip_votes: int) -> str:
+def _sentiment_field(cook_votes: int, skip_votes: int, *, compact: bool = False) -> str:
     total = cook_votes + skip_votes
     cook_pct = round(cook_votes * 100 / total) if total else 0
     skip_pct = round(skip_votes * 100 / total) if total else 0
+    if compact:
+        return f"**🍳 Cook** `{cook_votes}` ({cook_pct}%)     **⏭️ Skip** `{skip_votes}` ({skip_pct}%)"
     return (
         f"**🍳 Cook**  `{cook_votes}`  ({cook_pct}%)\n{_vote_bar(cook_pct)}\n\n"
         f"**⏭️ Skip**  `{skip_votes}`  ({skip_pct}%)\n{_vote_bar(skip_pct)}"
@@ -312,43 +316,58 @@ def _sentiment_field(cook_votes: int, skip_votes: int) -> str:
 def build_alert_embed(kind: str, caller: discord.Member, link: str, text: str,
                       score: int, cook_votes: int = 0, skip_votes: int = 0,
                       thumbnail_url: Optional[str] = None,
-                      image_url: Optional[str] = None) -> discord.Embed:
+                      image_url: Optional[str] = None,
+                      contract_address: Optional[str] = None) -> discord.Embed:
     meta = KIND_META.get(kind, KIND_META["alpha"])
-    description = (
-        f"{text[:1500]}\n\n"
-        "```\nLive community voting panel\n```\n"
-        "━━━━━━━━━━━━━━━━━━"
-    )
+    if kind == "meme":
+        title = None
+        description = text[:1800]
+    else:
+        title = f"{meta['emoji']} {meta['label']}"
+        description = (
+            f"{text[:1500]}\n\n"
+            "```\nLive community voting panel\n```\n"
+            "━━━━━━━━━━━━━━━━━━"
+        )
     embed = discord.Embed(
-        title=f"{meta['emoji']} {meta['label']}",
+        title=title,
         description=description[:4000],
         color=meta["color"],
         timestamp=datetime.now(timezone.utc),
     )
     icon = brand_logo_embed_icon()
-    author_name = f"{_BRAND} {meta['verb'].upper()} CALL"
+    author_name = f"{_BRAND} MEME COIN CALL" if kind == "meme" else f"{_BRAND} {meta['verb'].upper()} CALL"
     if icon:
         embed.set_author(name=author_name, icon_url=icon)
     else:
         embed.set_author(name=author_name)
-    # Link is shown as a plain, fully-visible URL (not masked behind text).
-    embed.add_field(name="🔗 Project", value=link, inline=True)
-    embed.add_field(name="👤 Caller", value=caller.mention, inline=True)
-    embed.add_field(
-        name="📊 Score",
-        value=f"`{score:+d}`\n{_caller_tier(score)}",
-        inline=True,
-    )
+    if kind == "meme":
+        embed.add_field(name="CA", value=f"`{contract_address or link}`", inline=False)
+        embed.add_field(
+            name="Caller",
+            value=f"{caller.mention}  ·  Score `{score:+d}`  ·  {_caller_tier(score)}",
+            inline=False,
+        )
+    else:
+        # Link is shown as a plain, fully-visible URL (not masked behind text).
+        embed.add_field(name="🔗 Project", value=link, inline=True)
+        embed.add_field(name="👤 Caller", value=caller.mention, inline=True)
+        embed.add_field(
+            name="📊 Score",
+            value=f"`{score:+d}`\n{_caller_tier(score)}",
+            inline=True,
+        )
     embed.add_field(
         name="🗳️ Community Sentiment",
-        value=_sentiment_field(cook_votes, skip_votes),
+        value=_sentiment_field(cook_votes, skip_votes, compact=(kind == "meme")),
         inline=False,
     )
-    embed.add_field(
-        name="📌 Status",
-        value="`LIVE VOTING` • `COMMUNITY SIGNAL`",
-        inline=False,
-    )
+    if kind != "meme":
+        embed.add_field(
+            name="📌 Status",
+            value="`LIVE VOTING` • `COMMUNITY SIGNAL`",
+            inline=False,
+        )
     embed.set_thumbnail(url=thumbnail_url or caller.display_avatar.url)
     if image_url:
         embed.set_image(url=image_url)
@@ -434,10 +453,16 @@ class AlertVoteView(discord.ui.View):
                         index, name="📊 Score",
                         value=f"`{score:+d}`\n{_caller_tier(score)}", inline=True,
                     )
+                elif field.name == "Caller":
+                    embed.set_field_at(
+                        index, name="Caller",
+                        value=f"<@{post['poster_id']}>  ·  Score `{score:+d}`  ·  {_caller_tier(score)}",
+                        inline=False,
+                    )
                 elif field.name == "🗳️ Community Sentiment":
                     embed.set_field_at(
                         index, name="🗳️ Community Sentiment",
-                        value=_sentiment_field(cook_votes, skip_votes),
+                        value=_sentiment_field(cook_votes, skip_votes, compact=(kind == "meme")),
                         inline=False,
                     )
             await interaction.message.edit(embed=embed, view=self)
@@ -463,6 +488,27 @@ def _parse_link_and_text(args: Optional[str]) -> Tuple[str, str]:
     return link, text
 
 
+def _dexscreener_url_from_ca(contract_address: str, chain: str = MEME_DEX_CHAIN) -> str:
+    return f"https://dexscreener.com/{chain}/{contract_address}"
+
+
+def _parse_ca_and_text(args: Optional[str]) -> Tuple[str, str]:
+    """The contract address can appear before or after the alert text."""
+    parts = (args or "").split()
+    ca_index = None
+    ca = ""
+    for index, part in enumerate(parts):
+        match = _EVM_CA_RE.search(part.strip("<>"))
+        if match:
+            ca_index = index
+            ca = match.group(0)
+            break
+    text = " ".join(
+        part for index, part in enumerate(parts) if index != ca_index
+    ).strip()
+    return ca, text
+
+
 class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -478,12 +524,21 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
             await ctx.send(f"Use this command in the {usage_name} channel.", delete_after=8)
             return
 
-        link, text = _parse_link_and_text(args)
+        contract_address = None
+        if kind == "meme":
+            contract_address, text = _parse_ca_and_text(args)
+            link = _dexscreener_url_from_ca(contract_address) if contract_address else ""
+            usage_detail = "<contract-address> <description>"
+            required_detail = "Both the contract address and description are required."
+        else:
+            link, text = _parse_link_and_text(args)
+            usage_detail = "<link> <text>"
+            required_detail = "Both the link and text are required."
         if not link or not text:
             await ctx.send(
-                f"Usage: `!velcor3 {usage_name} <link> <text>` or "
-                f"`!velcor3 {usage_name} <text> <link>`\n"
-                "Both the link and text are required.",
+                f"Usage: `!velcor3 {usage_name} {usage_detail}` or "
+                f"`!velcor3 {usage_name} <description> {usage_detail.split()[0]}`\n"
+                f"{required_detail}",
                 delete_after=10,
             )
             return
@@ -494,14 +549,17 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
             return
 
         score, _ = get_poster_score(ctx.guild.id, ctx.author.id, kind)
-        thumbnail_url = await resolve_project_pfp(link)
+        thumbnail_url = None if kind == "meme" else await resolve_project_pfp(link)
         image_url = next(
             (a.url for a in ctx.message.attachments
              if (a.content_type or "").startswith("image/")),
             None,
         )
-        embed = build_alert_embed(kind, ctx.author, link, text, score,
-                                  thumbnail_url=thumbnail_url, image_url=image_url)
+        embed = build_alert_embed(
+            kind, ctx.author, link, text, score,
+            thumbnail_url=thumbnail_url, image_url=image_url,
+            contract_address=contract_address,
+        )
         try:
             await ctx.message.delete()
         except (discord.Forbidden, discord.NotFound):
@@ -518,7 +576,7 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
             )
             save_alpha_post(
                 ctx.guild.id, ctx.channel.id, posted.id, ctx.author.id,
-                f"{link}\n{text}", kind,
+                f"{contract_address or link}\n{text}", kind,
             )
         except Exception:
             logger.exception(f"[AlphaPing] Failed to create {kind} alert")

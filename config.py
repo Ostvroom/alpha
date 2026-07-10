@@ -780,8 +780,8 @@ VERIFICATION_RULES_TEXT = os.getenv(
     "Welcome. Please read our rules, then verify below to access the server.",
 )
 # NFT / holder verification — welcome when member receives the holder role (any assign path)
-ENABLE_HOLDER_WELCOME = _env_flag("ENABLE_HOLDER_WELCOME", "0")
-HOLDER_WELCOME_PAUSED = _env_flag("HOLDER_WELCOME_PAUSED", "1")
+ENABLE_HOLDER_WELCOME = _env_flag("ENABLE_HOLDER_WELCOME", "1")
+HOLDER_WELCOME_PAUSED = _env_flag("HOLDER_WELCOME_PAUSED", "0")
 HOLDER_VERIFIED_ROLE_ID = _env_int("HOLDER_VERIFIED_ROLE_ID", 1506380353877577738)
 HOLDER_WELCOME_CHANNEL_ID = parse_channel_id(
     "HOLDER_WELCOME_CHANNEL_ID", default=1052854063257096196
