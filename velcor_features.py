@@ -18,6 +18,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import config
+import holder_welcome_store
 from app_paths import DATA_DIR, BASE_DIR, ensure_dirs
 
 # ── Ensure data directory exists ────────────────────────────────────────────
@@ -34,6 +35,12 @@ AUTO_ROLE_ID = getattr(config, "VELCOR_AUTO_ROLE_ID", 0)
 WELCOME_CHANNEL_ID = getattr(config, "VELCOR_WELCOME_CHANNEL_ID", 0)
 AUTO_REACT_CHANNEL_ID = getattr(config, "VELCOR_AUTO_REACT_CHANNEL_ID", 0)
 ABOUT_CHANNEL_ID = getattr(config, "VELCOR_ABOUT_CHANNEL_ID", 0)
+ENABLE_HOLDER_WELCOME = getattr(config, "ENABLE_HOLDER_WELCOME", True)
+HOLDER_WELCOME_PAUSED = getattr(config, "HOLDER_WELCOME_PAUSED", False)
+HOLDER_VERIFIED_ROLE_ID = int(getattr(config, "HOLDER_VERIFIED_ROLE_ID", 0) or 0)
+HOLDER_WELCOME_CHANNEL_ID = int(getattr(config, "HOLDER_WELCOME_CHANNEL_ID", 0) or 0)
+HOLDER_CLAIM_ROLES_CHANNEL_ID = int(getattr(config, "HOLDER_CLAIM_ROLES_CHANNEL_ID", 0) or 0)
+HOLDER_WELCOME_MESSAGE = getattr(config, "HOLDER_WELCOME_MESSAGE", "")
 
 
 def _auto_react_emoji() -> discord.PartialEmoji | str:
@@ -1165,6 +1172,73 @@ class VelcorFeatures(commands.Cog):
     async def on_ready(self):
         n = register_claim_role_views(self.bot)
         print(f"[VelcorFeatures] Cog loaded — claim-role dropdowns registered: {n}")
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        if not ENABLE_HOLDER_WELCOME or HOLDER_WELCOME_PAUSED:
+            return
+        if not HOLDER_VERIFIED_ROLE_ID or not HOLDER_WELCOME_CHANNEL_ID:
+            return
+        if after.bot or not after.guild:
+            return
+
+        before_role_ids = {int(role.id) for role in before.roles}
+        after_role_ids = {int(role.id) for role in after.roles}
+        if HOLDER_VERIFIED_ROLE_ID not in after_role_ids:
+            return
+        if HOLDER_VERIFIED_ROLE_ID in before_role_ids:
+            return
+
+        try:
+            holder_welcome_store.init_db()
+            if holder_welcome_store.has_welcomed_holder(after.guild.id, after.id):
+                holder_welcome_store.mark_holder_seen(
+                    guild_id=after.guild.id,
+                    user_id=after.id,
+                    role_id=HOLDER_VERIFIED_ROLE_ID,
+                )
+                return
+        except Exception as e:
+            print(f"[VelcorFeatures] Holder welcome dedupe unavailable; skipping welcome: {e}")
+            return
+
+        channel = after.guild.get_channel(HOLDER_WELCOME_CHANNEL_ID)
+        if channel is None:
+            try:
+                channel = await after.guild.fetch_channel(HOLDER_WELCOME_CHANNEL_ID)
+            except Exception as e:
+                print(f"[VelcorFeatures] Holder welcome channel unavailable: {e}")
+                return
+
+        claim_channel = None
+        if HOLDER_CLAIM_ROLES_CHANNEL_ID:
+            claim_channel = after.guild.get_channel(HOLDER_CLAIM_ROLES_CHANNEL_ID)
+        claim_channel_text = claim_channel.mention if claim_channel else f"<#{HOLDER_CLAIM_ROLES_CHANNEL_ID}>"
+        body = (HOLDER_WELCOME_MESSAGE or "Welcome, {mention} to the Velcorians family!").format(
+            mention=after.mention,
+            claim_roles_channel=claim_channel_text,
+            user=after.display_name,
+            guild=after.guild.name,
+        )
+
+        try:
+            sent = await channel.send(body)
+        except discord.Forbidden:
+            print(f"[VelcorFeatures] No permission in holder welcome channel {HOLDER_WELCOME_CHANNEL_ID}")
+            return
+        except Exception as e:
+            print(f"[VelcorFeatures] Holder welcome send failed: {e}")
+            return
+
+        try:
+            holder_welcome_store.mark_holder_seen(
+                guild_id=after.guild.id,
+                user_id=after.id,
+                role_id=HOLDER_VERIFIED_ROLE_ID,
+                welcome_message_id=getattr(sent, "id", None),
+            )
+        except Exception as e:
+            print(f"[VelcorFeatures] Holder welcome sent but dedupe save failed: {e}")
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
