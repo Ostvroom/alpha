@@ -319,14 +319,13 @@ def _sentiment_field(cook_votes: int, skip_votes: int) -> str:
     )
 
 
-def _quote_text(text: str, limit: int = 1500) -> str:
-    """Blockquote-style description: visually distinct (left border, like a
-    'box') WITHOUT a code fence, so Discord still auto-links any URL that
-    happens to be inside the text and it reads as normal prose, not monospace."""
+def _plain_description(text: str, limit: int = 1500) -> str:
+    """Normal-size embed description text — no code fence (which blocked
+    auto-linking) and no blockquote (which Discord renders small/indented).
+    Plain text reads at full embed-description size and still lets Discord
+    auto-link any URL inside it."""
     body = (text or "").strip()[:limit]
-    if not body:
-        return "> *Live community voting panel*"
-    return "\n".join(f"> {line}" if line else ">" for line in body.splitlines())
+    return body or "*Live community voting panel*"
 
 
 def build_alert_embed(kind: str, caller: discord.Member, link: str, text: str,
@@ -337,7 +336,7 @@ def build_alert_embed(kind: str, caller: discord.Member, link: str, text: str,
     meta = KIND_META.get(kind, KIND_META["alpha"])
     if kind == "meme":
         title = None
-        description = _quote_text(text)
+        description = _plain_description(text)
     else:
         title = f"{meta['emoji']} {meta['label']}"
         body = text.strip()[:1500]
@@ -621,13 +620,10 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
             except (discord.Forbidden, discord.NotFound):
                 pass
 
-        message_content = "\n".join(
-            part for part in (
-                target_role.mention if target_role else "",
-                contract_address if kind == "meme" else "",
-            )
-            if part
-        ) or None
+        # The CA already lives inside the embed's "Contract Address" field
+        # (and, until cleanup, in the member's original raw message that
+        # Rick reacts to) — no need to repeat it as plain text above the embed.
+        message_content = target_role.mention if target_role else None
         try:
             posted = await ctx.send(
                 message_content,
