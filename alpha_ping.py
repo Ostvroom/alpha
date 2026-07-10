@@ -301,15 +301,13 @@ def _vote_bar(pct: int) -> str:
     return "█" * filled + "░" * (10 - filled)
 
 
-def _sentiment_field(cook_votes: int, skip_votes: int, *, compact: bool = False) -> str:
+def _sentiment_field(cook_votes: int, skip_votes: int) -> str:
     total = cook_votes + skip_votes
     cook_pct = round(cook_votes * 100 / total) if total else 0
     skip_pct = round(skip_votes * 100 / total) if total else 0
-    if compact:
-        return f"**🍳 Cook** `{cook_votes}` ({cook_pct}%)     **⏭️ Skip** `{skip_votes}` ({skip_pct}%)"
     return (
-        f"**🍳 Cook**  `{cook_votes}`  ({cook_pct}%)\n{_vote_bar(cook_pct)}\n\n"
-        f"**⏭️ Skip**  `{skip_votes}`  ({skip_pct}%)\n{_vote_bar(skip_pct)}"
+        f"🍳 **Cook**  `{cook_votes}`  ({cook_pct}%)\n`{_vote_bar(cook_pct)}`\n\n"
+        f"⏭️ **Skip**  `{skip_votes}`  ({skip_pct}%)\n`{_vote_bar(skip_pct)}`"
     )
 
 
@@ -320,7 +318,9 @@ def build_alert_embed(kind: str, caller: discord.Member, link: str, text: str,
     meta = KIND_META.get(kind, KIND_META["alpha"])
     if kind == "meme":
         title = None
-        description = text[:1800]
+        description_text = (text.strip() or "Live community voting panel")[:1700]
+        description_text = description_text.replace("```", "'''")
+        description = f"```\n{description_text}\n```"
     else:
         title = f"{meta['emoji']} {meta['label']}"
         description = (
@@ -357,7 +357,7 @@ def build_alert_embed(kind: str, caller: discord.Member, link: str, text: str,
         )
     embed.add_field(
         name="🗳️ Community Sentiment",
-        value=_sentiment_field(cook_votes, skip_votes, compact=(kind == "meme")),
+        value=_sentiment_field(cook_votes, skip_votes),
         inline=False,
     )
     if kind != "meme":
@@ -460,7 +460,7 @@ class AlertVoteView(discord.ui.View):
                 elif field.name == "🗳️ Community Sentiment":
                     embed.set_field_at(
                         index, name="🗳️ Community Sentiment",
-                        value=_sentiment_field(cook_votes, skip_votes, compact=(kind == "meme")),
+                        value=_sentiment_field(cook_votes, skip_votes),
                         inline=False,
                     )
             await interaction.message.edit(embed=embed, view=self)
