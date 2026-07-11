@@ -372,13 +372,13 @@ async def _run_daily_mints_post(
 def _brain_scan_loop_kwargs():
     """Schedule kwargs for the brain-scan tasks.loop.
 
-    Default: run every six hours using config.BRAIN_SCAN_DAILY_HOURS (UTC).
+    Default: run twice per day using config.BRAIN_SCAN_DAILY_HOURS (UTC).
     Fallback: fixed interval when BRAIN_SCAN_INTERVAL_SECONDS was set in the env
     (config.BRAIN_SCAN_USE_DAILY is then False). Times are tz-aware UTC so the
     schedule is unambiguous regardless of the host's local timezone.
     """
     if getattr(config, "BRAIN_SCAN_USE_DAILY", True):
-        hours = getattr(config, "BRAIN_SCAN_DAILY_HOURS", [0, 6, 12, 18]) or [0, 6, 12, 18]
+        hours = getattr(config, "BRAIN_SCAN_DAILY_HOURS", [0, 12]) or [0, 12]
         return {"time": [dtime(hour=h, minute=0, tzinfo=timezone.utc) for h in hours]}
     return {"seconds": config.CHECK_INTERVAL_SECONDS}
 
@@ -960,7 +960,7 @@ class BlockBrainBot(commands.Bot):
             )
         else:
             if getattr(config, "BRAIN_SCAN_USE_DAILY", True):
-                _hrs = ", ".join(f"{h:02d}:00 UTC" for h in getattr(config, "BRAIN_SCAN_DAILY_HOURS", [0, 6, 12, 18]))
+                _hrs = ", ".join(f"{h:02d}:00 UTC" for h in getattr(config, "BRAIN_SCAN_DAILY_HOURS", [0, 12]))
                 _sched = f"at {_hrs}"
             else:
                 _sched = f"every {config.CHECK_INTERVAL_SECONDS}s"
