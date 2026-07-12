@@ -123,17 +123,39 @@ def _short_hash(value: str, left: int = 8, right: int = 6) -> str:
     return f"{s[:left]}...{s[-right:]}"
 
 
-def _discord_relative_time(raw: Optional[str]) -> str:
-    s = (raw or "").strip()
-    if not s:
-        return "Unknown"
-    try:
-        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return f"<t:{int(dt.timestamp())}:R>"
-    except Exception:
-        return f"`{s[:19]}`"
+def _coerce_discord_datetime(raw: Any) -> Optional[datetime]:
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        dt = raw
+    else:
+        s = str(raw or "").strip()
+        if not s:
+            return None
+        try:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except Exception:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _discord_relative_time(raw: Any) -> str:
+    dt = _coerce_discord_datetime(raw)
+    if dt is None:
+        s = str(raw or "").strip()
+        return f"`{s[:19]}`" if s else "Unknown"
+    return f"<t:{int(dt.timestamp())}:R>"
+
+
+def _discord_time_detail(raw: Any) -> str:
+    dt = _coerce_discord_datetime(raw)
+    if dt is None:
+        s = str(raw or "").strip()
+        return f"`{s[:19]}`" if s else "Unknown"
+    ts = int(dt.timestamp())
+    return f"<t:{ts}:f> (<t:{ts}:R>)"
 
 try:
     import feed_events
@@ -4168,23 +4190,34 @@ class WalletCommands(commands.Cog):
                         member_obj = await interaction.guild.fetch_member(row.user_id)
                     except Exception:
                         member_obj = None
+                account_created = "Unknown"
+                joined_server = "Not in server"
+                server_status = "Not currently in server"
                 if member_obj is not None:
                     user_title = str(member_obj)[:80]
                     user_line = f"{member_obj.mention} (`{member_obj.id}`)"
+                    account_created = _discord_time_detail(member_obj.created_at)
+                    joined_server = _discord_time_detail(member_obj.joined_at)
+                    server_status = "In server"
                 else:
                     try:
                         user_obj = await self.bot.fetch_user(row.user_id)
                         user_title = str(user_obj)[:80]
                         user_line = f"`{user_obj}` (`{row.user_id}`)"
+                        account_created = _discord_time_detail(user_obj.created_at)
                     except Exception:
                         pass
 
                 tx_line = f"`{_short_hash(row.matched_tx_hash)}`" if row.matched_tx_hash else "-"
                 value = (
                     f"User: {user_line}\n"
+                    f"Status: **{server_status}**\n"
+                    f"Discord created: {account_created}\n"
+                    f"Joined server: {joined_server}\n"
                     f"Wallet: `{row.payer_wallet}`\n"
-                    f"Chain: **{_chain_label(row.chain)}** | Tier: **{(row.tier or 'Unknown').title()}**\n"
-                    f"Claims: **{row.claim_count}** | Latest: {_discord_relative_time(row.last_seen)}\n"
+                    f"Payment: **{_chain_label(row.chain)}** | Tier: **{(row.tier or 'Unknown').title()}** | Claims: **{row.claim_count}**\n"
+                    f"Registered: {_discord_time_detail(row.first_seen)}\n"
+                    f"Latest claim: {_discord_time_detail(row.last_seen)}\n"
                     f"Matched tx: {tx_line}"
                 )
                 embed.add_field(name=f"{idx}. {user_title}", value=value[:1024], inline=False)
