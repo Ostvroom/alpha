@@ -105,6 +105,35 @@ def _chunk_lines_to_fields(lines, sep="\n", limit=1024):
         parts.append(cur)
     return parts or ["—"]
 
+_CHAIN_LABELS = {
+    "eth_mainnet": "Ethereum",
+    "eth_base": "Base",
+    "solana": "Solana",
+}
+
+
+def _chain_label(chain: str) -> str:
+    return _CHAIN_LABELS.get((chain or "").strip().lower(), (chain or "Unknown").replace("_", " ").title())
+
+
+def _short_hash(value: str, left: int = 8, right: int = 6) -> str:
+    s = (value or "").strip()
+    if len(s) <= left + right + 3:
+        return s or "-"
+    return f"{s[:left]}...{s[-right:]}"
+
+
+def _discord_relative_time(raw: Optional[str]) -> str:
+    s = (raw or "").strip()
+    if not s:
+        return "Unknown"
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return f"<t:{int(dt.timestamp())}:R>"
+    except Exception:
+        return f"`{s[:19]}`"
 
 try:
     import feed_events
@@ -3638,6 +3667,7 @@ class BrainCommands(commands.Cog):
             "`/owner_license`": "Bot owner: `issue` / `list` / `revoke` (per-guild keys).",
             "`!velcor3 daily_mints`": "Scrape daily-mints.com — AI scores, verdict, flags (add `today` or a number 1–10).",
             "`/daily_mints`": "Post daily-mints.com cards in the current channel (slash).",
+            "`/registered_wallets`": "Admin: list Discord users and registered payment wallet addresses.",
             "**Token feed**": "Background: low / $100K+ / $1M+ channels — alerts on **new callers** or **meaningful MC/ATH moves**; banner + token icon when available.",
         }
         cmd_lines = [f"**{label}:** {value}" for label, value in cmds.items()]
@@ -4084,6 +4114,85 @@ class WalletCommands(commands.Cog):
             embed.description = "_No Ethereum wallets tracked._"
         
         await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="registered_wallets", description="Admin: list users with registered payment wallets")
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.guild_only()
+    @app_commands.describe(
+        page="Page number to show.",
+        per_page="Wallets per page, from 5 to 15.",
+    )
+    async def registered_wallets(
+        self,
+        interaction: Interaction,
+        page: app_commands.Range[int, 1, 999] = 1,
+        per_page: app_commands.Range[int, 5, 15] = 10,
+    ):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            if not interaction.guild:
+                await interaction.followup.send("Use this command in a server.", ephemeral=True)
+                return
+            member = interaction.user if isinstance(interaction.user, discord.Member) else None
+            if not member or not member.guild_permissions.manage_guild:
+                await interaction.followup.send("You need Manage Server permission to use this.", ephemeral=True)
+                return
+
+            rows = payment_database.list_registered_wallets()
+            if not rows:
+                await interaction.followup.send("No claimed registered wallets were found yet.", ephemeral=True)
+                return
+
+            per_page = max(5, min(15, int(per_page)))
+            total_pages = max(1, (len(rows) + per_page - 1) // per_page)
+            page = max(1, min(int(page), total_pages))
+            start = (page - 1) * per_page
+            page_rows = rows[start:start + per_page]
+
+            embed = Embed(
+                title=f"{BRAND_NAME} - Registered Wallets",
+                description="Claimed payment wallets linked to Discord users. Pending payment intents are excluded.",
+                color=Color.gold(),
+                timestamp=datetime.now(timezone.utc),
+            )
+            embed.add_field(name="Registered users", value=f"**{len({r.user_id for r in rows})}**", inline=True)
+            embed.add_field(name="Wallets", value=f"**{len(rows)}**", inline=True)
+            embed.add_field(name="Page", value=f"**{page}/{total_pages}**", inline=True)
+
+            for idx, row in enumerate(page_rows, start=start + 1):
+                user_title = f"User ID {row.user_id}"
+                user_line = f"ID `{row.user_id}`"
+                member_obj = interaction.guild.get_member(row.user_id)
+                if member_obj is None:
+                    try:
+                        member_obj = await interaction.guild.fetch_member(row.user_id)
+                    except Exception:
+                        member_obj = None
+                if member_obj is not None:
+                    user_title = str(member_obj)[:80]
+                    user_line = f"{member_obj.mention} (`{member_obj.id}`)"
+                else:
+                    try:
+                        user_obj = await self.bot.fetch_user(row.user_id)
+                        user_title = str(user_obj)[:80]
+                        user_line = f"`{user_obj}` (`{row.user_id}`)"
+                    except Exception:
+                        pass
+
+                tx_line = f"`{_short_hash(row.matched_tx_hash)}`" if row.matched_tx_hash else "-"
+                value = (
+                    f"User: {user_line}\n"
+                    f"Wallet: `{row.payer_wallet}`\n"
+                    f"Chain: **{_chain_label(row.chain)}** | Tier: **{(row.tier or 'Unknown').title()}**\n"
+                    f"Claims: **{row.claim_count}** | Latest: {_discord_relative_time(row.last_seen)}\n"
+                    f"Matched tx: {tx_line}"
+                )
+                embed.add_field(name=f"{idx}. {user_title}", value=value[:1024], inline=False)
+
+            embed.set_footer(text=f"{BRAND_NAME} staff wallet registry - use /registered_wallets page:<n> for more")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"Error loading registered wallets: {e}", ephemeral=True)
 
     @app_commands.command(name="remove_wallet", description="Stop tracking a specific wallet")
     @app_commands.describe(address="The wallet address to remove")

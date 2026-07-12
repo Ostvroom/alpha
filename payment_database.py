@@ -126,6 +126,71 @@ def init_db() -> None:
     conn.close()
 
 
+@dataclass
+class RegisteredWalletRow:
+    user_id: int
+    payer_wallet: str
+    chain: str
+    tier: str
+    claim_count: int
+    first_seen: Optional[str]
+    last_seen: Optional[str]
+    matched_tx_hash: Optional[str]
+
+
+def list_registered_wallets() -> List[RegisteredWalletRow]:
+    """Unique claimed payer wallets, grouped by Discord user and wallet address."""
+    init_db()
+    conn = _conn()
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'payment_intents' LIMIT 1")
+    if c.fetchone() is None:
+        conn.close()
+        return []
+
+    c.execute(
+        """
+        SELECT user_id, payer_wallet, chain, tier, matched_tx_hash, created_at, matched_at, claimed_at
+        FROM payment_intents
+        WHERE lower(status) = 'claimed'
+          AND trim(coalesce(payer_wallet, '')) != ''
+        ORDER BY coalesce(claimed_at, matched_at, created_at, '') DESC
+        """
+    )
+    rows = c.fetchall()
+    conn.close()
+
+    grouped: Dict[Tuple[int, str], Dict[str, Any]] = {}
+    for row in rows:
+        wallet = str(row["payer_wallet"] or "").strip()
+        if not wallet:
+            continue
+        user_id = int(row["user_id"])
+        key = (user_id, wallet.lower())
+        created_at = str(row["created_at"] or "") or None
+        last_seen = str(row["claimed_at"] or row["matched_at"] or row["created_at"] or "") or None
+        existing = grouped.get(key)
+        if existing is None:
+            grouped[key] = {
+                "user_id": user_id,
+                "payer_wallet": wallet,
+                "chain": str(row["chain"] or ""),
+                "tier": str(row["tier"] or ""),
+                "claim_count": 1,
+                "first_seen": created_at,
+                "last_seen": last_seen,
+                "matched_tx_hash": str(row["matched_tx_hash"] or "") or None,
+            }
+            continue
+        existing["claim_count"] = int(existing["claim_count"]) + 1
+        if created_at and (not existing.get("first_seen") or created_at < str(existing["first_seen"])):
+            existing["first_seen"] = created_at
+
+    out = [RegisteredWalletRow(**item) for item in grouped.values()]
+    out.sort(key=lambda r: r.last_seen or "", reverse=True)
+    return out
+
 def _code_alphabet() -> str:
     # Avoid ambiguous chars (0/O, 1/I)
     return "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
