@@ -278,15 +278,22 @@ def _build_nested_tweet(nested_result: dict) -> Optional[_ScweetTweet]:
     user_results = core.get("user_results", {}) or {}
     user_result = user_results.get("result", {}) or {}
     user_legacy = user_result.get("legacy", {}) or {}
+    # X's newer GraphQL schema moved identity fields out of ``legacy`` and
+    # into ``core`` for nested retweet/quote authors.  Keep supporting both
+    # shapes; otherwise these accounts arrive as @None and abort BrainScan.
+    user_core = user_result.get("core", {}) or {}
+    screen_name = user_legacy.get("screen_name") or user_core.get("screen_name")
+    display_name = user_legacy.get("name") or user_core.get("name")
+    created_at = user_legacy.get("created_at") or user_core.get("created_at")
 
     user = _ScweetUser(
         {
             "user_id": user_result.get("rest_id"),
-            "username": user_legacy.get("screen_name"),
-            "name": user_legacy.get("name"),
+            "username": screen_name,
+            "name": display_name,
             "description": user_legacy.get("description"),
             "followers_count": user_legacy.get("followers_count"),
-            "created_at": user_legacy.get("created_at"),
+            "created_at": created_at,
             "profile_image_url": user_legacy.get("profile_image_url_https"),
         }
     )
@@ -298,8 +305,8 @@ def _build_nested_tweet(nested_result: dict) -> Optional[_ScweetTweet]:
             "created_at": legacy.get("created_at"),
             "media": _extract_graphql_media(result),
             "user": {
-                "screen_name": user_legacy.get("screen_name"),
-                "name": user_legacy.get("name"),
+                "screen_name": screen_name,
+                "name": display_name,
             },
             "raw": result,
         }
@@ -1987,6 +1994,18 @@ class TwitterClient:
                 timeout=timeline_timeout,
             )
             wrapped = [_ScweetTweet(t) for t in tweets]
+            # Retweet/quote authors are fed into BrainScan as discoveries.  Cache
+            # their reverse ID -> handle mapping just like top-level authors so
+            # later profile/timeline reads stay on the Scweet path.
+            for tweet in wrapped:
+                users = [getattr(tweet, "user", None)]
+                for attr in ("retweeted_tweet", "quoted_tweet"):
+                    nested = getattr(tweet, attr, None)
+                    if nested is not None:
+                        users.append(getattr(nested, "user", None))
+                for user in users:
+                    if user and getattr(user, "id", None) and getattr(user, "screen_name", None):
+                        self._id_handle_cache[str(user.id)] = str(user.screen_name).lower()
             self._timeline_log(f"      ✔ Fetched {len(wrapped)} timeline items")
             self._reset_soft_429(session)
             if not wrapped:

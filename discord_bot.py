@@ -630,11 +630,15 @@ class BlockBrainBot(commands.Bot):
     async def _process_brain_discovery(self, account, hva_handle, interaction_type, channels,
                                        hva_started_at: float, hva_budget_sec: float) -> bool:
         """Run one bounded discovery, protecting new projects from HVA budget expiry."""
+        account_id = getattr(account, "id", None)
+        if not account_id:
+            print("      WARN SKIP malformed discovery payload: missing account ID.")
+            return True
         remaining = hva_budget_sec - (time.monotonic() - hva_started_at)
         if remaining <= 0:
             return False
         item_limit = float(getattr(config, "BRAIN_SCAN_DISCOVERY_TIMEOUT_SEC", 25.0) or 25.0)
-        is_new = database.is_project_new(getattr(account, "id", None))
+        is_new = database.is_project_new(account_id)
         if is_new:
             # Hydration, timeline classification and AI each have their own
             # bounded calls.  Do not cancel a real new project between those
@@ -1331,14 +1335,15 @@ class BlockBrainBot(commands.Bot):
 
         self._fill_account_from_legacy_payload(account)
         bio_now = (getattr(account, "description", None) or "").strip()
-        needs_full_profile = not bio_now
+        handle_now = (getattr(account, "screen_name", None) or "").strip()
+        needs_full_profile = not bio_now or not handle_now
         if not needs_full_profile:
             return account
 
         uid = getattr(account, "id", None)
         if not uid:
             return account
-        full = await self.twitter.get_user_info(uid)
+        full = await self.twitter.get_user_info(uid, handle=handle_now or None)
         if not full:
             return account
 
@@ -3024,13 +3029,26 @@ class BlockBrainBot(commands.Bot):
                     print(f"      ⚠️ Follower refresh timed out for @{getattr(account, 'screen_name', '?')}; using cached count.")
         else:
             self._fill_account_from_legacy_payload(account)
+        screen_name = (getattr(account, "screen_name", None) or "").strip().lstrip("@")
+        if not screen_name:
+            reverse_cache = getattr(self.twitter, "_id_handle_cache", {}) or {}
+            screen_name = str(
+                reverse_cache.get(str(getattr(account, "id", ""))) or ""
+            ).strip().lstrip("@")
+        if not screen_name:
+            print(
+                f"      WARN SKIP malformed discovery payload: missing handle "
+                f"(ID: {getattr(account, 'id', 'unknown')})."
+            )
+            return
+        account.screen_name = screen_name
         # VERBOSE: Log every account we check
         age = self.get_account_age_days(account.created_at)
         bio_preview = (account.description or "")[:40].replace("\n", " ")
         print(f"      📋 Checking @{account.screen_name} | Followers: {account.followers_count} | Age: {age}d | Bio: \"{bio_preview}...\"")
         
         # HVA Filter
-        hvas = [h[0].lower() for h in database.get_all_hvas()]
+        hvas = {str(h[0]).lower() for h in database.get_all_hvas() if h and h[0]}
         if account.screen_name.lower() in hvas: 
             print(f"         ❌ SKIP: Is already an HVA")
             return
