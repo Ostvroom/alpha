@@ -580,6 +580,10 @@ BRAIN_SCAN_TIMELINE_ATTEMPTS = max(1, min(3, _env_int("BRAIN_SCAN_TIMELINE_ATTEM
 BRAIN_SCAN_HVA_BUDGET_SEC = max(45.0, min(300.0, _env_float("BRAIN_SCAN_HVA_BUDGET_SEC", 120.0)))
 # Bound nested discovery work so it cannot defeat the per-HVA budget.
 BRAIN_SCAN_DISCOVERY_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("BRAIN_SCAN_DISCOVERY_TIMEOUT_SEC", 25.0)))
+# A genuinely new project may need profile hydration + timeline classification
+# + AI before it can be persisted and alerted.  Give that path a complete,
+# independently bounded window even when the current HVA budget is nearly spent.
+BRAIN_SCAN_NEW_DISCOVERY_TIMEOUT_SEC = max(30.0, min(120.0, _env_float("BRAIN_SCAN_NEW_DISCOVERY_TIMEOUT_SEC", 75.0)))
 DISCOVERY_PROFILE_TIMEOUT_SEC = max(5.0, min(30.0, _env_float("DISCOVERY_PROFILE_TIMEOUT_SEC", 10.0)))
 AI_PROJECT_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("AI_PROJECT_TIMEOUT_SEC", 20.0)))
 # Auto-prune dead HVAs: retire hunters scanned this many times with 0 discoveries
@@ -606,8 +610,10 @@ MENTION_RESOLVE_MAX_PER_HVA_SCAN = max(1, min(30, _env_int("MENTION_RESOLVE_MAX_
 # After this many timeouts in a batch, stop attempting more @mention lookups for that batch.
 # Prevents a degraded proxy from burning minutes on every HVA in the batch.
 MENTION_RESOLVE_MAX_TIMEOUTS_PER_BATCH = max(1, min(50, _env_int("MENTION_RESOLVE_MAX_TIMEOUTS_PER_BATCH", 3)))
-# Bypass Scweet after this many timeouts per session (lower = faster failover to Twikit).
-MENTION_SCWEET_BYPASS_AFTER_TIMEOUTS = max(1, min(10, _env_int("MENTION_SCWEET_BYPASS_AFTER_TIMEOUTS", 1)))
+# Bypass Scweet only after repeated timeouts.  Residential proxy latency makes
+# one isolated timeout normal; permanently preferring Twikit after the first one
+# amplified the transaction failures visible in BrainScan logs.
+MENTION_SCWEET_BYPASS_AFTER_TIMEOUTS = max(1, min(10, _env_int("MENTION_SCWEET_BYPASS_AFTER_TIMEOUTS", 3)))
 
 
 def _parse_time_hhmm(val: str, default: str = "00:00"):

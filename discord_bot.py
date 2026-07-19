@@ -629,13 +629,24 @@ class BlockBrainBot(commands.Bot):
 
     async def _process_brain_discovery(self, account, hva_handle, interaction_type, channels,
                                        hva_started_at: float, hva_budget_sec: float) -> bool:
-        """Run one discovery inside both a per-item and current-HVA deadline."""
+        """Run one bounded discovery, protecting new projects from HVA budget expiry."""
         remaining = hva_budget_sec - (time.monotonic() - hva_started_at)
         if remaining <= 0:
             return False
         item_limit = float(getattr(config, "BRAIN_SCAN_DISCOVERY_TIMEOUT_SEC", 25.0) or 25.0)
-        timeout_s = max(0.1, min(item_limit, remaining))
+        is_new = database.is_project_new(getattr(account, "id", None))
+        if is_new:
+            # Hydration, timeline classification and AI each have their own
+            # bounded calls.  Do not cancel a real new project between those
+            # stages merely because earlier work used the current HVA budget.
+            protected_limit = float(
+                getattr(config, "BRAIN_SCAN_NEW_DISCOVERY_TIMEOUT_SEC", 75.0) or 75.0
+            )
+            timeout_s = max(item_limit, protected_limit)
+        else:
+            timeout_s = max(0.1, min(item_limit, remaining))
         handle = getattr(account, "screen_name", None) or getattr(account, "id", "unknown")
+        started_at = time.monotonic()
         try:
             await asyncio.wait_for(
                 self.process_discovery(account, hva_handle, interaction_type, channels),
@@ -643,7 +654,11 @@ class BlockBrainBot(commands.Bot):
             )
             return True
         except asyncio.TimeoutError:
-            print(f"      ⚠️ Discovery deadline reached for @{handle} after {timeout_s:.0f}s; continuing scan.")
+            elapsed = time.monotonic() - started_at
+            print(
+                f"      ⚠️ Discovery deadline reached for @{handle} after {elapsed:.0f}s "
+                f"(limit {timeout_s:.0f}s); continuing scan."
+            )
             return False
 
     def brand_logo_file(self) -> Optional[discord.File]:
@@ -1676,7 +1691,9 @@ class BlockBrainBot(commands.Bot):
                         for t_attempt in range(max(1, timeline_attempts)):
                             try:
                                 timeline = await asyncio.wait_for(
-                                    self.twitter.get_user_timeline(hva_id, count=timeline_count),
+                                    self.twitter.get_user_timeline(
+                                        hva_id, count=timeline_count, handle=hva_handle
+                                    ),
                                     timeout=timeline_timeout_s,
                                 )
                                 break
@@ -2997,10 +3014,14 @@ class BlockBrainBot(commands.Bot):
                 account = await asyncio.wait_for(self._hydrate_account_profile(account), timeout=profile_timeout)
             except asyncio.TimeoutError:
                 print(f"      ⚠️ Profile hydration timed out for @{getattr(account, 'screen_name', '?')}; using follow data.")
-            try:
-                await asyncio.wait_for(self._refresh_account_followers(account), timeout=profile_timeout)
-            except asyncio.TimeoutError:
-                print(f"      ⚠️ Follower refresh timed out for @{getattr(account, 'screen_name', '?')}; using cached count.")
+            # Following/search payloads already carry a current follower count.
+            # A second profile request duplicated hydration and consumed ten
+            # seconds of the old 25-second discovery budget in production.
+            if getattr(account, "followers_count", None) is None:
+                try:
+                    await asyncio.wait_for(self._refresh_account_followers(account), timeout=profile_timeout)
+                except asyncio.TimeoutError:
+                    print(f"      ⚠️ Follower refresh timed out for @{getattr(account, 'screen_name', '?')}; using cached count.")
         else:
             self._fill_account_from_legacy_payload(account)
         # VERBOSE: Log every account we check
@@ -3424,7 +3445,11 @@ class BlockBrainBot(commands.Bot):
                             _bio_s = (getattr(account, "description", None) or "").strip()
                             if len(_bio_s) < _strict:
                                 try:
-                                    _esc_tw = await self.twitter.get_user_timeline(account.id, count=10)
+                                    _esc_tw = await self.twitter.get_user_timeline(
+                                        account.id,
+                                        count=10,
+                                        handle=getattr(account, "screen_name", None),
+                                    )
                                 except Exception:
                                     _esc_tw = []
                                 _esc_parts = []

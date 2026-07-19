@@ -416,7 +416,15 @@ class TwitterClient:
         self._accounts_path = os.path.join(DATA_DIR, "accounts.json")
         self._cookies_dir = str(DATA_DIR)
         self._user_id_cache, self._user_id_neg = self._load_cache()
-        self._id_handle_cache: dict[str, str] = {}   # reverse lookup
+        # Rebuild the reverse lookup from the persistent handle -> ID cache.  A
+        # warm BrainScan normally resolves every HVA from that cache; leaving
+        # this empty made later timeline reads fall back to Twikit even though
+        # Scweet already had the handle it needs.
+        self._id_handle_cache: dict[str, str] = {
+            str(user_id): str(handle).lower()
+            for handle, user_id in self._user_id_cache.items()
+            if user_id
+        }
         self.is_rate_limited = False
         self.cooldown_ends = None
 
@@ -1729,7 +1737,9 @@ class TwitterClient:
         # Normalize handle
         handle = handle.lower()
         if handle in self._user_id_cache:
-            return self._user_id_cache[handle]
+            user_id = str(self._user_id_cache[handle])
+            self._id_handle_cache[user_id] = handle
+            return user_id
 
         # Negative cache: avoid repeatedly querying handles that don't exist / are inaccessible.
         until = float(self._user_id_neg.get(handle) or 0)
