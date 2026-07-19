@@ -336,6 +336,22 @@ def _scweet_error_to_str(exc: Exception) -> str:
     return msg
 
 
+def _is_twikit_transaction_error(message: str) -> bool:
+    """Return True for Twikit's recoverable transaction-header state failures."""
+    lower = str(message or "").lower()
+    return any(
+        marker in lower
+        for marker in (
+            "clienttransaction",
+            "client transaction",
+            "key_byte",
+            "key byte",
+            "couldn't get key",
+            "twitter-site-verification",
+        )
+    )
+
+
 async def log_all_proxy_health(timeout: float = 22.0):
     """One-time, read-only health probe of the whole proxy pool.
 
@@ -829,8 +845,12 @@ class TwitterClient:
 
         auth_token = session.get("_auth_token")
         if not auth_token:
+            account = session.get("account") or {}
+            if isinstance(account, dict):
+                auth_token = account.get("auth_token")
+        if not auth_token:
             auth_token = self._extract_auth_token(session.get("cookie_path", ""))
-            session["_auth_token"] = auth_token
+        session["_auth_token"] = auth_token
 
         if not auth_token:
             return None
@@ -859,6 +879,32 @@ class TwitterClient:
         except Exception as e:
             print(f"      WARN Failed to init Scweet for session: {e}")
             return None
+
+    def _recover_twikit_transaction(self, session: dict, error: str) -> bool:
+        """Reset Twikit when transaction-header initialization stopped halfway."""
+        if not _is_twikit_transaction_error(error):
+            return False
+
+        client = session.get("client")
+        transaction = getattr(client, "client_transaction", None)
+        if transaction is None:
+            return False
+
+        try:
+            client.client_transaction = type(transaction)()
+        except Exception:
+            # Older Twikit releases only use home_page_response as their
+            # initialized-state flag. Clearing it forces an atomic re-bootstrap.
+            try:
+                transaction.home_page_response = None
+                for attr in ("key", "key_bytes", "animation_key"):
+                    if hasattr(transaction, attr):
+                        delattr(transaction, attr)
+            except Exception:
+                return False
+
+        print("      WARN Twikit transaction state was incomplete; reset and retrying.")
+        return True
 
     def _normalize_session_idx(self):
         """Keep _current_session_idx in range (e.g. after deploy / pool changes)."""
@@ -1622,6 +1668,7 @@ class TwitterClient:
             if has_token_creds:
                 username_str = account.get('username', '?')
                 cookies = {'auth_token': account['auth_token']}
+                session['_auth_token'] = account['auth_token']
                 # ct0 cookie MUST be present so twikit sends a matching CSRF header.
                 # Use the account's ct0 if given; otherwise generate one (X uses the
                 # double-submit pattern, so any cookie==header value is accepted).
@@ -1746,6 +1793,10 @@ class TwitterClient:
             return None
         except Exception as e:
             err_msg = str(e)
+            if self._recover_twikit_transaction(session, err_msg):
+                if _retry_depth < 2:
+                    return await self._get_user_id_twikit(handle, session, _retry_depth + 1)
+                raise RuntimeError(f"Twikit transaction bootstrap failed after retries: {err_msg}") from e
             if any(code in err_msg for code in ["429", "503", "403", "502", "504"]) or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
@@ -1831,9 +1882,8 @@ class TwitterClient:
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
                     return await self.get_new_following_with_delta(user_id, hva_handle, _retry_depth=_retry_depth + 1)
-                return [], 0
-            print(f"      ERROR Following error (ID: {user_id}): {err_msg}")
-            return [], 0
+                raise RuntimeError(f"Following fetch failed after retries: {err_msg}") from e
+            raise RuntimeError(f"Following fetch failed: {err_msg}") from e
 
     async def _get_new_following_with_delta_twikit(self, user_id, hva_handle, _retry_depth=0):
         """Twikit fallback for following."""
@@ -1888,14 +1938,17 @@ class TwitterClient:
             err_msg = str(e)
             if not err_msg:
                 err_msg = f"Empty {type(e).__name__}"
+            if self._recover_twikit_transaction(session, err_msg):
+                if _retry_depth < 2:
+                    return await self._get_new_following_with_delta_twikit(user_id, hva_handle, _retry_depth + 1)
+                raise RuntimeError(f"Twikit transaction bootstrap failed after retries: {err_msg}") from e
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 print(f"      Retrying due to {err_msg}...")
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
                     return await self._get_new_following_with_delta_twikit(user_id, hva_handle, _retry_depth + 1)
-                return [], 0
-            print(f"      ERROR Following error (ID: {user_id}): {err_msg}")
-            return [], 0
+                raise RuntimeError(f"Following fetch failed after retries: {err_msg}") from e
+            raise RuntimeError(f"Following fetch failed: {err_msg}") from e
 
     async def get_user_timeline(self, user_id, count=20, handle=None, _retry_depth=0):
         if self.is_rate_limited:
@@ -1952,9 +2005,8 @@ class TwitterClient:
                 max_retries = int(getattr(config, "TWITTER_TIMELINE_CLIENT_RETRIES", 0) or 0)
                 if _retry_depth < max_retries:
                     return await self.get_user_timeline(user_id, count, handle=handle, _retry_depth=_retry_depth + 1)
-                return []
-            print(f"      ERROR Timeline error (ID: {user_id}): {err_msg}")
-            return []
+                raise RuntimeError(f"Timeline fetch failed after retries: {err_msg}") from e
+            raise RuntimeError(f"Timeline fetch failed: {err_msg}") from e
 
     async def _get_user_timeline_twikit(self, user_id, count=20, _retry_depth=0):
         """Twikit fallback for timeline."""
@@ -1978,14 +2030,17 @@ class TwitterClient:
                 return []
             if not err_msg:
                 err_msg = f"Empty {type(e).__name__}"
+            if self._recover_twikit_transaction(session, err_msg):
+                if _retry_depth < 2:
+                    return await self._get_user_timeline_twikit(user_id, count, _retry_depth + 1)
+                raise RuntimeError(f"Twikit transaction bootstrap failed after retries: {err_msg}") from e
             if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 self._mark_session_blocked(err_msg)
                 max_retries = int(getattr(config, "TWITTER_TIMELINE_CLIENT_RETRIES", 0) or 0)
                 if _retry_depth < max_retries:
                     return await self._get_user_timeline_twikit(user_id, count, _retry_depth + 1)
-                return []
-            print(f"      ERROR Timeline error (ID: {user_id}): {err_msg}")
-            return []
+                raise RuntimeError(f"Timeline fetch failed after retries: {err_msg}") from e
+            raise RuntimeError(f"Timeline fetch failed: {err_msg}") from e
 
     async def get_user_info(self, user_id, handle=None, _retry_depth=0):
         if self.is_rate_limited:

@@ -383,6 +383,14 @@ def _apply_monkey_patch():
         except Exception:
             return
 
+    def _reset_partial_transaction_state(client) -> None:
+        """Force Twikit to re-run init if a prior bootstrap stopped before key."""
+        transaction = getattr(client, "client_transaction", None)
+        if transaction is None:
+            return
+        if getattr(transaction, "home_page_response", None) and not getattr(transaction, "key", None):
+            transaction.home_page_response = None
+
     try:
         from twikit.client.client import Client
 
@@ -393,6 +401,7 @@ def _apply_monkey_patch():
                 self, method, url, auto_unlock=True, raise_exception=True, **kwargs
             ):
                 _sanitize_httpx_cookies_for_duplicate_names(self.http)
+                _reset_partial_transaction_state(self)
                 return await _orig_client_request(
                     self,
                     method,
@@ -416,6 +425,7 @@ def _apply_monkey_patch():
 
             async def _patched_guest_request(self, method, url, raise_exception=True, **kwargs):
                 _sanitize_httpx_cookies_for_duplicate_names(self.http)
+                _reset_partial_transaction_state(self)
                 return await _orig_guest_request(
                     self, method, url, raise_exception=raise_exception, **kwargs
                 )

@@ -423,13 +423,13 @@ async def _run_daily_mints_post(
 def _brain_scan_loop_kwargs():
     """Schedule kwargs for the brain-scan tasks.loop.
 
-    Default: run twice per day using config.BRAIN_SCAN_DAILY_HOURS (UTC).
+    Default: run every six hours using config.BRAIN_SCAN_DAILY_HOURS (UTC).
     Fallback: fixed interval when BRAIN_SCAN_INTERVAL_SECONDS was set in the env
     (config.BRAIN_SCAN_USE_DAILY is then False). Times are tz-aware UTC so the
     schedule is unambiguous regardless of the host's local timezone.
     """
     if getattr(config, "BRAIN_SCAN_USE_DAILY", True):
-        hours = getattr(config, "BRAIN_SCAN_DAILY_HOURS", [0, 12]) or [0, 12]
+        hours = getattr(config, "BRAIN_SCAN_DAILY_HOURS", [0, 6, 12, 18]) or [0, 6, 12, 18]
         return {"time": [dtime(hour=h, minute=0, tzinfo=timezone.utc) for h in hours]}
     return {"seconds": config.CHECK_INTERVAL_SECONDS}
 
@@ -1011,7 +1011,7 @@ class BlockBrainBot(commands.Bot):
             )
         else:
             if getattr(config, "BRAIN_SCAN_USE_DAILY", True):
-                _hrs = ", ".join(f"{h:02d}:00 UTC" for h in getattr(config, "BRAIN_SCAN_DAILY_HOURS", [0, 12]))
+                _hrs = ", ".join(f"{h:02d}:00 UTC" for h in getattr(config, "BRAIN_SCAN_DAILY_HOURS", [0, 6, 12, 18]))
                 _sched = f"at {_hrs}"
             else:
                 _sched = f"every {config.CHECK_INTERVAL_SECONDS}s"
@@ -1525,6 +1525,8 @@ class BlockBrainBot(commands.Bot):
             
             print(f"\n[{datetime.now().strftime('%H:%M:%S')}] --- 📡 BRAIN SCAN ({scan_mode}) ---")
             self.current_scan_discoveries = 0
+            scan_success_count = 0
+            scan_error_count = 0
             
             # Load HVAs from DB
             priority_list = database.get_hva_priority_list()
@@ -1607,9 +1609,6 @@ class BlockBrainBot(commands.Bot):
 
                     print(f"{self._get_log_prefix()} 🔎 [SCANNING] Checking to see what @{hva_handle} is up to...")
                     
-                    # Update scan timestamp at the start of each scan
-                    database.update_hva_scan_timestamp(hva_handle)
-                    
                     try:
                         await self._yield_to_tweet_watcher(f"before @{hva_handle} ID lookup")
                         try:
@@ -1619,9 +1618,10 @@ class BlockBrainBot(commands.Bot):
                             )
                         except asyncio.TimeoutError:
                             print(f"      ⚠️ Timeout resolving ID for @{hva_handle}, skipping.")
-                            continue
+                            raise RuntimeError(f"ID lookup timed out for @{hva_handle}")
                         if not hva_id:
                             print(f"      ⚠️ Skip @{hva_handle}: Could not resolve User ID.")
+                            scan_error_count += 1
                             continue
 
                         await self._yield_to_tweet_watcher(f"before @{hva_handle} following")
@@ -1632,7 +1632,7 @@ class BlockBrainBot(commands.Bot):
                             )
                         except asyncio.TimeoutError:
                             print(f"      ⚠️ Timeout fetching follows for @{hva_handle}, skipping.")
-                            following = []
+                            raise RuntimeError(f"following fetch timed out for @{hva_handle}")
 
                         if following:
                             unique_following = []
@@ -1685,7 +1685,7 @@ class BlockBrainBot(commands.Bot):
                                 if t_attempt < timeline_attempts - 1:
                                     await asyncio.sleep(5)
                                 else:
-                                    timeline = []
+                                    raise RuntimeError(f"timeline fetch timed out for @{hva_handle}")
 
                         # Same account can appear on many RT rows — process once per HVA scan
                         seen_rt_user_ids: Set[str] = set()
@@ -1789,7 +1789,12 @@ class BlockBrainBot(commands.Bot):
                                         )
                                         if not completed:
                                             break
+                        # Only successful end-to-end scans affect HVA priority. A
+                        # transport failure must not be recorded as "no projects".
+                        database.update_hva_scan_timestamp(hva_handle)
+                        scan_success_count += 1
                     except Exception as e:
+                        scan_error_count += 1
                         print(f"      ❌ Scan error for @{hva_handle}: {e}")
                     
                     await asyncio.sleep(random.uniform(15, 35))
@@ -1832,7 +1837,12 @@ class BlockBrainBot(commands.Bot):
                 next_label = nxt.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
             else:
                 next_label = (datetime.now() + timedelta(seconds=config.CHECK_INTERVAL_SECONDS)).strftime('%H:%M:%S')
-            print(f"\n{self._get_log_prefix()} --- ✅ SCAN COMPLETE ({self.current_scan_discoveries} new) ---")
+            scan_status = "SCAN COMPLETE" if scan_error_count == 0 else "SCAN PARTIAL"
+            scan_icon = "✅" if scan_error_count == 0 else "⚠️"
+            print(
+                f"\n{self._get_log_prefix()} --- {scan_icon} {scan_status} "
+                f"({self.current_scan_discoveries} new, {scan_success_count} successful, {scan_error_count} failed) ---"
+            )
             print(f"{self._get_log_prefix()} 💤 Sleeping... Next scan: {next_label}")
 
         except Exception as e:
