@@ -577,6 +577,12 @@ BRAIN_SCAN_ID_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("BRAIN_SCAN_ID_TIMEOUT
 BRAIN_SCAN_FOLLOWING_TIMEOUT_SEC = max(10.0, min(90.0, _env_float("BRAIN_SCAN_FOLLOWING_TIMEOUT_SEC", 35.0)))
 BRAIN_SCAN_TIMELINE_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("BRAIN_SCAN_TIMELINE_TIMEOUT_SEC", 28.0)))
 BRAIN_SCAN_TIMELINE_ATTEMPTS = max(1, min(3, _env_int("BRAIN_SCAN_TIMELINE_ATTEMPTS", 2)))
+# Hunter timelines add retweet/mention discoveries, but following is the primary
+# scan.  Stop spending a whole batch on optional timeline reads when the proxy
+# pool is transiently failing them.
+BRAIN_SCAN_MAX_TIMELINE_FAILURES_PER_BATCH = max(
+    1, min(10, _env_int("BRAIN_SCAN_MAX_TIMELINE_FAILURES_PER_BATCH", 2))
+)
 BRAIN_SCAN_HVA_BUDGET_SEC = max(45.0, min(300.0, _env_float("BRAIN_SCAN_HVA_BUDGET_SEC", 120.0)))
 # Bound nested discovery work so it cannot defeat the per-HVA budget.
 BRAIN_SCAN_DISCOVERY_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("BRAIN_SCAN_DISCOVERY_TIMEOUT_SEC", 25.0)))

@@ -665,6 +665,32 @@ class BlockBrainBot(commands.Bot):
             )
             return False
 
+    async def _fetch_optional_brain_timeline(
+        self, user_id, handle: str, count: int, attempts: int, timeout_s: float
+    ) -> tuple[list, bool]:
+        """Return (timeline, unavailable) without failing the primary HVA scan."""
+        attempts = max(1, int(attempts or 1))
+        for attempt in range(attempts):
+            try:
+                timeline = await asyncio.wait_for(
+                    self.twitter.get_user_timeline(user_id, count=count, handle=handle),
+                    timeout=timeout_s,
+                )
+                return list(timeline or []), False
+            except asyncio.TimeoutError:
+                print(
+                    f"      WARN Timeout fetching optional timeline for @{handle} "
+                    f"(attempt {attempt + 1}/{attempts})"
+                )
+            except Exception as e:
+                print(
+                    f"      WARN Optional timeline transport error for @{handle} "
+                    f"(attempt {attempt + 1}/{attempts}): {e}"
+                )
+            if attempt < attempts - 1:
+                await asyncio.sleep(5)
+        return [], True
+
     def brand_logo_file(self) -> Optional[discord.File]:
         if not BRAND_LOGO_PATH or not BRAND_LOGO_FILE:
             return None
@@ -1547,6 +1573,7 @@ class BlockBrainBot(commands.Bot):
             self.current_scan_discoveries = 0
             scan_success_count = 0
             scan_error_count = 0
+            scan_timeline_skip_count = 0
             
             # Load HVAs from DB
             priority_list = database.get_hva_priority_list()
@@ -1619,6 +1646,11 @@ class BlockBrainBot(commands.Bot):
                 print(f"\n{self._get_log_prefix()} 📦 [BATCH {batch_num + 1}/{total_batches}] Checking {len(batch)} {BRAND_NAME} hunters...")
                 mention_timeouts_this_batch = 0
                 _max_mention_timeouts_per_batch = int(getattr(config, "MENTION_RESOLVE_MAX_TIMEOUTS_PER_BATCH", 6) or 6)
+                timeline_failures_this_batch = 0
+                timeline_circuit_logged = False
+                max_timeline_failures_per_batch = int(
+                    getattr(config, "BRAIN_SCAN_MAX_TIMELINE_FAILURES_PER_BATCH", 2) or 2
+                )
                 
                 for hva_handle in batch:
                     hva_started_at = time.monotonic()
@@ -1682,6 +1714,21 @@ class BlockBrainBot(commands.Bot):
 
                         if time.monotonic() - hva_started_at >= hva_budget_sec:
                             print(f"      ⚠️ HVA budget exhausted for @{hva_handle}; skipping timeline/mention scan.")
+                            database.update_hva_scan_timestamp(hva_handle)
+                            scan_success_count += 1
+                            scan_timeline_skip_count += 1
+                            continue
+
+                        if timeline_failures_this_batch >= max_timeline_failures_per_batch:
+                            if not timeline_circuit_logged:
+                                print(
+                                    f"      ⚠️ Optional timeline circuit open for the rest of this batch "
+                                    f"after {timeline_failures_this_batch} failures."
+                                )
+                                timeline_circuit_logged = True
+                            database.update_hva_scan_timestamp(hva_handle)
+                            scan_success_count += 1
+                            scan_timeline_skip_count += 1
                             continue
 
                         await self._yield_to_tweet_watcher(f"before @{hva_handle} timeline")
@@ -1693,21 +1740,17 @@ class BlockBrainBot(commands.Bot):
                         )
                         timeline_attempts = int(getattr(config, "BRAIN_SCAN_TIMELINE_ATTEMPTS", 1) or 1)
                         timeline_timeout_s = float(getattr(config, "BRAIN_SCAN_TIMELINE_TIMEOUT_SEC", 28.0) or 28.0)
-                        for t_attempt in range(max(1, timeline_attempts)):
-                            try:
-                                timeline = await asyncio.wait_for(
-                                    self.twitter.get_user_timeline(
-                                        hva_id, count=timeline_count, handle=hva_handle
-                                    ),
-                                    timeout=timeline_timeout_s,
-                                )
-                                break
-                            except asyncio.TimeoutError:
-                                print(f"      ⚠️ Timeout fetching timeline for @{hva_handle} (attempt {t_attempt + 1}/{timeline_attempts})")
-                                if t_attempt < timeline_attempts - 1:
-                                    await asyncio.sleep(5)
-                                else:
-                                    raise RuntimeError(f"timeline fetch timed out for @{hva_handle}")
+                        timeline, timeline_unavailable = await self._fetch_optional_brain_timeline(
+                            hva_id,
+                            hva_handle,
+                            timeline_count,
+                            timeline_attempts,
+                            timeline_timeout_s,
+                        )
+
+                        if timeline_unavailable:
+                            timeline_failures_this_batch += 1
+                            scan_timeline_skip_count += 1
 
                         # Same account can appear on many RT rows — process once per HVA scan
                         seen_rt_user_ids: Set[str] = set()
@@ -1863,7 +1906,8 @@ class BlockBrainBot(commands.Bot):
             scan_icon = "✅" if scan_error_count == 0 else "⚠️"
             print(
                 f"\n{self._get_log_prefix()} --- {scan_icon} {scan_status} "
-                f"({self.current_scan_discoveries} new, {scan_success_count} successful, {scan_error_count} failed) ---"
+                f"({self.current_scan_discoveries} new, {scan_success_count} primary successful, "
+                f"{scan_timeline_skip_count} optional timeline skipped, {scan_error_count} failed) ---"
             )
             print(f"{self._get_log_prefix()} 💤 Sleeping... Next scan: {next_label}")
 
