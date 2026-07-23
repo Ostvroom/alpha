@@ -575,6 +575,13 @@ TWITTER_TIMELINE_CLIENT_RETRIES = max(0, min(3, _env_int("TWITTER_TIMELINE_CLIEN
 # cooldown windows so one bad profile/proxy cannot stall the whole scan.
 BRAIN_SCAN_ID_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("BRAIN_SCAN_ID_TIMEOUT_SEC", 20.0)))
 BRAIN_SCAN_FOLLOWING_TIMEOUT_SEC = max(10.0, min(90.0, _env_float("BRAIN_SCAN_FOLLOWING_TIMEOUT_SEC", 35.0)))
+# How many of an HVA's most-recent follows to pull per scan. This is the single
+# biggest lever on discovery volume: anything an HVA followed BEYOND this count
+# since the last scan is invisible. It matters much more now the scan runs once
+# daily (an active hunter easily follows 30+ accounts in 24h) — a value of 20
+# was silently capping discovery. X returns up to ~100 per page, so raising this
+# to 100 costs roughly the SAME number of HTTP requests as 20 (one page), not 5x.
+BRAIN_SCAN_FOLLOWING_COUNT = max(20, min(200, _env_int("BRAIN_SCAN_FOLLOWING_COUNT", 100)))
 BRAIN_SCAN_TIMELINE_TIMEOUT_SEC = max(5.0, min(60.0, _env_float("BRAIN_SCAN_TIMELINE_TIMEOUT_SEC", 28.0)))
 BRAIN_SCAN_TIMELINE_ATTEMPTS = max(1, min(3, _env_int("BRAIN_SCAN_TIMELINE_ATTEMPTS", 2)))
 # Hunter timelines add retweet/mention discoveries, but following is the primary

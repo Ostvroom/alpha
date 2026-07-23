@@ -1849,7 +1849,8 @@ class TwitterClient:
 
         try:
             await self._twikit_pace()
-            profiles = await scweet.aget_following([handle], limit=20, raw_json=True)
+            follow_count = int(getattr(config, "BRAIN_SCAN_FOLLOWING_COUNT", 100) or 100)
+            profiles = await scweet.aget_following([handle], limit=follow_count, raw_json=True)
             if not profiles:
                 return [], 0
 
@@ -1911,7 +1912,8 @@ class TwitterClient:
             return [], 0
         try:
             await self._twikit_pace()
-            following = await session['client'].get_user_following(user_id, count=20)
+            follow_count = int(getattr(config, "BRAIN_SCAN_FOLLOWING_COUNT", 100) or 100)
+            following = await session['client'].get_user_following(user_id, count=follow_count)
             if not following:
                 return [], 0
 
