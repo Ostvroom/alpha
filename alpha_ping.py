@@ -463,6 +463,20 @@ class AlertVoteView(discord.ui.View):
             return
 
         await interaction.response.defer(ephemeral=True)
+
+        # Engagement points: pay the voter for curating, and move the caller's
+        # points by the vote (Cook pays, Skip deducts). Both are idempotent —
+        # a changed vote will not re-award. Never allowed to break voting.
+        try:
+            import engagement
+
+            engagement.award_vote_cast(interaction.user.id, post["id"], vote)
+            engagement.award_vote_received(
+                post["poster_id"], post["id"], interaction.user.id, vote
+            )
+        except Exception as e:
+            logger.warning("[AlphaPing] engagement award failed: %s", e)
+
         cook_votes, skip_votes = get_vote_counts(post["id"])
         score, _ = get_poster_score(post["guild_id"], post["poster_id"], kind)
         self.cook_button.label = f"Cook {cook_votes}"
@@ -641,6 +655,15 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
             logger.exception(f"[AlphaPing] Failed to create {kind} alert")
             await ctx.send("Could not create the alert.", delete_after=8)
             return
+
+        # Engagement points for posting the call. Keyed on the posted message
+        # id so a retry can't double-pay. Never allowed to break posting.
+        try:
+            import engagement
+
+            engagement.award_call_posted(ctx.author.id, kind, posted.id, member=ctx.author)
+        except Exception as e:
+            logger.warning("[AlphaPing] engagement call award failed: %s", e)
 
         if wait_for_rick:
             asyncio.create_task(

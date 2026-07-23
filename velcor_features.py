@@ -1382,6 +1382,18 @@ class VelcorFeatures(commands.Cog):
             import traceback
             traceback.print_exc()
 
+        # Engagement points. Runs off the event loop because the ledger does
+        # blocking sqlite I/O and this handler fires on EVERY message in the
+        # guild — awaiting it inline would throttle the bot under chat load.
+        try:
+            import asyncio as _asyncio
+
+            import engagement
+
+            _asyncio.create_task(_asyncio.to_thread(engagement.award_message, message))
+        except Exception as e:
+            print(f"[{timestamp}] [VelcorFeatures] ERROR awarding engagement: {e}")
+
         # Auto-reactions
         if AUTO_REACT_CHANNEL_ID and message.channel.id == AUTO_REACT_CHANNEL_ID:
             try:
