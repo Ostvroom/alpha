@@ -207,14 +207,75 @@ def _tweet_url(tweet: Any, user: Any) -> str:
     return ""
 
 
+ENGAGE_CLAIM_CUSTOM_ID = "tweet_engage_claim"
+
+
+class TweetEngageView(View):
+    """🚀 link-button (opens X) + ✅ claim button (bot-detectable).
+
+    The link button is handled entirely client-side by Discord — the bot never
+    receives an interaction for it, so it can never award points. The claim
+    button carries a STATIC custom_id and resolves its tweet from
+    interaction.message.id, which keeps the view restart-safe: registering one
+    zero-state instance at boot is enough for Discord to route clicks on every
+    previously-posted message.
+    """
+
+    def __init__(self, tweet_url: str = "", claim_count: int = 0) -> None:
+        super().__init__(timeout=None)
+        if tweet_url:
+            self.add_item(
+                Button(style=discord.ButtonStyle.link, label="🚀 Engage on X", url=tweet_url)
+            )
+        label = f"✅ I Engaged ({claim_count})" if claim_count else "✅ I Engaged"
+        self.claim_button = Button(
+            style=discord.ButtonStyle.success,
+            label=label,
+            custom_id=ENGAGE_CLAIM_CUSTOM_ID,
+        )
+        self.claim_button.callback = self._on_claim
+        self.add_item(self.claim_button)
+
+    async def _on_claim(self, interaction: discord.Interaction) -> None:
+        import engagement
+
+        row = engagement.get_tweet_for_message(interaction.message.id)
+        if not row:
+            await interaction.response.send_message(
+                "This alert is no longer claimable.", ephemeral=True
+            )
+            return
+
+        tweet_id = str(row.get("tweet_id") or "")
+        ok, reason, pts = engagement.claim_tweet_engagement(interaction.user.id, tweet_id)
+
+        if ok:
+            msg = f"✅ **+{pts} points** — thanks for engaging!"
+        elif reason == "already_claimed":
+            msg = "You already claimed this tweet."
+        elif reason in ("daily_cap", "global_cap"):
+            msg = (
+                f"Daily limit reached ({engagement.X_ENGAGE_DAILY_CAP}/"
+                f"{engagement.X_ENGAGE_DAILY_CAP}). Resets at 00:00 UTC."
+            )
+        else:
+            msg = "Could not record that claim — try again shortly."
+        await interaction.response.send_message(msg, ephemeral=True)
+
+        if ok:
+            # Refresh the public counter so others see the social proof.
+            try:
+                count = engagement.get_engage_claim_count(tweet_id)
+                self.claim_button.label = f"✅ I Engaged ({count})"
+                await interaction.message.edit(view=self)
+            except Exception:
+                pass
+
+
 def _build_engage_view(tweet_url: str) -> Optional[View]:
-    """Single 🚀 Engage link-button that opens the tweet on X."""
-    if not tweet_url:
-        return None
+    """Engage link-button plus the claim button."""
     try:
-        view = View(timeout=None)
-        view.add_item(Button(style=discord.ButtonStyle.link, label="🚀 Engage on X", url=tweet_url))
-        return view
+        return TweetEngageView(tweet_url=tweet_url or "")
     except Exception:
         return None
 
@@ -671,13 +732,23 @@ async def check_watched_accounts(
                     content = f"<@&{r_id}>"
 
                 if hasattr(bot, "safe_send"):
-                    await bot.safe_send(channel, content=content, embeds=embeds, view=view)
+                    sent = await bot.safe_send(channel, content=content, embeds=embeds, view=view)
                     for continuation in _text_continuations(tweet):
                         await bot.safe_send(channel, content=continuation)
                 else:
-                    await channel.send(content=content, embeds=embeds, view=view)
+                    sent = await channel.send(content=content, embeds=embeds, view=view)
                     for continuation in _text_continuations(tweet):
                         await channel.send(content=continuation)
+
+                # Map the posted message to its tweet so the claim button can
+                # resolve which tweet it belongs to (keeps custom_id static).
+                if sent is not None and tid:
+                    try:
+                        import engagement
+
+                        engagement.register_tweet_post(sent.id, tid, handle)
+                    except Exception as e:
+                        print(f"[TweetWatcher] Could not register engage post: {e}")
 
                 posted += 1
                 newest_posted_tid = tid

@@ -769,6 +769,17 @@ class BlockBrainBot(commands.Bot):
         await payment_commands.setup(self)
         self.add_view(VerificationView())
         self.add_view(CryptoPaymentView())
+        # Engagement: init the points ledger and register the persistent
+        # "I Engaged" view so clicks on already-posted tweet alerts keep
+        # routing after a restart (static custom_id makes one instance enough).
+        try:
+            import engagement
+            from trackers.tweet_watcher import TweetEngageView
+
+            engagement.init_db()
+            self.add_view(TweetEngageView())
+        except Exception as e:
+            print(f"    [Engagement] Setup failed: {e}")
         # Legacy button panels (old messages); new panels use ClaimRolesView dropdown
         _claim_roles_view = PingRolesView()
         if _claim_roles_view.children:
