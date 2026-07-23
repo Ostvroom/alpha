@@ -297,6 +297,126 @@ def get_total_points(discord_user_id: int) -> int:
     return int(row["total"] or 0) if row else 0
 
 
+# --- Reporting queries -----------------------------------------------------
+# All reporting reads the ledger rather than users.points, so the numbers are
+# explainable: every total can be broken down into the events that produced it.
+
+def _since_iso(days: int) -> str:
+    from datetime import timedelta
+
+    return (datetime.now(timezone.utc) - timedelta(days=int(days))).isoformat()
+
+
+def get_points_leaderboard(limit: int = 10, days: Optional[int] = None) -> list:
+    """Top earners. days=None for all-time, or a rolling window (e.g. 7)."""
+    # Aliased to user_id so every reporting helper exposes the same key.
+    sql = (
+        "SELECT discord_user_id AS user_id, COALESCE(SUM(points_delta), 0) AS points, "
+        "COUNT(*) AS events FROM engagement_events "
+    )
+    args: list = []
+    if days:
+        sql += "WHERE occurred_at >= ? "
+        args.append(_since_iso(days))
+    sql += (
+        "GROUP BY discord_user_id HAVING points != 0 "
+        "ORDER BY points DESC, events DESC LIMIT ?"
+    )
+    args.append(int(limit))
+    with closing(_conn()) as conn:
+        rows = conn.execute(sql, args).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_user_rank(discord_user_id: int) -> Optional[int]:
+    """1-based all-time rank, or None if the member has never earned."""
+    total = get_total_points(discord_user_id)
+    with closing(_conn()) as conn:
+        seen = conn.execute(
+            "SELECT 1 FROM engagement_events WHERE discord_user_id = ? LIMIT 1",
+            (int(discord_user_id),),
+        ).fetchone()
+        if not seen:
+            return None
+        row = conn.execute(
+            "SELECT COUNT(*) AS ahead FROM ("
+            "  SELECT discord_user_id, SUM(points_delta) AS p FROM engagement_events "
+            "  GROUP BY discord_user_id HAVING p > ?"
+            ")",
+            (int(total),),
+        ).fetchone()
+    return int(row["ahead"] or 0) + 1
+
+
+def get_user_breakdown(discord_user_id: int) -> dict:
+    """Per-member activity: totals, today, 7d, and a split by event type."""
+    uid = int(discord_user_id)
+    with closing(_conn()) as conn:
+        by_type = conn.execute(
+            "SELECT event_type, COALESCE(SUM(points_delta), 0) AS points, "
+            "COUNT(*) AS events FROM engagement_events WHERE discord_user_id = ? "
+            "GROUP BY event_type ORDER BY points DESC",
+            (uid,),
+        ).fetchall()
+        week = conn.execute(
+            "SELECT COALESCE(SUM(points_delta), 0) AS p FROM engagement_events "
+            "WHERE discord_user_id = ? AND occurred_at >= ?",
+            (uid, _since_iso(7)),
+        ).fetchone()
+        first_last = conn.execute(
+            "SELECT MIN(occurred_at) AS first_at, MAX(occurred_at) AS last_at, "
+            "COUNT(*) AS events FROM engagement_events WHERE discord_user_id = ?",
+            (uid,),
+        ).fetchone()
+    return {
+        "user_id": uid,
+        "total": get_total_points(uid),
+        "today": points_today(uid),
+        "week": int(week["p"] or 0) if week else 0,
+        "rank": get_user_rank(uid),
+        "events": int(first_last["events"] or 0) if first_last else 0,
+        "first_at": str(first_last["first_at"] or "") if first_last else "",
+        "last_at": str(first_last["last_at"] or "") if first_last else "",
+        "by_type": [dict(r) for r in by_type],
+    }
+
+
+def get_activity_summary(days: int = 7) -> dict:
+    """Server-wide activity for the last N days."""
+    since = _since_iso(days)
+    with closing(_conn()) as conn:
+        totals = conn.execute(
+            "SELECT COALESCE(SUM(points_delta), 0) AS points, COUNT(*) AS events, "
+            "COUNT(DISTINCT discord_user_id) AS members FROM engagement_events "
+            "WHERE occurred_at >= ?",
+            (since,),
+        ).fetchone()
+        by_type = conn.execute(
+            "SELECT event_type, COALESCE(SUM(points_delta), 0) AS points, "
+            "COUNT(*) AS events, COUNT(DISTINCT discord_user_id) AS members "
+            "FROM engagement_events WHERE occurred_at >= ? "
+            "GROUP BY event_type ORDER BY events DESC",
+            (since,),
+        ).fetchall()
+        today = conn.execute(
+            "SELECT COALESCE(SUM(points_delta), 0) AS points, COUNT(*) AS events, "
+            "COUNT(DISTINCT discord_user_id) AS members FROM engagement_events "
+            "WHERE substr(occurred_at, 1, 10) = ?",
+            (_utc_today(),),
+        ).fetchone()
+        alltime = conn.execute(
+            "SELECT COALESCE(SUM(points_delta), 0) AS points, COUNT(*) AS events, "
+            "COUNT(DISTINCT discord_user_id) AS members FROM engagement_events"
+        ).fetchone()
+    return {
+        "days": int(days),
+        "window": dict(totals) if totals else {},
+        "today": dict(today) if today else {},
+        "alltime": dict(alltime) if alltime else {},
+        "by_type": [dict(r) for r in by_type],
+    }
+
+
 def _apply_points_to_account(discord_user_id: int, points: int) -> None:
     """Push the delta onto users.points via the website's existing chokepoint.
 
