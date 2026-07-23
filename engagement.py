@@ -14,10 +14,9 @@ Two things are deliberate:
    of the existing points code found totals with no event history, which made
    awards impossible to reconcile — this avoids repeating that.
 
-2. **Totals live where the website already reads them.** Points are applied via
-   `website_server._acct_add_points()`, the single existing chokepoint for
-   `users.points`, so the site's Discord Points section picks them up with no
-   schema change. The ledger is additive, not a replacement.
+2. **The ledger remains authoritative.** A background worker mirrors absolute
+   engagement and Alpha totals to the staking website. Failed requests never
+   lose awards because a later sync recomputes totals from local SQLite.
 
 Only the X-engage claim path is wired up so far; `award()` is generic so the
 remaining earning paths (messages, alpha calls, votes) drop in without rework.
@@ -297,6 +296,54 @@ def get_total_points(discord_user_id: int) -> int:
     return int(row["total"] or 0) if row else 0
 
 
+def _alpha_score_snapshot(discord_user_id: int, guild_id: int = 0) -> int:
+    try:
+        import alpha_ping
+
+        gid = int(guild_id or 0) or _primary_guild_id()
+        if gid <= 0:
+            return 0
+        score, _posts = alpha_ping.get_poster_score(gid, int(discord_user_id), "alpha")
+        return int(score or 0)
+    except Exception as error:
+        logger.warning("[StakingSync] alpha score lookup failed for %s: %s", discord_user_id, error)
+        return 0
+
+
+def queue_staking_score_sync(discord_user_id: int, guild_id: int = 0) -> bool:
+    """Queue an absolute score snapshot without blocking a Discord handler."""
+    try:
+        from staking_sync import queue_score_sync
+
+        uid = int(discord_user_id)
+        return queue_score_sync(uid, get_total_points(uid), _alpha_score_snapshot(uid, guild_id))
+    except Exception as error:
+        logger.warning("[StakingSync] unable to queue user %s: %s", discord_user_id, error)
+        return False
+
+
+def queue_all_staking_scores() -> int:
+    """Backfill every known engagement/Alpha user after a bot restart."""
+    user_ids = set()
+    try:
+        with closing(_conn()) as conn:
+            rows = conn.execute("SELECT DISTINCT discord_user_id FROM engagement_events").fetchall()
+        user_ids.update(int(row[0]) for row in rows)
+    except Exception as error:
+        logger.warning("[StakingSync] engagement backfill lookup failed: %s", error)
+
+    try:
+        import alpha_ping
+
+        gid = _primary_guild_id()
+        if gid > 0:
+            user_ids.update(alpha_ping.get_scored_user_ids(gid, "alpha"))
+    except Exception as error:
+        logger.warning("[StakingSync] alpha backfill lookup failed: %s", error)
+
+    return sum(1 for uid in user_ids if queue_staking_score_sync(uid))
+
+
 # --- Reporting queries -----------------------------------------------------
 # All reporting reads the ledger rather than users.points, so the numbers are
 # explainable: every total can be broken down into the events that produced it.
@@ -475,6 +522,9 @@ def award(
         # Same event_id already recorded — a retry, not a new award.
         return False, "duplicate", 0
 
+    # Mirror from the append-only ledger, not from the optional legacy account
+    # database. The HTTP work happens on a daemon thread.
+    queue_staking_score_sync(uid)
     _apply_points_to_account(uid, pts)
     queue_log_entry(uid, event_type, pts, description)
     return True, "ok", pts
@@ -768,13 +818,8 @@ def award_vote_received(poster_id: int, post_id: int, voter_id: int,
 # Engagement points already reach the website: _acct_add_points() PATCHes
 # users.points in Supabase directly. Alpha Score does NOT — it lives only in
 # user_stats.db (alpha_scores), so the site can never see it. This pushes it
-# onto the same users row the site already reads.
-#
-# Requires a one-time column on the Supabase users table:
-#     ALTER TABLE users ADD COLUMN IF NOT EXISTS alpha_score INTEGER DEFAULT 0;
-#
-# alpha_scores is keyed (guild_id, user_id, kind) but the website has a single
-# global profile, so we publish the primary guild's 'alpha' score.
+# Alpha scores are keyed (guild_id, user_id, kind), while the staking profile
+# is global. Mirror the primary guild's "alpha" score through the signed API.
 ALPHA_SYNC_ENABLED = (os.getenv("ENGAGE_SYNC_ALPHA_SCORE", "1") or "1").strip().lower() in (
     "1", "true", "yes", "on",
 )
@@ -790,11 +835,10 @@ def _primary_guild_id() -> int:
 
 
 def sync_alpha_score(discord_user_id: int, guild_id: int = 0, kind: str = "alpha") -> bool:
-    """Publish a member's Alpha Score to the website's users row.
+    """Queue a member's Alpha Score for the signed staking-site mirror.
 
-    Best-effort and never raises: Alpha Score is a display value, so a sync
-    failure must not break voting or posting. Returns True only on a confirmed
-    write.
+    Best-effort and never raises: a sync failure must not break voting or
+    posting. Returns True when the snapshot was accepted by the local queue.
     """
     if not ALPHA_SYNC_ENABLED:
         return False
@@ -813,30 +857,9 @@ def sync_alpha_score(discord_user_id: int, guild_id: int = 0, kind: str = "alpha
         return False
 
     try:
-        import json as _json
+        from staking_sync import queue_score_sync
 
-        import requests
-
-        import website_server as ws
-
-        if not ws._sb_enabled():
-            return False  # SQLite-only deployment; nothing to publish to.
-        # Ensure the row exists before patching (new member may never have
-        # logged into the site yet).
-        if not ws._acct_get_user(uid):
-            ws._acct_upsert_user(user_id=uid, username="", global_name="", avatar_url="")
-        r = requests.patch(
-            ws._sb_url(f"/users?user_id=eq.{uid}"),
-            headers=ws._sb_headers(),
-            data=_json.dumps({"alpha_score": int(score)}),
-            timeout=12,
-        )
-        if r.status_code in (200, 204):
-            return True
-        # A 400/42703 here almost always means the column hasn't been added yet.
-        logger.warning(
-            "[Engagement] alpha_score sync HTTP %s: %s", r.status_code, (r.text or "")[:200]
-        )
+        return queue_score_sync(uid, get_total_points(uid), int(score))
     except Exception as e:
         logger.warning("[Engagement] alpha_score sync failed for %s: %s", uid, e)
-    return False
+        return False

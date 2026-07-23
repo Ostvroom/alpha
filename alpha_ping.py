@@ -159,6 +159,16 @@ def get_poster_score(guild_id: int, user_id: int, kind: str = "alpha") -> Tuple[
     return (row["score"], row["posts"]) if row else (0, 0)
 
 
+def get_scored_user_ids(guild_id: int, kind: str = "alpha") -> list[int]:
+    """Member IDs with an Alpha Score row, used for staking-site backfill."""
+    with closing(_db()) as conn:
+        rows = conn.execute(
+            "SELECT user_id FROM alpha_scores WHERE guild_id = ? AND kind = ?",
+            (int(guild_id), str(kind)),
+        ).fetchall()
+    return [int(row["user_id"]) for row in rows]
+
+
 def _vote_delta(vote: str) -> int:
     # Keep votes from the previous Good/Not Alpha template compatible.
     return SCORE_COOK if vote in {"cook", "good"} else SCORE_SKIP
@@ -474,9 +484,8 @@ class AlertVoteView(discord.ui.View):
             engagement.award_vote_received(
                 post["poster_id"], post["id"], interaction.user.id, vote
             )
-            # Publish the caller's updated Alpha Score to the website. Off the
-            # event loop: it is a blocking HTTP call and must not delay the
-            # vote response.
+            # Queue the caller's updated Alpha Score for the staking mirror.
+            # Keep even the local lookup off the interaction event loop.
             asyncio.create_task(
                 asyncio.to_thread(
                     engagement.sync_alpha_score, post["poster_id"], post["guild_id"], kind

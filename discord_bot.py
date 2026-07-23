@@ -779,6 +779,9 @@ class BlockBrainBot(commands.Bot):
             from trackers.tweet_watcher import TweetEngageView
 
             engagement.init_db()
+            queued_scores = engagement.queue_all_staking_scores()
+            if queued_scores:
+                print(f"    [StakingSync] Queued {queued_scores} existing score profile(s)")
             self.add_view(TweetEngageView())
             if engagement.LOG_ENABLED and engagement.LOG_CHANNEL_ID:
                 # Honour the configured flush cadence before starting.
