@@ -474,6 +474,14 @@ class AlertVoteView(discord.ui.View):
             engagement.award_vote_received(
                 post["poster_id"], post["id"], interaction.user.id, vote
             )
+            # Publish the caller's updated Alpha Score to the website. Off the
+            # event loop: it is a blocking HTTP call and must not delay the
+            # vote response.
+            asyncio.create_task(
+                asyncio.to_thread(
+                    engagement.sync_alpha_score, post["poster_id"], post["guild_id"], kind
+                )
+            )
         except Exception as e:
             logger.warning("[AlphaPing] engagement award failed: %s", e)
 

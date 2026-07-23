@@ -762,3 +762,81 @@ def award_vote_received(poster_id: int, post_id: int, voter_id: int,
         description=f"Received {vote} vote on a call",
         daily_cap=cap,
     )
+
+
+# --- Website sync: Alpha Score --------------------------------------------
+# Engagement points already reach the website: _acct_add_points() PATCHes
+# users.points in Supabase directly. Alpha Score does NOT — it lives only in
+# user_stats.db (alpha_scores), so the site can never see it. This pushes it
+# onto the same users row the site already reads.
+#
+# Requires a one-time column on the Supabase users table:
+#     ALTER TABLE users ADD COLUMN IF NOT EXISTS alpha_score INTEGER DEFAULT 0;
+#
+# alpha_scores is keyed (guild_id, user_id, kind) but the website has a single
+# global profile, so we publish the primary guild's 'alpha' score.
+ALPHA_SYNC_ENABLED = (os.getenv("ENGAGE_SYNC_ALPHA_SCORE", "1") or "1").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+
+
+def _primary_guild_id() -> int:
+    try:
+        import config
+
+        return int(getattr(config, "DISCORD_GUILD_ID", 0) or 0)
+    except Exception:
+        return 0
+
+
+def sync_alpha_score(discord_user_id: int, guild_id: int = 0, kind: str = "alpha") -> bool:
+    """Publish a member's Alpha Score to the website's users row.
+
+    Best-effort and never raises: Alpha Score is a display value, so a sync
+    failure must not break voting or posting. Returns True only on a confirmed
+    write.
+    """
+    if not ALPHA_SYNC_ENABLED:
+        return False
+    uid = int(discord_user_id or 0)
+    if uid <= 0:
+        return False
+    gid = int(guild_id or 0) or _primary_guild_id()
+    if gid <= 0:
+        return False
+    try:
+        import alpha_ping
+
+        score, _posts = alpha_ping.get_poster_score(gid, uid, kind)
+    except Exception as e:
+        logger.warning("[Engagement] alpha score lookup failed for %s: %s", uid, e)
+        return False
+
+    try:
+        import json as _json
+
+        import requests
+
+        import website_server as ws
+
+        if not ws._sb_enabled():
+            return False  # SQLite-only deployment; nothing to publish to.
+        # Ensure the row exists before patching (new member may never have
+        # logged into the site yet).
+        if not ws._acct_get_user(uid):
+            ws._acct_upsert_user(user_id=uid, username="", global_name="", avatar_url="")
+        r = requests.patch(
+            ws._sb_url(f"/users?user_id=eq.{uid}"),
+            headers=ws._sb_headers(),
+            data=_json.dumps({"alpha_score": int(score)}),
+            timeout=12,
+        )
+        if r.status_code in (200, 204):
+            return True
+        # A 400/42703 here almost always means the column hasn't been added yet.
+        logger.warning(
+            "[Engagement] alpha_score sync HTTP %s: %s", r.status_code, (r.text or "")[:200]
+        )
+    except Exception as e:
+        logger.warning("[Engagement] alpha_score sync failed for %s: %s", uid, e)
+    return False
