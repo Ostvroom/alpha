@@ -979,6 +979,27 @@ class BlockBrainBot(commands.Bot):
                         f"    [LiveMints] DISCORD_MINTS_CHANNEL_ID={mints_id} not found / no access."
                     )
 
+    async def _resolve_configured_channel(self, cid: int, label: str):
+        """Resolve an operator-configured channel id, reporting WHY it failed.
+
+        These ids come from env vars the operator sets, so a failure is always
+        actionable (wrong id / missing permission). They used to be dropped by a
+        bare `except: pass`, which is what made "Channels loaded: 0 main"
+        impossible to diagnose — the cause was never printed anywhere.
+        """
+        try:
+            ch = self.get_channel(cid)
+            if ch is None:
+                ch = await self.fetch_channel(cid)
+            return ch
+        except discord.NotFound:
+            print(f"   ⚠️ {label} channel {cid}: NOT FOUND — wrong id, or the channel was deleted.")
+        except discord.Forbidden:
+            print(f"   ⚠️ {label} channel {cid}: NO ACCESS — the bot needs 'View Channel' permission there.")
+        except Exception as e:
+            print(f"   ⚠️ {label} channel {cid}: unavailable ({type(e).__name__}: {e})")
+        return None
+
     async def rebuild_channel_caches(self) -> None:
         """Reload .env channel IDs plus licensed multi-tenant destinations from guild_licenses.db."""
         guild_license.init_db()
@@ -987,37 +1008,16 @@ class BlockBrainBot(commands.Bot):
         self.new_projects_channels = []
         self.established_projects_channels = []
 
-        for cid in config.DISCORD_CHANNEL_IDS:
-            try:
-                ch = self.get_channel(cid) or await self.fetch_channel(cid)
-                if ch and ch not in self.active_main_channels:
-                    self.active_main_channels.append(ch)
-            except Exception:
-                pass
-
-        for cid in config.ESCALATION_CHANNEL_IDS:
-            try:
-                ch = self.get_channel(cid) or await self.fetch_channel(cid)
-                if ch and ch not in self.active_escalation_channels:
-                    self.active_escalation_channels.append(ch)
-            except Exception:
-                pass
-
-        for cid in config.NEW_PROJECTS_CHANNEL_IDS:
-            try:
-                ch = self.get_channel(cid) or await self.fetch_channel(cid)
-                if ch and ch not in self.new_projects_channels:
-                    self.new_projects_channels.append(ch)
-            except Exception:
-                pass
-
-        for cid in config.ESTABLISHED_PROJECTS_CHANNEL_IDS:
-            try:
-                ch = self.get_channel(cid) or await self.fetch_channel(cid)
-                if ch and ch not in self.established_projects_channels:
-                    self.established_projects_channels.append(ch)
-            except Exception:
-                pass
+        for label, ids, target in (
+            ("Main (DISCORD_CHANNEL_ID)", config.DISCORD_CHANNEL_IDS, self.active_main_channels),
+            ("Escalation (ESCALATION_CHANNEL_ID)", config.ESCALATION_CHANNEL_IDS, self.active_escalation_channels),
+            ("New ≤30d (NEW_ACCS_CHANNEL_ID)", config.NEW_PROJECTS_CHANNEL_IDS, self.new_projects_channels),
+            ("Established 31-130d (OLDER_ACCS_CHANNEL_ID)", config.ESTABLISHED_PROJECTS_CHANNEL_IDS, self.established_projects_channels),
+        ):
+            for cid in ids:
+                ch = await self._resolve_configured_channel(cid, label)
+                if ch and ch not in target:
+                    target.append(ch)
 
         for row in guild_license.iter_active_subscriptions():
             for cid, lst in (
@@ -1042,6 +1042,15 @@ class BlockBrainBot(commands.Bot):
 
         print(f"📡 Channels loaded: {len(self.active_main_channels)} main, {len(self.active_escalation_channels)} escalation")
         print(f"   Age-based: {len(self.new_projects_channels)} new (≤30d), {len(self.established_projects_channels)} established (31-130d)")
+        # Discovery alerts route to the age-based channels (falling back to main).
+        # If BOTH are empty, every discovery is silently discarded — surface that
+        # loudly instead of letting scans run all day into the void.
+        if not self.new_projects_channels and not self.established_projects_channels:
+            print(
+                f"{self._get_log_prefix()} 🚨 NO DISCOVERY CHANNELS REACHABLE — brain-scan finds will be "
+                "DROPPED. Fix NEW_ACCS_CHANNEL_ID / OLDER_ACCS_CHANNEL_ID (or DISCORD_CHANNEL_ID) "
+                "and make sure the bot has 'View Channel' + 'Send Messages' there."
+            )
         n_tw = len(getattr(self.twitter, "_sessions", None) or [])
         if n_tw == 0:
             print(
