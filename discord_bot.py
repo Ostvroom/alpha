@@ -778,6 +778,17 @@ class BlockBrainBot(commands.Bot):
 
             engagement.init_db()
             self.add_view(TweetEngageView())
+            if engagement.LOG_ENABLED and engagement.LOG_CHANNEL_ID:
+                # Honour the configured flush cadence before starting.
+                self.engagement_log_flush.change_interval(
+                    seconds=max(5, int(engagement.LOG_FLUSH_SECONDS))
+                )
+                self.engagement_log_flush.start()
+                print(
+                    f"    [Engagement] Audit log → channel {engagement.LOG_CHANNEL_ID} "
+                    f"(batched every {engagement.LOG_FLUSH_SECONDS}s, "
+                    f"max {engagement.LOG_MAX_PER_FLUSH}/flush)"
+                )
         except Exception as e:
             print(f"    [Engagement] Setup failed: {e}")
         # Legacy button panels (old messages); new panels use ClaimRolesView dropdown
@@ -1937,6 +1948,72 @@ class BlockBrainBot(commands.Bot):
             traceback.print_exc()
         finally:
             self._end_twitter_job("BrainScan")
+
+    @tasks.loop(seconds=30)
+    async def engagement_log_flush(self):
+        """Post buffered engagement awards to the audit channel in batches.
+
+        Batched on purpose: message-activity can produce many awards a minute
+        while Discord allows only ~5 sends per 5s per channel. One message per
+        award would rate-limit the bot and bury the channel. Everything here is
+        best-effort — the ledger in engagement.db is the source of truth, so a
+        failed log post must never affect scoring.
+        """
+        try:
+            import engagement
+
+            if not engagement.LOG_ENABLED or not engagement.LOG_CHANNEL_ID:
+                return
+            entries, dropped = engagement.drain_log_entries(engagement.LOG_MAX_PER_FLUSH)
+            if not entries and not dropped:
+                return
+
+            ch = self.get_channel(engagement.LOG_CHANNEL_ID)
+            if ch is None:
+                try:
+                    ch = await self.fetch_channel(engagement.LOG_CHANNEL_ID)
+                except Exception as e:
+                    if self._should_log_channel_error(engagement.LOG_CHANNEL_ID):
+                        print(f"   ⚠️ Engagement log channel {engagement.LOG_CHANNEL_ID} unavailable: {e}")
+                    return
+
+            lines = []
+            total = 0
+            for e in entries:
+                total += int(e.get("points") or 0)
+                stamp = e["ts"].strftime("%H:%M:%S")
+                pts = int(e.get("points") or 0)
+                desc = str(e.get("description") or "")
+                lines.append(
+                    f"`{stamp}` <@{e['user_id']}> **{pts:+d}** · `{e['event_type']}`"
+                    + (f" · {desc}" if desc else "")
+                )
+            if dropped:
+                lines.append(f"*…{dropped} earlier entr{'y' if dropped == 1 else 'ies'} dropped (log backlog full)*")
+
+            backlog = engagement.log_backlog_size()
+            embed = discord.Embed(
+                title="📊 Engagement Log",
+                description="\n".join(lines)[:4000],
+                color=0x57F287 if total >= 0 else 0xED4245,
+                timestamp=datetime.now(timezone.utc),
+            )
+            footer = f"{len(entries)} event(s) · {total:+d} pts"
+            if backlog:
+                footer += f" · {backlog} queued"
+            embed.set_footer(text=footer)
+
+            # safe_send already carries global 429 backoff handling.
+            if hasattr(self, "safe_send"):
+                await self.safe_send(ch, embed=embed)
+            else:
+                await ch.send(embed=embed)
+        except Exception as e:
+            print(f"   ⚠️ Engagement log flush failed: {e}")
+
+    @engagement_log_flush.before_loop
+    async def _before_engagement_log_flush(self):
+        await self.wait_until_ready()
 
     @tasks.loop(hours=4)
     async def trending_report(self):

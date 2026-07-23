@@ -28,6 +28,7 @@ import logging
 import os
 import sqlite3
 import uuid
+from collections import deque
 from contextlib import closing
 from datetime import datetime, timezone
 from typing import Optional, Tuple
@@ -115,6 +116,70 @@ def _alpha_channel_ids() -> set:
         if part.isdigit():
             out.add(int(part))
     return out
+
+
+# --- Audit log buffer ------------------------------------------------------
+# Every award is mirrored to a Discord log channel, but NEVER one message per
+# award: message-activity alone can fire many awards a minute and Discord
+# allows only ~5 sends per 5s per channel. Awards are appended to a bounded
+# in-memory buffer and a background task flushes them in batches, so the log
+# can never rate-limit the bot or spam the channel.
+#
+# deque(maxlen) also gives free overflow protection: if the flusher ever
+# stalls, the oldest entries are dropped instead of growing memory without
+# bound. Dropped entries are counted and surfaced in the next flush.
+LOG_CHANNEL_ID = _env_int("ENGAGE_LOG_CHANNEL_ID", 1529887810943975545)
+LOG_FLUSH_SECONDS = _env_int("ENGAGE_LOG_FLUSH_SECONDS", 30)
+LOG_MAX_PER_FLUSH = _env_int("ENGAGE_LOG_MAX_PER_FLUSH", 20)
+LOG_BUFFER_MAX = _env_int("ENGAGE_LOG_BUFFER_MAX", 500)
+LOG_ENABLED = (os.getenv("ENGAGE_LOG_ENABLED", "1") or "1").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+
+# deque.append/popleft are atomic under the GIL, so this is safe to touch from
+# both the event loop and the worker thread the message path runs on.
+_LOG_BUFFER: deque = deque(maxlen=LOG_BUFFER_MAX)
+_LOG_DROPPED = 0
+
+
+def queue_log_entry(discord_user_id: int, event_type: str, points: int,
+                    description: str = "") -> None:
+    """Buffer one award for the next batched flush. Never blocks, never raises."""
+    global _LOG_DROPPED
+    if not LOG_ENABLED:
+        return
+    try:
+        if len(_LOG_BUFFER) >= LOG_BUFFER_MAX:
+            _LOG_DROPPED += 1
+        _LOG_BUFFER.append(
+            {
+                "user_id": int(discord_user_id),
+                "event_type": str(event_type),
+                "points": int(points),
+                "description": str(description or "")[:120],
+                "ts": datetime.now(timezone.utc),
+            }
+        )
+    except Exception:
+        pass
+
+
+def drain_log_entries(max_n: int = 0) -> Tuple[list, int]:
+    """Pop up to max_n buffered entries. Returns (entries, dropped_since_last)."""
+    global _LOG_DROPPED
+    limit = int(max_n or LOG_MAX_PER_FLUSH)
+    out = []
+    while _LOG_BUFFER and len(out) < limit:
+        try:
+            out.append(_LOG_BUFFER.popleft())
+        except IndexError:
+            break
+    dropped, _LOG_DROPPED = _LOG_DROPPED, 0
+    return out, dropped
+
+
+def log_backlog_size() -> int:
+    return len(_LOG_BUFFER)
 
 
 def _conn() -> sqlite3.Connection:
@@ -291,6 +356,7 @@ def award(
         return False, "duplicate", 0
 
     _apply_points_to_account(uid, pts)
+    queue_log_entry(uid, event_type, pts, description)
     return True, "ok", pts
 
 
