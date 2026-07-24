@@ -296,6 +296,27 @@ def get_total_points(discord_user_id: int) -> int:
     return int(row["total"] or 0) if row else 0
 
 
+def get_staking_point_totals(discord_user_id: int) -> Tuple[int, int, int]:
+    """Return (combined, Discord activity, X raids) lifetime totals.
+
+    `x_engage` is the claim path for completing an X raid. Every other ledger
+    event is native Discord activity. The combined value remains available for
+    bot accounting, while the website displays the two channels separately.
+    """
+    with closing(_conn()) as conn:
+        row = conn.execute(
+            "SELECT "
+            "COALESCE(SUM(points_delta), 0) AS total, "
+            "COALESCE(SUM(CASE WHEN event_type = 'x_engage' THEN points_delta ELSE 0 END), 0) AS x_points, "
+            "COALESCE(SUM(CASE WHEN event_type <> 'x_engage' THEN points_delta ELSE 0 END), 0) AS discord_points "
+            "FROM engagement_events WHERE discord_user_id = ?",
+            (int(discord_user_id),),
+        ).fetchone()
+    if not row:
+        return 0, 0, 0
+    return int(row["total"] or 0), int(row["discord_points"] or 0), int(row["x_points"] or 0)
+
+
 def _alpha_score_snapshot(discord_user_id: int, guild_id: int = 0) -> int:
     try:
         import alpha_ping
@@ -316,7 +337,11 @@ def queue_staking_score_sync(discord_user_id: int, guild_id: int = 0) -> bool:
         from staking_sync import queue_score_sync
 
         uid = int(discord_user_id)
-        return queue_score_sync(uid, get_total_points(uid), _alpha_score_snapshot(uid, guild_id))
+        total, discord_points, x_raid_points = get_staking_point_totals(uid)
+        return queue_score_sync(
+            uid, total, discord_points, x_raid_points,
+            _alpha_score_snapshot(uid, guild_id),
+        )
     except Exception as error:
         logger.warning("[StakingSync] unable to queue user %s: %s", discord_user_id, error)
         return False
@@ -464,24 +489,58 @@ def get_activity_summary(days: int = 7) -> dict:
     }
 
 
+# Circuit breaker for the Supabase account push. When the backend is
+# unreachable (DNS failure / paused project / network), retrying on every
+# award wastes thread-pool workers and floods the logs with identical
+# multi-line errors. Once tripped, we skip the push for a cooldown window and
+# log a single concise line. Points are NOT lost: the ledger row is already
+# committed, so totals can be reconciled from the ledger when the backend
+# returns (get_total_points is the recoverable source of truth).
+_ACCT_BREAKER_UNTIL = 0.0
+_ACCT_BREAKER_COOLDOWN = _env_int("ENGAGE_ACCT_BREAKER_COOLDOWN_SEC", 120)
+_ACCT_BREAKER_LOGGED = False
+
+
 def _apply_points_to_account(discord_user_id: int, points: int) -> None:
     """Push the delta onto users.points via the website's existing chokepoint.
 
     Imported lazily: website_server is heavy (FastAPI app + route registration)
     and importing it at module scope would create an import cycle when the bot
-    boots. Failure here is logged, not raised — the ledger row is already
-    committed and remains the recoverable record of truth.
+    boots. Failure here is logged (once per outage), not raised — the ledger
+    row is already committed and remains the recoverable record of truth.
     """
+    global _ACCT_BREAKER_UNTIL, _ACCT_BREAKER_LOGGED
+    import time as _time
+
+    now = _time.time()
+    if now < _ACCT_BREAKER_UNTIL:
+        return  # backend known-down; skip quietly, ledger already has the row
+
     try:
         from website_server import _acct_add_points
 
         _acct_add_points(int(discord_user_id), int(points))
+        if _ACCT_BREAKER_LOGGED:
+            logger.warning("[Engagement] Account backend reachable again; resuming point sync.")
+        _ACCT_BREAKER_LOGGED = False
     except Exception as e:
-        logger.warning(
-            "[Engagement] Ledger written but account total not updated for %s: %s",
-            discord_user_id,
-            e,
-        )
+        _ACCT_BREAKER_UNTIL = now + max(15, _ACCT_BREAKER_COOLDOWN)
+        # One concise line per outage, not the full retry/URL stack every award.
+        msg = str(e)
+        if "Name or service not known" in msg or "NameResolutionError" in msg:
+            reason = "cannot resolve Supabase host (project paused/deleted or DNS down)"
+        elif "Max retries" in msg or "Connection" in msg:
+            reason = "Supabase unreachable (network/timeout)"
+        else:
+            reason = msg[:120]
+        if not _ACCT_BREAKER_LOGGED:
+            logger.warning(
+                "[Engagement] Point sync paused ~%ss — %s. Points still recorded in the "
+                "ledger and will reconcile when the backend returns.",
+                int(_ACCT_BREAKER_COOLDOWN),
+                reason,
+            )
+            _ACCT_BREAKER_LOGGED = True
 
 
 def award(
@@ -859,7 +918,8 @@ def sync_alpha_score(discord_user_id: int, guild_id: int = 0, kind: str = "alpha
     try:
         from staking_sync import queue_score_sync
 
-        return queue_score_sync(uid, get_total_points(uid), int(score))
+        total, discord_points, x_raid_points = get_staking_point_totals(uid)
+        return queue_score_sync(uid, total, discord_points, x_raid_points, int(score))
     except Exception as e:
         logger.warning("[Engagement] alpha_score sync failed for %s: %s", uid, e)
         return False
