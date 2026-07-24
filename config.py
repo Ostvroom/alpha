@@ -162,6 +162,9 @@ TRENDING_REPORT_SHOW_BANNER = os.getenv("TRENDING_REPORT_SHOW_BANNER", "0").stri
 # Sniper Filter Channel (Usually established projects or a dedicated feed)
 SNIPER_CHANNEL_ID = parse_channel_ids("OLDER_ACCS_CHANNEL_ID")[0] if parse_channel_ids("OLDER_ACCS_CHANNEL_ID") else (DISCORD_CHANNEL_IDS[0] if DISCORD_CHANNEL_IDS else 0)
 SNIPER_MAX_AGE_DAYS = 130
+# !hvastats: minimum scans before a zero-find hunter counts as "dead weight"
+# (safe to cut). Below this a hunter is just "not yet evaluated".
+HVA_PRUNE_MIN_SCANS = int(os.getenv("HVA_PRUNE_MIN_SCANS", "5") or 5)
 SNIPER_MAX_TWEETS = 4
 
 # If bio is shorter than this (characters), Discord discovery + escalation require obvious

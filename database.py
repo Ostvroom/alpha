@@ -1092,6 +1092,37 @@ def increment_hva_discovery(hva_handle):
     conn.commit()
     conn.close()
 
+
+def get_hva_productivity():
+    """Per-hunter productivity for curation decisions.
+
+    Unlike get_all_hvas() this also returns scan_count/error_count, which is
+    what separates a hunter that is genuinely unproductive (scanned many times,
+    found nothing → safe to cut) from one that simply hasn't been evaluated yet
+    (never scanned → keep). Returns dicts ordered by finds, then scans.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT hva_handle, COALESCE(discovery_count,0), COALESCE(scan_count,0), "
+        "COALESCE(error_count,0), COALESCE(status,'Active'), last_scan_at "
+        "FROM hva_stats ORDER BY COALESCE(discovery_count,0) DESC, "
+        "COALESCE(scan_count,0) DESC"
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            "handle": r[0],
+            "finds": int(r[1] or 0),
+            "scans": int(r[2] or 0),
+            "errors": int(r[3] or 0),
+            "status": r[4] or "Active",
+            "last_scan_at": r[5] or "",
+        }
+        for r in rows
+    ]
+
 def get_hva_priority_list():
     """Return all active HVAs with intelligent 5-tier priority system.
     

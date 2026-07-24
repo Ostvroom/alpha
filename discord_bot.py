@@ -4093,7 +4093,83 @@ class BrainCommands(commands.Cog):
 • Focus on removing HVAs scanned 3+ times with no results.
         """
         embed.add_field(name="📊 Summary", value=summary, inline=False)
-        
+
+        await self._send_brand_embed(ctx, embed)
+
+    @commands.command(name="hvastats", aliases=["hva_stats", "hunters"])
+    async def hva_stats_cmd(self, ctx):
+        """Rank hunters by productivity and flag which to cut vs keep.
+
+        The pruning signal is scan-weighted: a hunter with many scans and zero
+        finds is dead weight and safe to remove, whereas a hunter that has
+        never been scanned simply has no data yet and should be kept.
+        """
+        import database
+
+        rows = database.get_hva_productivity()
+        if not rows:
+            await ctx.send("No hunter stats recorded yet.")
+            return
+
+        total = len(rows)
+        producers = [r for r in rows if r["finds"] > 0]
+        # "dead weight" = scanned enough to judge, still found nothing.
+        cut_threshold = int(getattr(config, "HVA_PRUNE_MIN_SCANS", 5) or 5)
+        dead = [r for r in rows if r["finds"] == 0 and r["scans"] >= cut_threshold]
+        unevaluated = [r for r in rows if r["finds"] == 0 and r["scans"] < cut_threshold]
+        total_finds = sum(r["finds"] for r in rows)
+
+        embed = self.bot._create_premium_embed(
+            "🎯 Hunter Productivity", color=discord.Color.green()
+        )
+        embed.description = (
+            f"**{total}** hunters · **{len(producers)}** productive · "
+            f"**{total_finds}** total finds"
+        )
+
+        top = producers[:12]
+        if top:
+            embed.add_field(
+                name="🏆 Top Producers",
+                value="\n".join(
+                    f"**@{r['handle']}** — {r['finds']} finds "
+                    f"({r['scans']} scans"
+                    + (f", {r['errors']} err" if r['errors'] else "")
+                    + ")"
+                    for r in top
+                )[:1024],
+                inline=False,
+            )
+
+        if dead:
+            listed = ", ".join(f"@{r['handle']}" for r in dead[:20])
+            more = f" +{len(dead) - 20} more" if len(dead) > 20 else ""
+            embed.add_field(
+                name=f"🪦 Dead weight — cut these ({len(dead)})",
+                value=(
+                    f"0 finds after **{cut_threshold}+ scans**:\n{listed}{more}\n\n"
+                    f"→ `!velcor3 remove_hva @handle` and replace with active hunters."
+                )[:1024],
+                inline=False,
+            )
+        if unevaluated:
+            embed.add_field(
+                name=f"🌱 Not yet evaluated ({len(unevaluated)})",
+                value=f"Under {cut_threshold} scans — keep; no verdict yet.",
+                inline=False,
+            )
+
+        if not producers:
+            embed.add_field(
+                name="⚠️ Note",
+                value=(
+                    "No hunter has produced a find yet. If they've been scanned "
+                    "a lot, the follow-graph is saturated — refresh the hunter list."
+                ),
+                inline=False,
+            )
+
+        embed.set_footer(text=f"Cut threshold: {cut_threshold} scans · ranked by finds")
         await self._send_brand_embed(ctx, embed)
 
     @commands.command(name="stats")
