@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from staking_sync import RETRY_COOLDOWN_SECONDS, sign_body
+from staking_sync import RETRY_COOLDOWN_SECONDS, configuration_error, sign_body
 
 
 secret = "phase-six-test-secret-must-be-32-chars"
@@ -31,5 +31,6 @@ assert payload["xRaidPoints"] == -1
 assert payload["discordPoints"] + payload["xRaidPoints"] == payload["engagementPoints"]
 assert payload["alphaScore"] == -1
 assert 10 <= RETRY_COOLDOWN_SECONDS <= 300
+assert isinstance(configuration_error(), str)
 
 print("Staking score sync signing and payload safety verified.")

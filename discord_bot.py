@@ -777,11 +777,15 @@ class BlockBrainBot(commands.Bot):
         try:
             import engagement
             from trackers.tweet_watcher import TweetEngageView
+            from staking_sync import configuration_error as staking_sync_configuration_error
 
             engagement.init_db()
-            queued_scores = engagement.queue_all_staking_scores()
-            if queued_scores:
-                print(f"    [StakingSync] Queued {queued_scores} existing score profile(s)")
+            sync_error = staking_sync_configuration_error()
+            if sync_error:
+                print(f"    [StakingSync] DISABLED: {sync_error}")
+            else:
+                queued_scores = engagement.queue_all_staking_scores()
+                print(f"    [StakingSync] Enabled; queued {queued_scores} existing score profile(s)")
             self.add_view(TweetEngageView())
             if engagement.LOG_ENABLED and engagement.LOG_CHANNEL_ID:
                 # Honour the configured flush cadence before starting.

@@ -30,8 +30,19 @@ _WORKER_STARTED = False
 RETRY_COOLDOWN_SECONDS = 30
 
 
+def configuration_error() -> str:
+    """Return a safe startup diagnostic without exposing secret values."""
+    if not SYNC_URL:
+        return "STAKING_SYNC_URL is missing"
+    if not SYNC_URL.startswith("https://"):
+        return "STAKING_SYNC_URL must use https://"
+    if len(SYNC_SECRET) < 32:
+        return "DISCORD_SYNC_SECRET is missing or shorter than 32 characters"
+    return ""
+
+
 def enabled() -> bool:
-    return SYNC_URL.startswith("https://") and len(SYNC_SECRET) >= 32
+    return not configuration_error()
 
 
 def sign_body(body: str, timestamp: str, secret: str) -> str:
