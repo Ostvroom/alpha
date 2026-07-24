@@ -27,6 +27,7 @@ _PENDING: Dict[int, dict] = {}
 _LOCK = threading.Lock()
 _WAKE = threading.Event()
 _WORKER_STARTED = False
+RETRY_COOLDOWN_SECONDS = 30
 
 
 def enabled() -> bool:
@@ -60,7 +61,12 @@ def _post(payload: dict) -> bool:
                     (response.text or "")[:180],
                 )
                 return False
-            logger.warning("[StakingSync] HTTP %s (attempt %s/3)", response.status_code, attempt + 1)
+            logger.warning(
+                "[StakingSync] HTTP %s (attempt %s/3): %s",
+                response.status_code,
+                attempt + 1,
+                (response.text or "")[:180],
+            )
         except Exception as error:
             logger.warning("[StakingSync] request failed (attempt %s/3): %s", attempt + 1, error)
         if attempt < 2:
@@ -76,8 +82,27 @@ def _worker() -> None:
             with _LOCK:
                 if not _PENDING:
                     break
-                _user_id, payload = _PENDING.popitem()
-            _post(payload)
+                user_id, payload = _PENDING.popitem()
+            if _post(payload):
+                # Stay below the website route's per-minute safety limit even
+                # when a restart backfills a large Discord server.
+                time.sleep(0.12)
+                continue
+
+            # Never lose a score snapshot because the website is deploying or
+            # waking from a cold start. A newer queued snapshot wins; otherwise
+            # put this one back and pause the entire worker to avoid a 503 storm.
+            with _LOCK:
+                _PENDING.setdefault(user_id, payload)
+            logger.warning(
+                "[StakingSync] Website unavailable; preserving %s pending "
+                "snapshot(s) and retrying in %ss",
+                len(_PENDING),
+                RETRY_COOLDOWN_SECONDS,
+            )
+            time.sleep(RETRY_COOLDOWN_SECONDS)
+            _WAKE.set()
+            break
 
 
 def _ensure_worker() -> None:
