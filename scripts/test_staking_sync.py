@@ -13,6 +13,8 @@ timestamp = "1784808000"
 payload = {
     "discordUserId": "1529887810943975545",
     "engagementPoints": -3,
+    "discordPoints": -2,
+    "xRaidPoints": -1,
     "alphaScore": -1,
     "sourceUpdatedAt": "2026-07-23T12:00:00+00:00",
 }
@@ -24,6 +26,9 @@ assert signature == sign_body(body, timestamp, secret)
 assert signature != sign_body(body + " ", timestamp, secret)
 assert isinstance(payload["discordUserId"], str)
 assert payload["engagementPoints"] == -3
+assert payload["discordPoints"] == -2
+assert payload["xRaidPoints"] == -1
+assert payload["discordPoints"] + payload["xRaidPoints"] == payload["engagementPoints"]
 assert payload["alphaScore"] == -1
 assert 10 <= RETRY_COOLDOWN_SECONDS <= 300
 

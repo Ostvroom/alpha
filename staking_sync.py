@@ -115,7 +115,13 @@ def _ensure_worker() -> None:
         _WORKER_STARTED = True
 
 
-def queue_score_sync(discord_user_id: int, engagement_points: int, alpha_score: int) -> bool:
+def queue_score_sync(
+    discord_user_id: int,
+    engagement_points: int,
+    discord_points: int,
+    x_raid_points: int,
+    alpha_score: int,
+) -> bool:
     if not enabled():
         return False
     uid = int(discord_user_id or 0)
@@ -127,6 +133,8 @@ def queue_score_sync(discord_user_id: int, engagement_points: int, alpha_score: 
         # cannot represent them safely.
         "discordUserId": str(uid),
         "engagementPoints": int(engagement_points),
+        "discordPoints": int(discord_points),
+        "xRaidPoints": int(x_raid_points),
         "alphaScore": int(alpha_score),
         "sourceUpdatedAt": datetime.now(timezone.utc).isoformat(),
     }
