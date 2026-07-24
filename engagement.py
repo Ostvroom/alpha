@@ -331,6 +331,19 @@ def _alpha_score_snapshot(discord_user_id: int, guild_id: int = 0) -> int:
         return 0
 
 
+def _alpha_week_snapshot(discord_user_id: int, guild_id: int = 0) -> Tuple[int, int, str]:
+    try:
+        import alpha_ping
+
+        gid = int(guild_id or 0) or _primary_guild_id()
+        if gid <= 0:
+            return 0, 0, ""
+        return alpha_ping.get_weekly_poster_score(gid, int(discord_user_id), "alpha")
+    except Exception as error:
+        logger.warning("[StakingSync] weekly alpha lookup failed for %s: %s", discord_user_id, error)
+        return 0, 0, ""
+
+
 def queue_staking_score_sync(discord_user_id: int, guild_id: int = 0) -> bool:
     """Queue an absolute score snapshot without blocking a Discord handler."""
     try:
@@ -338,9 +351,11 @@ def queue_staking_score_sync(discord_user_id: int, guild_id: int = 0) -> bool:
 
         uid = int(discord_user_id)
         total, discord_points, x_raid_points = get_staking_point_totals(uid)
+        weekly_score, weekly_calls, week_start = _alpha_week_snapshot(uid, guild_id)
         return queue_score_sync(
             uid, total, discord_points, x_raid_points,
             _alpha_score_snapshot(uid, guild_id),
+            weekly_score, weekly_calls, week_start,
         )
     except Exception as error:
         logger.warning("[StakingSync] unable to queue user %s: %s", discord_user_id, error)
@@ -919,7 +934,11 @@ def sync_alpha_score(discord_user_id: int, guild_id: int = 0, kind: str = "alpha
         from staking_sync import queue_score_sync
 
         total, discord_points, x_raid_points = get_staking_point_totals(uid)
-        return queue_score_sync(uid, total, discord_points, x_raid_points, int(score))
+        weekly_score, weekly_calls, week_start = _alpha_week_snapshot(uid, gid)
+        return queue_score_sync(
+            uid, total, discord_points, x_raid_points, int(score),
+            weekly_score, weekly_calls, week_start,
+        )
     except Exception as e:
         logger.warning("[Engagement] alpha_score sync failed for %s: %s", uid, e)
         return False

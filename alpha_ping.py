@@ -7,7 +7,7 @@ import os
 import re
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
 
 import aiohttp
@@ -117,11 +117,35 @@ def init_alpha_tables() -> None:
             "score INTEGER DEFAULT 0, posts INTEGER DEFAULT 0, "
             "PRIMARY KEY (guild_id, user_id, kind))"
         )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS alpha_score_events ("
+            "event_key TEXT PRIMARY KEY, guild_id INTEGER NOT NULL, "
+            "user_id INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'alpha', "
+            "post_id INTEGER NOT NULL, voter_id INTEGER NOT NULL, "
+            "score_delta INTEGER NOT NULL, occurred_at TEXT NOT NULL)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_alpha_score_events_week "
+            "ON alpha_score_events (guild_id, kind, occurred_at, user_id)"
+        )
         try:
             _migrate_alpha_posts_kind(conn)
             _migrate_alpha_scores_kind(conn)
         except Exception:
             logger.exception("[AlphaPing] Schema migration for kind column failed")
+        # Seed one recoverable event for existing votes. Future vote changes
+        # append their net delta, so weekly seasons never reset lifetime score.
+        conn.execute(
+            "INSERT OR IGNORE INTO alpha_score_events "
+            "(event_key, guild_id, user_id, kind, post_id, voter_id, score_delta, occurred_at) "
+            "SELECT 'legacy:' || v.post_id || ':' || v.voter_id, "
+            "p.guild_id, p.poster_id, p.kind, v.post_id, v.voter_id, "
+            "CASE WHEN v.vote IN ('cook', 'good') THEN ? ELSE ? END, v.voted_at "
+            "FROM alpha_votes v JOIN alpha_posts p ON p.id = v.post_id "
+            "WHERE NOT EXISTS (SELECT 1 FROM alpha_score_events e "
+            "WHERE e.post_id = v.post_id AND e.voter_id = v.voter_id)",
+            (SCORE_COOK, SCORE_SKIP),
+        )
 
 
 def save_alpha_post(guild_id: int, channel_id: int, message_id: int,
@@ -169,6 +193,31 @@ def get_scored_user_ids(guild_id: int, kind: str = "alpha") -> list[int]:
     return [int(row["user_id"]) for row in rows]
 
 
+def get_weekly_poster_score(
+    guild_id: int,
+    user_id: int,
+    kind: str = "alpha",
+    now: Optional[datetime] = None,
+) -> Tuple[int, int, str]:
+    """Return (weekly score, weekly calls, Monday UTC date)."""
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    monday = (current - timedelta(days=current.weekday())).date()
+    week_start = f"{monday.isoformat()}T00:00:00+00:00"
+    with closing(_db()) as conn:
+        score_row = conn.execute(
+            "SELECT COALESCE(SUM(score_delta), 0) AS score "
+            "FROM alpha_score_events WHERE guild_id = ? AND user_id = ? "
+            "AND kind = ? AND occurred_at >= ?",
+            (int(guild_id), int(user_id), str(kind), week_start),
+        ).fetchone()
+        calls_row = conn.execute(
+            "SELECT COUNT(*) AS calls FROM alpha_posts WHERE guild_id = ? "
+            "AND poster_id = ? AND kind = ? AND posted_at >= ?",
+            (int(guild_id), int(user_id), str(kind), week_start),
+        ).fetchone()
+    return int(score_row["score"] or 0), int(calls_row["calls"] or 0), monday.isoformat()
+
+
 def _vote_delta(vote: str) -> int:
     # Keep votes from the previous Good/Not Alpha template compatible.
     return SCORE_COOK if vote in {"cook", "good"} else SCORE_SKIP
@@ -177,6 +226,7 @@ def _vote_delta(vote: str) -> int:
 def cast_vote(post_id: int, voter_id: int, vote: str,
               poster_id: int, guild_id: int, kind: str = "alpha") -> str:
     with closing(_db()) as conn, conn:
+        voted_at = datetime.now(timezone.utc).isoformat()
         existing = conn.execute(
             "SELECT vote FROM alpha_votes WHERE post_id = ? AND voter_id = ?",
             (post_id, voter_id),
@@ -188,7 +238,7 @@ def cast_vote(post_id: int, voter_id: int, vote: str,
             conn.execute(
                 "UPDATE alpha_votes SET vote = ?, voted_at = ? "
                 "WHERE post_id = ? AND voter_id = ?",
-                (vote, datetime.now(timezone.utc).isoformat(), post_id, voter_id),
+                (vote, voted_at, post_id, voter_id),
             )
             result = "changed"
         else:
@@ -196,7 +246,7 @@ def cast_vote(post_id: int, voter_id: int, vote: str,
             conn.execute(
                 "INSERT INTO alpha_votes (post_id, voter_id, vote, voted_at) "
                 "VALUES (?, ?, ?, ?)",
-                (post_id, voter_id, vote, datetime.now(timezone.utc).isoformat()),
+                (post_id, voter_id, vote, voted_at),
             )
             result = "new"
         conn.execute(
@@ -204,6 +254,13 @@ def cast_vote(post_id: int, voter_id: int, vote: str,
             "VALUES (?, ?, ?, ?, 0) ON CONFLICT(guild_id, user_id, kind) "
             "DO UPDATE SET score = score + ?",
             (guild_id, poster_id, kind, net, net),
+        )
+        conn.execute(
+            "INSERT INTO alpha_score_events "
+            "(event_key, guild_id, user_id, kind, post_id, voter_id, score_delta, occurred_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (f"vote:{post_id}:{voter_id}:{voted_at}", guild_id, poster_id,
+             kind, post_id, voter_id, net, voted_at),
         )
         return result
 

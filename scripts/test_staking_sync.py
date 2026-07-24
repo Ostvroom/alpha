@@ -16,6 +16,9 @@ payload = {
     "discordPoints": -2,
     "xRaidPoints": -1,
     "alphaScore": -1,
+    "alphaWeeklyScore": 7,
+    "alphaWeeklyCalls": 2,
+    "alphaWeekStart": "2026-07-20",
     "sourceUpdatedAt": "2026-07-23T12:00:00+00:00",
 }
 body = json.dumps(payload, separators=(",", ":"), sort_keys=True)
@@ -30,6 +33,9 @@ assert payload["discordPoints"] == -2
 assert payload["xRaidPoints"] == -1
 assert payload["discordPoints"] + payload["xRaidPoints"] == payload["engagementPoints"]
 assert payload["alphaScore"] == -1
+assert payload["alphaWeeklyScore"] == 7
+assert payload["alphaWeeklyCalls"] == 2
+assert payload["alphaWeekStart"] == "2026-07-20"
 assert 10 <= RETRY_COOLDOWN_SECONDS <= 300
 assert isinstance(configuration_error(), str)
 

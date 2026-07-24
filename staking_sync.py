@@ -132,6 +132,9 @@ def queue_score_sync(
     discord_points: int,
     x_raid_points: int,
     alpha_score: int,
+    alpha_weekly_score: int,
+    alpha_weekly_calls: int,
+    alpha_week_start: str,
 ) -> bool:
     if not enabled():
         return False
@@ -147,6 +150,9 @@ def queue_score_sync(
         "discordPoints": int(discord_points),
         "xRaidPoints": int(x_raid_points),
         "alphaScore": int(alpha_score),
+        "alphaWeeklyScore": int(alpha_weekly_score),
+        "alphaWeeklyCalls": max(0, int(alpha_weekly_calls)),
+        "alphaWeekStart": str(alpha_week_start),
         "sourceUpdatedAt": datetime.now(timezone.utc).isoformat(),
     }
     _ensure_worker()
