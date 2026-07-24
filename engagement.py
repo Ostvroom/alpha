@@ -321,10 +321,11 @@ def _alpha_score_snapshot(discord_user_id: int, guild_id: int = 0) -> int:
     try:
         import alpha_ping
 
-        gid = int(guild_id or 0) or _primary_guild_id()
-        if gid <= 0:
-            return 0
-        score, _posts = alpha_ping.get_poster_score(gid, int(discord_user_id), "alpha")
+        gid = int(guild_id or 0)
+        if gid > 0:
+            score, _posts = alpha_ping.get_poster_score(gid, int(discord_user_id), "alpha")
+        else:
+            score, _posts = alpha_ping.get_total_poster_score(int(discord_user_id), "alpha")
         return int(score or 0)
     except Exception as error:
         logger.warning("[StakingSync] alpha score lookup failed for %s: %s", discord_user_id, error)
@@ -335,10 +336,9 @@ def _alpha_week_snapshot(discord_user_id: int, guild_id: int = 0) -> Tuple[int, 
     try:
         import alpha_ping
 
-        gid = int(guild_id or 0) or _primary_guild_id()
-        if gid <= 0:
-            return 0, 0, ""
-        return alpha_ping.get_weekly_poster_score(gid, int(discord_user_id), "alpha")
+        return alpha_ping.get_weekly_poster_score(
+            int(guild_id or 0), int(discord_user_id), "alpha"
+        )
     except Exception as error:
         logger.warning("[StakingSync] weekly alpha lookup failed for %s: %s", discord_user_id, error)
         return 0, 0, ""
@@ -919,13 +919,13 @@ def sync_alpha_score(discord_user_id: int, guild_id: int = 0, kind: str = "alpha
     uid = int(discord_user_id or 0)
     if uid <= 0:
         return False
-    gid = int(guild_id or 0) or _primary_guild_id()
-    if gid <= 0:
-        return False
     try:
         import alpha_ping
 
-        score, _posts = alpha_ping.get_poster_score(gid, uid, kind)
+        # The website mirrors the member's Alpha reputation across every guild
+        # served by this bot. A guild-specific sync must never overwrite that
+        # aggregate (and meme votes must not replace Alpha Score).
+        score, _posts = alpha_ping.get_total_poster_score(uid, "alpha")
     except Exception as e:
         logger.warning("[Engagement] alpha score lookup failed for %s: %s", uid, e)
         return False
@@ -934,7 +934,7 @@ def sync_alpha_score(discord_user_id: int, guild_id: int = 0, kind: str = "alpha
         from staking_sync import queue_score_sync
 
         total, discord_points, x_raid_points = get_staking_point_totals(uid)
-        weekly_score, weekly_calls, week_start = _alpha_week_snapshot(uid, gid)
+        weekly_score, weekly_calls, week_start = _alpha_week_snapshot(uid, 0)
         return queue_score_sync(
             uid, total, discord_points, x_raid_points, int(score),
             weekly_score, weekly_calls, week_start,

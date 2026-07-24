@@ -183,6 +183,17 @@ def get_poster_score(guild_id: int, user_id: int, kind: str = "alpha") -> Tuple[
     return (row["score"], row["posts"]) if row else (0, 0)
 
 
+def get_total_poster_score(user_id: int, kind: str = "alpha") -> Tuple[int, int]:
+    """Aggregate a caller across every guild known to this bot instance."""
+    with closing(_db()) as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(score), 0) AS score, COALESCE(SUM(posts), 0) AS posts "
+            "FROM alpha_scores WHERE user_id = ? AND kind = ?",
+            (int(user_id), str(kind)),
+        ).fetchone()
+    return int(row["score"] or 0), int(row["posts"] or 0)
+
+
 def get_scored_user_ids(guild_id: int, kind: str = "alpha") -> list[int]:
     """Member IDs with an Alpha Score row, used for staking-site backfill."""
     with closing(_db()) as conn:
@@ -203,17 +214,19 @@ def get_weekly_poster_score(
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     monday = (current - timedelta(days=current.weekday())).date()
     week_start = f"{monday.isoformat()}T00:00:00+00:00"
+    guild_clause = "guild_id = ? AND " if int(guild_id or 0) > 0 else ""
+    score_params = ((int(guild_id),) if guild_clause else ()) + (int(user_id), str(kind), week_start)
+    call_params = ((int(guild_id),) if guild_clause else ()) + (int(user_id), str(kind), week_start)
     with closing(_db()) as conn:
         score_row = conn.execute(
-            "SELECT COALESCE(SUM(score_delta), 0) AS score "
-            "FROM alpha_score_events WHERE guild_id = ? AND user_id = ? "
-            "AND kind = ? AND occurred_at >= ?",
-            (int(guild_id), int(user_id), str(kind), week_start),
+            "SELECT COALESCE(SUM(score_delta), 0) AS score FROM alpha_score_events WHERE "
+            + guild_clause + "user_id = ? AND kind = ? AND occurred_at >= ?",
+            score_params,
         ).fetchone()
         calls_row = conn.execute(
-            "SELECT COUNT(*) AS calls FROM alpha_posts WHERE guild_id = ? "
-            "AND poster_id = ? AND kind = ? AND posted_at >= ?",
-            (int(guild_id), int(user_id), str(kind), week_start),
+            "SELECT COUNT(*) AS calls FROM alpha_posts WHERE "
+            + guild_clause + "poster_id = ? AND kind = ? AND posted_at >= ?",
+            call_params,
         ).fetchone()
     return int(score_row["score"] or 0), int(calls_row["calls"] or 0), monday.isoformat()
 
