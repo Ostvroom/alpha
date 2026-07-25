@@ -94,9 +94,14 @@ def _print_startup_paths() -> None:
 
 def _start_website_server() -> None:
     """
-    Start the FastAPI website server in a background daemon thread.
-    Runs in the same process as the bot so they share the same SQLite DB.
-    Port is controlled by the PORT env var (Render sets this automatically).
+    Minimal health endpoint so Render's web-service port check stays green.
+
+    The nerdsalpha.xyz site (FastAPI in website_server.py) was decoupled from
+    the bot — points now reach the staking website via staking_sync's signed
+    HTTP push, and the public site, if kept, is hosted separately. Render web
+    services still require SOMETHING bound to $PORT, so this serves a stdlib
+    HTTP server that returns 200 on every path. It pulls in no FastAPI /
+    uvicorn / Supabase weight — the bot process stays lean.
     """
     try:
         port = int(os.getenv("PORT", "8000") or 8000)
@@ -104,12 +109,31 @@ def _start_website_server() -> None:
         port = 8000
 
     try:
-        import uvicorn
-        from website_server import app  # import triggers database.init_db()
-        print(f"[Velcor3] Website server starting on port {port}", flush=True)
-        uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        class _Health(BaseHTTPRequestHandler):
+            def _ok(self):
+                body = b"Velcor3 bot online"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                self._ok()
+
+            def do_HEAD(self):
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass  # silence per-request access logging
+
+        print(f"[Velcor3] Health server on port {port} (website decoupled)", flush=True)
+        ThreadingHTTPServer(("0.0.0.0", port), _Health).serve_forever()
     except Exception as e:
-        print(f"[Velcor3] Website server failed to start: {e}", flush=True)
+        print(f"[Velcor3] Health server failed to start: {e}", flush=True)
 
 
 def _probe_discord_login_window(token: str) -> tuple[bool, float, str]:

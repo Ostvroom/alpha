@@ -504,58 +504,12 @@ def get_activity_summary(days: int = 7) -> dict:
     }
 
 
-# Circuit breaker for the Supabase account push. When the backend is
-# unreachable (DNS failure / paused project / network), retrying on every
-# award wastes thread-pool workers and floods the logs with identical
-# multi-line errors. Once tripped, we skip the push for a cooldown window and
-# log a single concise line. Points are NOT lost: the ledger row is already
-# committed, so totals can be reconciled from the ledger when the backend
-# returns (get_total_points is the recoverable source of truth).
-_ACCT_BREAKER_UNTIL = 0.0
-_ACCT_BREAKER_COOLDOWN = _env_int("ENGAGE_ACCT_BREAKER_COOLDOWN_SEC", 120)
-_ACCT_BREAKER_LOGGED = False
-
-
-def _apply_points_to_account(discord_user_id: int, points: int) -> None:
-    """Push the delta onto users.points via the website's existing chokepoint.
-
-    Imported lazily: website_server is heavy (FastAPI app + route registration)
-    and importing it at module scope would create an import cycle when the bot
-    boots. Failure here is logged (once per outage), not raised — the ledger
-    row is already committed and remains the recoverable record of truth.
-    """
-    global _ACCT_BREAKER_UNTIL, _ACCT_BREAKER_LOGGED
-    import time as _time
-
-    now = _time.time()
-    if now < _ACCT_BREAKER_UNTIL:
-        return  # backend known-down; skip quietly, ledger already has the row
-
-    try:
-        from website_server import _acct_add_points
-
-        _acct_add_points(int(discord_user_id), int(points))
-        if _ACCT_BREAKER_LOGGED:
-            logger.warning("[Engagement] Account backend reachable again; resuming point sync.")
-        _ACCT_BREAKER_LOGGED = False
-    except Exception as e:
-        _ACCT_BREAKER_UNTIL = now + max(15, _ACCT_BREAKER_COOLDOWN)
-        # One concise line per outage, not the full retry/URL stack every award.
-        msg = str(e)
-        if "Name or service not known" in msg or "NameResolutionError" in msg:
-            reason = "cannot resolve Supabase host (project paused/deleted or DNS down)"
-        elif "Max retries" in msg or "Connection" in msg:
-            reason = "Supabase unreachable (network/timeout)"
-        else:
-            reason = msg[:120]
-        if not _ACCT_BREAKER_LOGGED:
-            logger.warning(
-                "[Engagement] Point sync paused ~%ss — %s. Points still recorded in the "
-                "ledger and will reconcile when the backend returns.",
-                int(_ACCT_BREAKER_COOLDOWN),
-                reason,
-            )
-            _ACCT_BREAKER_LOGGED = True
+# NOTE: The bot no longer writes points into Supabase / the in-process
+# website. The append-only ledger (engagement_events) is the source of truth,
+# and totals are mirrored to the staking website purely through
+# staking_sync (HMAC-signed HTTP push). The old _apply_points_to_account() path
+# and its Supabase circuit breaker were removed when nerdsalpha.xyz was
+# decoupled from the bot.
 
 
 def award(
@@ -596,10 +550,10 @@ def award(
         # Same event_id already recorded — a retry, not a new award.
         return False, "duplicate", 0
 
-    # Mirror from the append-only ledger, not from the optional legacy account
-    # database. The HTTP work happens on a daemon thread.
+    # Mirror the ledger total to the staking website (HMAC push on a daemon
+    # thread — never blocks the caller). The ledger row above is already the
+    # source of truth, so this is best-effort.
     queue_staking_score_sync(uid)
-    _apply_points_to_account(uid, pts)
     queue_log_entry(uid, event_type, pts, description)
     return True, "ok", pts
 
@@ -888,12 +842,11 @@ def award_vote_received(poster_id: int, post_id: int, voter_id: int,
     )
 
 
-# --- Website sync: Alpha Score --------------------------------------------
-# Engagement points already reach the website: _acct_add_points() PATCHes
-# users.points in Supabase directly. Alpha Score does NOT — it lives only in
-# user_stats.db (alpha_scores), so the site can never see it. This pushes it
-# Alpha scores are keyed (guild_id, user_id, kind), while the staking profile
-# is global. Mirror the primary guild's "alpha" score through the signed API.
+# --- Staking-site sync: Alpha Score ---------------------------------------
+# Alpha scores live in user_stats.db (alpha_scores), keyed (guild_id, user_id,
+# kind). The staking profile is global, so the member's aggregate "alpha" score
+# is mirrored to the staking website through staking_sync's signed HTTP push —
+# no direct Supabase / in-process-website dependency.
 ALPHA_SYNC_ENABLED = (os.getenv("ENGAGE_SYNC_ALPHA_SCORE", "1") or "1").strip().lower() in (
     "1", "true", "yes", "on",
 )
