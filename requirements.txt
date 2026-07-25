@@ -13,8 +13,9 @@ web3
 base58
 # Keep compatible with Windows installs that lack script-write perms
 websockets>=11.0.3,<12
-fastapi
-uvicorn[standard]
-python-multipart
+# fastapi / uvicorn / python-multipart were only needed by the in-process
+# nerdsalpha.xyz site, which has been decoupled (see website/). The bot now
+# serves only a stdlib http.server health endpoint. If you host website/
+# separately, add them to that service's own requirements.
 telethon
 psycopg[binary]
