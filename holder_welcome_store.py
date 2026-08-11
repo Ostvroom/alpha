@@ -12,7 +12,7 @@ ensure_dirs()
 
 DB_FILE = str(DATA_DIR / "holder_welcomes.db")
 PG_DSN = (os.getenv("DATABASE_URL") or "").strip()
-SQLITE_FALLBACK = (os.getenv("HOLDER_WELCOME_SQLITE_FALLBACK") or "0").strip().lower() in (
+SQLITE_FALLBACK = (os.getenv("HOLDER_WELCOME_SQLITE_FALLBACK") or "1").strip().lower() in (
     "1",
     "true",
     "yes",
@@ -89,7 +89,7 @@ def _now_iso() -> str:
 def has_welcomed_holder(guild_id: int, user_id: int) -> bool:
     init_db()
     if not is_configured():
-        return True
+        return False
 
     if PG_DSN:
         conn = _conn_pg()
