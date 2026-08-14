@@ -1628,6 +1628,89 @@ class VelcorFeatures(commands.Cog):
         await self.on_member_join(member)
         await ctx.send("✅ Test complete. Check bot logs for details.")
 
+    @commands.command(
+        name="backfill_holder_welcomes",
+        aliases=["seed_holder_welcomes"],
+        help="Mark all CURRENT holders as already-welcomed, without sending any "
+             "message, so re-verification never re-triggers the welcome (Admin only)",
+    )
+    @commands.has_permissions(administrator=True)
+    async def backfill_holder_welcomes(self, ctx):
+        """One-time seed for existing holders.
+
+        The welcome-dedup store (holder_welcome_store) only gets a row when
+        on_member_update fires and sends a welcome. Anyone who was already a
+        verified holder before that system existed has no row — so if their
+        role is ever removed and re-applied (re-verification), they'd get a
+        fresh "welcome to the family" message despite already being a
+        longtime holder. This scans current role-holders and marks them seen
+        WITHOUT sending anything, closing that gap.
+        """
+        if not HOLDER_VERIFIED_ROLE_ID:
+            await ctx.send("⚠️ HOLDER_VERIFIED_ROLE_ID is not configured.")
+            return
+
+        role = ctx.guild.get_role(HOLDER_VERIFIED_ROLE_ID)
+        if role is None:
+            await ctx.send(f"⚠️ Role {HOLDER_VERIFIED_ROLE_ID} not found in this server.")
+            return
+
+        try:
+            holder_welcome_store.init_db()
+        except Exception as e:
+            await ctx.send(f"⚠️ Could not initialize the welcome-tracking store: {e}")
+            return
+
+        status = await ctx.send(
+            f"🔎 Scanning current holders of {role.mention} — fetching the full "
+            "member list from Discord (not just the cache), this can take a "
+            "moment on large servers..."
+        )
+
+        already = 0
+        newly_marked = 0
+        skipped_bots = 0
+        errors = 0
+
+        # fetch_members hits the Discord API directly rather than relying on
+        # the local member cache, which matters here: chunk_guilds_at_startup
+        # is disabled (memory), so the cache may not hold every member who
+        # hasn't recently triggered an event.
+        async for member in ctx.guild.fetch_members(limit=None):
+            if role not in member.roles:
+                continue
+            if member.bot:
+                skipped_bots += 1
+                continue
+            try:
+                if holder_welcome_store.has_welcomed_holder(ctx.guild.id, member.id):
+                    already += 1
+                    continue
+                holder_welcome_store.mark_holder_seen(
+                    guild_id=ctx.guild.id,
+                    user_id=member.id,
+                    role_id=HOLDER_VERIFIED_ROLE_ID,
+                )
+                newly_marked += 1
+            except Exception as e:
+                errors += 1
+                print(f"[VelcorFeatures] Holder welcome backfill error for {member.id}: {e}")
+
+        summary = (
+            f"✅ Backfill complete for {role.mention}.\n"
+            f"• **{newly_marked}** existing holder(s) newly marked as already-welcomed "
+            f"(no message sent)\n"
+            f"• **{already}** already recorded — no change\n"
+            f"• **{skipped_bots}** bot(s) skipped\n"
+        )
+        if errors:
+            summary += f"• ⚠️ **{errors}** error(s) — check logs\n"
+        summary += (
+            "\nFrom now on, if any of these members' role is removed and "
+            "re-applied, they will **not** get a new welcome message."
+        )
+        await status.edit(content=summary)
+
     @commands.command(name="setup", help="Protect current channel from links (Admin only)")
     @commands.has_permissions(administrator=True)
     async def setup_protection(self, ctx):
