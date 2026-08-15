@@ -989,6 +989,7 @@ class ClaimRolesSelect(discord.ui.Select):
         selected = {int(v) for v in self.values if v.isdigit()}
 
         added: list[str] = []
+        removed: list[str] = []
         failed: list[str] = []
 
         for rid in claimable:
@@ -1001,6 +1002,12 @@ class ClaimRolesSelect(discord.ui.Select):
                 if want and not has:
                     await member.add_roles(role, reason="Claim roles dropdown")
                     added.append(role.mention)
+                elif has and not want:
+                    # Deselecting a previously-claimed role removes it. This
+                    # branch was missing entirely, so unchecking a role in the
+                    # dropdown silently did nothing.
+                    await member.remove_roles(role, reason="Claim roles dropdown")
+                    removed.append(role.mention)
             except discord.Forbidden:
                 failed.append(role.name)
             except discord.HTTPException:
@@ -1010,6 +1017,8 @@ class ClaimRolesSelect(discord.ui.Select):
             err_lines: list[str] = []
             if added:
                 err_lines.append("✅ **Added:** " + ", ".join(added))
+            if removed:
+                err_lines.append("➖ **Removed:** " + ", ".join(removed))
             err_lines.append("⚠️ Could not update: " + ", ".join(failed))
             await interaction.response.send_message("\n".join(err_lines), ephemeral=True)
         else:
@@ -1022,10 +1031,24 @@ class ClaimRolesSelect(discord.ui.Select):
                 await interaction.message.edit(view=view)
             except Exception:
                 pass
-            if added:
+            if added or removed:
+                msg_lines = []
+                if added:
+                    msg_lines.append("✅ **Claimed:** " + ", ".join(added))
+                if removed:
+                    msg_lines.append("➖ **Removed:** " + ", ".join(removed))
+                try:
+                    await interaction.followup.send("\n".join(msg_lines), ephemeral=True)
+                except Exception:
+                    pass
+            else:
+                # Nothing changed (e.g. re-selecting the exact same roles) —
+                # previously the user got silence here, which reads as the
+                # panel "not responding".
                 try:
                     await interaction.followup.send(
-                        "✅ **Claimed:** " + ", ".join(added), ephemeral=True
+                        "No changes — your roles already match your selection.",
+                        ephemeral=True,
                     )
                 except Exception:
                     pass
