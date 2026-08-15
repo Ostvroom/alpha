@@ -165,7 +165,11 @@ def apply_claim_roles_branding(embed: discord.Embed) -> None:
     color = int(getattr(config, "CLAIM_ROLES_EMBED_COLOR", 0x7C3AED) or 0x7C3AED)
     embed.color = color
     author = f"🎭  {brand} · Role picker"
-    footer = f"{brand} · React to claim · remove reaction to unclaim"
+    # This panel uses the dropdown below, not message reactions — the footer
+    # used to say "React to claim / remove reaction to unclaim", which
+    # described a different mechanism than the one actually on the panel and
+    # was part of why the flow read as confusing.
+    footer = f"{brand} · Pick a role below to claim it, pick it again to remove it"
     if icon:
         embed.set_author(name=author, icon_url=icon)
         embed.set_footer(text=footer, icon_url=icon)

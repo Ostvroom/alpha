@@ -940,7 +940,12 @@ def _select_option_emoji(
 
 
 class ClaimRolesSelect(discord.ui.Select):
-    """Multi-select dropdown — only adds selected roles."""
+    """Multi-select dropdown with toggle semantics.
+
+    Each role picked in a submission is toggled: added if the member doesn't
+    have it, removed if they do. Roles NOT picked are left untouched — no
+    need to re-select roles you already own to keep them.
+    """
 
     def __init__(
         self,
@@ -965,7 +970,7 @@ class ClaimRolesSelect(discord.ui.Select):
             options.append(discord.SelectOption(**opt_kw))
 
         super().__init__(
-            placeholder="Choose your roles…",
+            placeholder="Pick a role to claim it, pick it again to remove it…",
             min_values=0,
             max_values=max(1, len(options)),
             options=options,
@@ -984,30 +989,32 @@ class ClaimRolesSelect(discord.ui.Select):
             await interaction.response.send_message("Could not resolve member.", ephemeral=True)
             return
 
-        rows = load_ping_roles(self.guild_id)
-        claimable = {int(r["role_id"]) for r in rows}
         selected = {int(v) for v in self.values if v.isdigit()}
 
         added: list[str] = []
         removed: list[str] = []
         failed: list[str] = []
 
-        for rid in claimable:
+        # Toggle semantics: only roles picked in THIS submission are touched —
+        # pick one you don't have and it's added, pick one you already have
+        # and it's removed. Anything not picked is left completely alone.
+        #
+        # The previous "final desired state" model (compare the full
+        # selection against every claimable role) required re-selecting every
+        # role you already own on every single submission, or the omitted
+        # ones were silently removed — that's what looked like "claim role
+        # then other roles get removed" and made the panel feel broken.
+        for rid in selected:
             role = interaction.guild.get_role(rid)
             if not role:
                 continue
-            has = role in member.roles
-            want = rid in selected
             try:
-                if want and not has:
-                    await member.add_roles(role, reason="Claim roles dropdown")
-                    added.append(role.mention)
-                elif has and not want:
-                    # Deselecting a previously-claimed role removes it. This
-                    # branch was missing entirely, so unchecking a role in the
-                    # dropdown silently did nothing.
-                    await member.remove_roles(role, reason="Claim roles dropdown")
+                if role in member.roles:
+                    await member.remove_roles(role, reason="Claim roles dropdown (toggle off)")
                     removed.append(role.mention)
+                else:
+                    await member.add_roles(role, reason="Claim roles dropdown (toggle on)")
+                    added.append(role.mention)
             except discord.Forbidden:
                 failed.append(role.name)
             except discord.HTTPException:
@@ -1117,10 +1124,10 @@ def build_claim_roles_embed(
     embed.add_field(
         name="How to claim",
         value=(
-            "1️⃣ Open **Choose your roles…** below\n"
-            "2️⃣ Tick every role you want (multi-select)\n"
-            "3️⃣ Submit — selected roles are added\n"
-            "4️⃣ Open again anytime to claim more"
+            "1️⃣ Open the dropdown below\n"
+            "2️⃣ Pick a role — if you don't have it, you'll get it\n"
+            "3️⃣ Pick it again anytime to remove it\n"
+            "Only the roles you pick are changed — everything else stays as-is."
         ),
         inline=False,
     )
