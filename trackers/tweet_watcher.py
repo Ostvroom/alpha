@@ -207,26 +207,40 @@ def _tweet_url(tweet: Any, user: Any) -> str:
     return ""
 
 
+ENGAGE_START_CUSTOM_ID = "tweet_engage_start"
 ENGAGE_CLAIM_CUSTOM_ID = "tweet_engage_claim"
 
 
 class TweetEngageView(View):
-    """🚀 link-button (opens X) + ✅ claim button (bot-detectable).
+    """🚀 start button (tracked) + ✅ claim button (gated on the start).
 
-    The link button is handled entirely client-side by Discord — the bot never
-    receives an interaction for it, so it can never award points. The claim
-    button carries a STATIC custom_id and resolves its tweet from
-    interaction.message.id, which keeps the view restart-safe: registering one
-    zero-state instance at boot is enough for Discord to route clicks on every
-    previously-posted message.
+    "Engage on X" used to be a link-style button. Discord handles those
+    entirely client-side — the bot never receives an interaction for one — so
+    the claim button had no way to know whether anyone had clicked it, or how
+    fast. It's now a REGULAR tracked button: clicking it records a start time
+    and hands back the real link in an ephemeral follow-up (link buttons work
+    fine inside ephemeral replies, so the "opens directly" experience is
+    preserved, just one step later). The claim button then refuses to pay out
+    unless a start was recorded AND enough time has passed to have plausibly
+    engaged — this closes the loop where "I Engaged" could be clicked with
+    zero interaction at all.
+
+    Both buttons carry STATIC custom_ids and resolve their tweet from
+    interaction.message.id, which keeps the view restart-safe: registering
+    one zero-state instance at boot is enough for Discord to route clicks on
+    every previously-posted message.
     """
 
-    def __init__(self, tweet_url: str = "", claim_count: int = 0) -> None:
+    def __init__(self, claim_count: int = 0) -> None:
         super().__init__(timeout=None)
-        if tweet_url:
-            self.add_item(
-                Button(style=discord.ButtonStyle.link, label="🚀 Engage on X", url=tweet_url)
-            )
+        self.start_button = Button(
+            style=discord.ButtonStyle.primary,
+            label="🚀 Engage on X",
+            custom_id=ENGAGE_START_CUSTOM_ID,
+        )
+        self.start_button.callback = self._on_start
+        self.add_item(self.start_button)
+
         label = f"✅ I Engaged ({claim_count})" if claim_count else "✅ I Engaged"
         self.claim_button = Button(
             style=discord.ButtonStyle.success,
@@ -235,6 +249,32 @@ class TweetEngageView(View):
         )
         self.claim_button.callback = self._on_claim
         self.add_item(self.claim_button)
+
+    async def _on_start(self, interaction: discord.Interaction) -> None:
+        import engagement
+
+        row = engagement.get_tweet_for_message(interaction.message.id)
+        if not row:
+            await interaction.response.send_message(
+                "This alert is no longer active.", ephemeral=True
+            )
+            return
+
+        tweet_id = str(row.get("tweet_id") or "")
+        url = str(row.get("tweet_url") or "")
+        engagement.record_engage_start(interaction.user.id, tweet_id)
+
+        link_view = View(timeout=180)
+        if url:
+            link_view.add_item(
+                Button(style=discord.ButtonStyle.link, label="Open the post", emoji="🔗", url=url)
+            )
+        await interaction.response.send_message(
+            "Tap below to open the post — actually check it out, then come back here "
+            f"and tap **✅ I Engaged** (unlocks in ~{engagement.MIN_ENGAGE_DELAY_SEC}s).",
+            view=link_view,
+            ephemeral=True,
+        )
 
     async def _on_claim(self, interaction: discord.Interaction) -> None:
         import engagement
@@ -251,6 +291,12 @@ class TweetEngageView(View):
 
         if ok:
             msg = f"✅ **+{pts} points** — thanks for engaging!"
+        elif reason == "not_started":
+            msg = "Tap **🚀 Engage on X** first, then come back and tap this button."
+        elif reason == "too_fast":
+            elapsed = engagement.get_engage_start_elapsed(interaction.user.id, tweet_id) or 0.0
+            remaining = max(1, int(engagement.MIN_ENGAGE_DELAY_SEC - elapsed))
+            msg = f"Hold on — give it about {remaining} more second(s), then tap this again."
         elif reason == "already_claimed":
             msg = "You already claimed this tweet."
         elif reason in ("daily_cap", "global_cap"):
@@ -272,10 +318,17 @@ class TweetEngageView(View):
                 pass
 
 
-def _build_engage_view(tweet_url: str) -> Optional[View]:
-    """Engage link-button plus the claim button."""
+def _build_engage_view(tweet_url: str = "") -> Optional[View]:
+    """Engage-start button plus the claim button.
+
+    tweet_url is accepted for call-site compatibility but no longer needed
+    by the view itself — both buttons resolve their tweet dynamically from
+    interaction.message.id via engagement.get_tweet_for_message() once the
+    message exists, which is what makes the persistent zero-state view
+    (registered once at boot) work for every previously-posted message.
+    """
     try:
-        return TweetEngageView(tweet_url=tweet_url or "")
+        return TweetEngageView()
     except Exception:
         return None
 
@@ -746,7 +799,7 @@ async def check_watched_accounts(
                     try:
                         import engagement
 
-                        engagement.register_tweet_post(sent.id, tid, handle)
+                        engagement.register_tweet_post(sent.id, tid, handle, tweet_url)
                     except Exception as e:
                         print(f"[TweetWatcher] Could not register engage post: {e}")
 
@@ -839,15 +892,24 @@ async def post_latest_for_handle(
     content = f"TweetWatcher: latest fetched post/RT for `@{h}`"
 
     if hasattr(bot, "safe_send"):
-        await bot.safe_send(channel, content=content, embeds=embeds, view=view)
+        sent = await bot.safe_send(channel, content=content, embeds=embeds, view=view)
         for continuation in _text_continuations(latest):
             await bot.safe_send(channel, content=continuation)
     else:
-        await channel.send(content=content, embeds=embeds, view=view)
+        sent = await channel.send(content=content, embeds=embeds, view=view)
         for continuation in _text_continuations(latest):
             await channel.send(content=continuation)
 
     tid = _tweet_id(latest)
+    # Without this, the Engage/Claim buttons on a test-posted message would
+    # show "no longer active" — they resolve their tweet from the message id.
+    if sent is not None and tid:
+        try:
+            import engagement
+
+            engagement.register_tweet_post(sent.id, tid, h, tweet_url)
+        except Exception as e:
+            print(f"[TweetWatcher] Could not register engage post (test): {e}")
     if update_state and tid:
         uid = getattr(user, "id", "") or getattr(user, "user_id", "") or ""
         database.upsert_tweet_watcher_state(h, str(uid), tid)

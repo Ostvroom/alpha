@@ -232,6 +232,10 @@ def init_db() -> None:
             )
             """
         )
+        # Older installs predate the tweet_url column.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(tweet_engage_posts)")}
+        if "tweet_url" not in cols:
+            conn.execute("ALTER TABLE tweet_engage_posts ADD COLUMN tweet_url TEXT")
         # The dedup guard: one claim per member per tweet, enforced by the PK.
         conn.execute(
             """
@@ -239,6 +243,22 @@ def init_db() -> None:
                 discord_user_id INTEGER NOT NULL,
                 tweet_id TEXT NOT NULL,
                 claimed_at TEXT NOT NULL,
+                PRIMARY KEY (discord_user_id, tweet_id)
+            )
+            """
+        )
+        # Records when a member clicked "Engage on X" for a tweet, so the
+        # claim button can require (a) that they actually started, and
+        # (b) that enough time has passed to have plausibly engaged — without
+        # this, "I Engaged" could be clicked with zero interaction at all,
+        # since Discord never tells the bot when a link-style button is
+        # clicked (it's handled entirely client-side).
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tweet_engage_starts (
+                discord_user_id INTEGER NOT NULL,
+                tweet_id TEXT NOT NULL,
+                started_at REAL NOT NULL,
                 PRIMARY KEY (discord_user_id, tweet_id)
             )
             """
@@ -560,7 +580,8 @@ def award(
 
 # --- X engage claim path ---------------------------------------------------
 
-def register_tweet_post(message_id: int, tweet_id: str, handle: str = "") -> None:
+def register_tweet_post(message_id: int, tweet_id: str, handle: str = "",
+                        tweet_url: str = "") -> None:
     """Remember which tweet a posted alert message advertises."""
     if not message_id or not tweet_id:
         return
@@ -568,8 +589,9 @@ def register_tweet_post(message_id: int, tweet_id: str, handle: str = "") -> Non
         with closing(_conn()) as conn, conn:
             conn.execute(
                 "INSERT OR REPLACE INTO tweet_engage_posts "
-                "(message_id, tweet_id, handle, posted_at) VALUES (?, ?, ?, ?)",
-                (int(message_id), str(tweet_id), str(handle or ""), _utc_now_iso()),
+                "(message_id, tweet_id, handle, posted_at, tweet_url) VALUES (?, ?, ?, ?, ?)",
+                (int(message_id), str(tweet_id), str(handle or ""), _utc_now_iso(),
+                 str(tweet_url or "")),
             )
     except Exception as e:
         logger.warning("[Engagement] register_tweet_post failed: %s", e)
@@ -578,10 +600,70 @@ def register_tweet_post(message_id: int, tweet_id: str, handle: str = "") -> Non
 def get_tweet_for_message(message_id: int) -> Optional[dict]:
     with closing(_conn()) as conn:
         row = conn.execute(
-            "SELECT message_id, tweet_id, handle FROM tweet_engage_posts WHERE message_id = ?",
+            "SELECT message_id, tweet_id, handle, tweet_url FROM tweet_engage_posts "
+            "WHERE message_id = ?",
             (int(message_id),),
         ).fetchone()
-    return dict(row) if row else None
+    if not row:
+        return None
+    out = dict(row)
+    if not out.get("tweet_url"):
+        # Older rows / pre-migration fallback. X resolves any handle for a
+        # valid status id, so "i" as a placeholder handle still works.
+        out["tweet_url"] = f"https://x.com/i/status/{out.get('tweet_id', '')}"
+    return out
+
+
+# --- X engage "did they actually click through" gate -----------------------
+# Discord never tells the bot when a link-style button is clicked (handled
+# entirely client-side), so "Engage on X" is a REGULAR tracked button that
+# records a start time and hands the member the real link in an ephemeral
+# follow-up. The claim button then requires a recorded start AND a minimum
+# elapsed time before it will pay out — without this, "I Engaged" could be
+# clicked with zero interaction at all.
+MIN_ENGAGE_DELAY_SEC = _env_int("ENGAGE_MIN_DELAY_SEC", 20)
+
+
+def record_engage_start(discord_user_id: int, tweet_id: str) -> None:
+    uid = int(discord_user_id or 0)
+    tid = str(tweet_id or "").strip()
+    if uid <= 0 or not tid:
+        return
+    try:
+        import time as _time
+
+        with closing(_conn()) as conn, conn:
+            conn.execute(
+                "INSERT INTO tweet_engage_starts (discord_user_id, tweet_id, started_at) "
+                "VALUES (?, ?, ?) ON CONFLICT(discord_user_id, tweet_id) "
+                "DO UPDATE SET started_at = excluded.started_at",
+                (uid, tid, _time.time()),
+            )
+    except Exception as e:
+        logger.warning("[Engagement] record_engage_start failed: %s", e)
+
+
+def get_engage_start_elapsed(discord_user_id: int, tweet_id: str) -> Optional[float]:
+    """Seconds since the member clicked 'Engage on X' for this tweet, or None
+    if they never clicked it."""
+    uid = int(discord_user_id or 0)
+    tid = str(tweet_id or "").strip()
+    if uid <= 0 or not tid:
+        return None
+    try:
+        import time as _time
+
+        with closing(_conn()) as conn:
+            row = conn.execute(
+                "SELECT started_at FROM tweet_engage_starts "
+                "WHERE discord_user_id = ? AND tweet_id = ?",
+                (uid, tid),
+            ).fetchone()
+        if not row:
+            return None
+        return max(0.0, _time.time() - float(row["started_at"] or 0.0))
+    except Exception:
+        return None
 
 
 def get_engage_claim_count(tweet_id: str) -> int:
@@ -597,13 +679,19 @@ def get_engage_claim_count(tweet_id: str) -> int:
 def claim_tweet_engagement(discord_user_id: int, tweet_id: str) -> Tuple[bool, str, int]:
     """Honour-system claim for engaging with a watched tweet.
 
-    Returns (ok, reason, points). Reasons: ok | already_claimed | daily_cap |
-    global_cap | duplicate | invalid | error.
+    Returns (ok, reason, points). Reasons: ok | not_started | too_fast |
+    already_claimed | daily_cap | global_cap | duplicate | invalid | error.
     """
     uid = int(discord_user_id)
     tid = str(tweet_id or "").strip()
     if uid <= 0 or not tid:
         return False, "invalid", 0
+
+    elapsed = get_engage_start_elapsed(uid, tid)
+    if elapsed is None:
+        return False, "not_started", 0
+    if elapsed < MIN_ENGAGE_DELAY_SEC:
+        return False, "too_fast", 0
 
     # Reserve the (user, tweet) pair first. The PK is the real dedup guard and
     # makes concurrent double-clicks safe: the second INSERT loses the race.
