@@ -440,12 +440,37 @@ class BlockBrainBot(commands.Bot):
         intents.message_content = True
         intents.members = True
         intents.guild_reactions = True
-        super().__init__(command_prefix="!velcor3 ", intents=intents, help_command=None)
+        # Memory controls (Render Starter = 512MB). With members intent on,
+        # discord.py by default downloads and caches EVERY member of every
+        # guild at startup and holds them in RAM — the usual cause of OOM
+        # kills on a large community. We still receive member events
+        # (on_member_join, activity tracking) either way; disabling chunking
+        # only means guild.members isn't pre-populated (members are cached
+        # lazily as they interact, or fetched on demand). max_messages caps
+        # the per-process message cache (discord.py default is 1000).
+        _chunk = str(os.getenv("DISCORD_CHUNK_GUILDS", "0")).strip().lower() in ("1", "true", "yes", "on")
+        try:
+            _max_msgs = int(os.getenv("DISCORD_MAX_MESSAGES", "200") or 200)
+        except ValueError:
+            _max_msgs = 200
+        super().__init__(
+            command_prefix="!velcor3 ",
+            intents=intents,
+            help_command=None,
+            chunk_guilds_at_startup=_chunk,
+            max_messages=_max_msgs,
+        )
         _wc = int(getattr(config, "TWEET_WATCHER_SESSION_COUNT", 2))
         _split = int(getattr(config, "TWEET_WATCHER_PROXY_SPLIT", 8))
         # Probe total available sessions once to decide if we can safely split.
+        # This builds a full throwaway pool (one twikit client per session),
+        # so drop it immediately after counting — otherwise its curl transports
+        # linger in RAM alongside the real brain+watcher pools.
         _probe = TwitterClient(label="probe")
         _total = len(getattr(_probe, "_sessions", []) or [])
+        del _probe
+        import gc as _gc
+        _gc.collect()
         if getattr(config, "TWEET_WATCHER_SEPARATE_POOL", True) and _total > _wc:
             # Brain keeps the first (total - N) sessions; watcher reserves the last N.
             self.twitter = TwitterClient(
@@ -1605,6 +1630,8 @@ class BlockBrainBot(commands.Bot):
                 )
                 return
 
+            database.set_brain_scan_attempt_started()
+
             current_hour = datetime.now().hour
             is_off_peak = config.OFF_PEAK_HOURS[0] <= current_hour < config.OFF_PEAK_HOURS[1]
             scan_mode = "🌙 OFF-PEAK" if is_off_peak else "☀️ PEAK"
@@ -1714,6 +1741,7 @@ class BlockBrainBot(commands.Bot):
                         if not hva_id:
                             print(f"      ⚠️ Skip @{hva_handle}: Could not resolve User ID.")
                             scan_error_count += 1
+                            database.update_hva_scan_timestamp(hva_handle)
                             continue
 
                         await self._yield_to_tweet_watcher(f"before @{hva_handle} following")
@@ -2779,6 +2807,17 @@ class BlockBrainBot(commands.Bot):
                     print(
                         f"{self._get_log_prefix()} BrainScan startup catch-up skipped; "
                         f"next scheduled scan is in {int(secs_until_next)}s."
+                    )
+                    return
+
+            min_gap = float(getattr(config, "BRAIN_SCAN_STARTUP_CATCHUP_MIN_GAP_SEC", 1800.0) or 0.0)
+            if min_gap > 0:
+                secs_since = database.get_seconds_since_last_brain_scan_attempt()
+                if secs_since is not None and secs_since < min_gap:
+                    print(
+                        f"{self._get_log_prefix()} BrainScan startup catch-up skipped; a scan was "
+                        f"already attempted {int(secs_since)}s ago (likely an earlier deploy of this "
+                        f"same rollout), min gap is {int(min_gap)}s."
                     )
                     return
 

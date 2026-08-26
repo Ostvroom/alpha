@@ -460,6 +460,11 @@ BRAIN_SCAN_MAX_COOLDOWN_WAIT_SEC = max(0.0, min(7200.0, _env_float("BRAIN_SCAN_M
 BRAIN_SCAN_STARTUP_CATCHUP = _env_flag("BRAIN_SCAN_STARTUP_CATCHUP", "1")
 BRAIN_SCAN_STARTUP_CATCHUP_DELAY_SEC = max(0.0, min(1800.0, _env_float("BRAIN_SCAN_STARTUP_CATCHUP_DELAY_SEC", 180.0)))
 BRAIN_SCAN_STARTUP_CATCHUP_SKIP_IF_NEXT_WITHIN_SEC = max(0.0, min(3600.0, _env_float("BRAIN_SCAN_STARTUP_CATCHUP_SKIP_IF_NEXT_WITHIN_SEC", 900.0)))
+# If a BrainScan was already attempted (even if interrupted by a redeploy) more
+# recently than this many seconds ago, skip the startup catch-up run entirely.
+# Prevents a burst of redeploys during active development from repeatedly
+# restarting the scan from batch 1 and wasting proxy/scan budget.
+BRAIN_SCAN_STARTUP_CATCHUP_MIN_GAP_SEC = max(0.0, min(7200.0, _env_float("BRAIN_SCAN_STARTUP_CATCHUP_MIN_GAP_SEC", 1800.0)))
 
 # Twikit (cookie / web-style X traffic) — reduce 429 bursts and “all sessions blocked” cooldowns
 # Minimum pause before each Twikit call in the hot paths below (seconds).

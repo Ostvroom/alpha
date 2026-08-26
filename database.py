@@ -1932,6 +1932,52 @@ def update_hva_scan_timestamp(hva_handle):
     conn.close()
 
 
+def set_brain_scan_attempt_started():
+    """Record that a brain scan run started right now. Lets the startup
+    catch-up logic tell 'a scan was already attempted a few minutes ago
+    (then the process got redeployed)' apart from 'no scan has run in
+    hours' so a burst of redeploys doesn't keep restarting from batch 1."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    now = datetime.now(timezone.utc).isoformat()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS scan_run_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            last_attempt_at TEXT
+        )
+    """)
+    cursor.execute("""
+        INSERT INTO scan_run_state (id, last_attempt_at) VALUES (1, ?)
+        ON CONFLICT(id) DO UPDATE SET last_attempt_at = excluded.last_attempt_at
+    """, (now,))
+    conn.commit()
+    conn.close()
+
+
+def get_seconds_since_last_brain_scan_attempt() -> Optional[float]:
+    """Seconds since the last recorded brain-scan attempt, or None if none is recorded."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS scan_run_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            last_attempt_at TEXT
+        )
+    """)
+    cursor.execute("SELECT last_attempt_at FROM scan_run_state WHERE id = 1")
+    row = cursor.fetchone()
+    conn.close()
+    if not row or not row[0]:
+        return None
+    try:
+        last = datetime.fromisoformat(row[0])
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - last).total_seconds()
+    except Exception:
+        return None
+
+
 def prune_dead_hvas(min_scans: int = 50):
     """Mark HVAs as 'Dead' once they've been scanned `min_scans`+ times and still
     produced zero discoveries. Dead HVAs drop out of the scan rotation so budget
