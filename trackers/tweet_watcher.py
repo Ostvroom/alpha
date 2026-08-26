@@ -235,13 +235,13 @@ class TweetEngageView(View):
         super().__init__(timeout=None)
         self.start_button = Button(
             style=discord.ButtonStyle.primary,
-            label="🚀 Engage on X",
+            label="1️⃣ Engage on X",
             custom_id=ENGAGE_START_CUSTOM_ID,
         )
         self.start_button.callback = self._on_start
         self.add_item(self.start_button)
 
-        label = f"✅ I Engaged ({claim_count})" if claim_count else "✅ I Engaged"
+        label = f"2️⃣ I Engaged ({claim_count})" if claim_count else "2️⃣ I Engaged"
         self.claim_button = Button(
             style=discord.ButtonStyle.success,
             label=label,
@@ -253,8 +253,10 @@ class TweetEngageView(View):
     async def _on_start(self, interaction: discord.Interaction) -> None:
         import engagement
 
-        row = engagement.get_tweet_for_message(interaction.message.id)
+        uid, mid = interaction.user.id, interaction.message.id
+        row = engagement.get_tweet_for_message(mid)
         if not row:
+            print(f"[TweetWatcher] engage-start: message {mid} not in tweet_engage_posts (stale alert)")
             await interaction.response.send_message(
                 "This alert is no longer active.", ephemeral=True
             )
@@ -262,53 +264,73 @@ class TweetEngageView(View):
 
         tweet_id = str(row.get("tweet_id") or "")
         url = str(row.get("tweet_url") or "")
-        started = engagement.record_engage_start(interaction.user.id, tweet_id)
+        started = engagement.record_engage_start(uid, tweet_id)
+        print(f"[TweetWatcher] engage-start: user={uid} tweet={tweet_id} saved={started}")
         if not started:
             # Tell the truth instead of showing the "tap below, you're good"
             # message when the start wasn't actually saved — that mismatch
             # (looks successful, but Claim later says "not_started") is
             # exactly what made this confusing before.
             await interaction.response.send_message(
-                "Something went wrong starting this — please tap **🚀 Engage on X** again.",
+                "Something went wrong starting this — please tap **1️⃣ Engage on X** again.",
                 ephemeral=True,
             )
             return
 
-        link_view = View(timeout=180)
+        unlock_ts = int(time.time() + engagement.MIN_ENGAGE_DELAY_SEC)
+        embed = discord.Embed(
+            title="🚀 Step 1 complete",
+            description=(
+                "Tap the button below to open the post — actually **like, reply, "
+                "or repost it**, that's what earns the points.\n\n"
+                f"Then come back to **this alert** and tap **2️⃣ I Engaged** "
+                f"— unlocks <t:{unlock_ts}:R>."
+            ),
+            color=0xF5A623,
+        )
+        embed.set_footer(text="VELCOR3 · Engagement is tracked per-post — this button only unlocks this alert")
+        link_view = View(timeout=max(180, engagement.MIN_ENGAGE_DELAY_SEC + 60))
         if url:
             link_view.add_item(
                 Button(style=discord.ButtonStyle.link, label="Open the post", emoji="🔗", url=url)
             )
-        await interaction.response.send_message(
-            "Tap below to open the post — actually check it out, then come back here "
-            f"and tap **✅ I Engaged** (unlocks in ~{engagement.MIN_ENGAGE_DELAY_SEC}s).",
-            view=link_view,
-            ephemeral=True,
-        )
+        await interaction.response.send_message(embed=embed, view=link_view, ephemeral=True)
 
     async def _on_claim(self, interaction: discord.Interaction) -> None:
         import engagement
 
-        row = engagement.get_tweet_for_message(interaction.message.id)
+        uid, mid = interaction.user.id, interaction.message.id
+        row = engagement.get_tweet_for_message(mid)
         if not row:
+            print(f"[TweetWatcher] engage-claim: message {mid} not in tweet_engage_posts (stale alert)")
             await interaction.response.send_message(
                 "This alert is no longer claimable.", ephemeral=True
             )
             return
 
         tweet_id = str(row.get("tweet_id") or "")
-        ok, reason, pts = engagement.claim_tweet_engagement(interaction.user.id, tweet_id)
+        ok, reason, pts = engagement.claim_tweet_engagement(uid, tweet_id)
+        print(f"[TweetWatcher] engage-claim: user={uid} tweet={tweet_id} ok={ok} reason={reason} pts={pts}")
 
         if ok:
-            msg = f"✅ **+{pts} points** — thanks for engaging!"
+            msg = f"✅ **+{pts} points** — thanks for engaging! 🎉"
         elif reason == "not_started":
-            msg = "Tap **🚀 Engage on X** first, then come back and tap this button."
+            # Explicitly calls out "on THIS alert" — each tweet tracks its own
+            # start independently, so having engaged on a DIFFERENT alert
+            # earlier does not unlock this one. That mismatch is the most
+            # likely real-world cause of this message, not a bug.
+            msg = (
+                "👉 Tap **1️⃣ Engage on X** on **this alert** first, then come back "
+                "and tap **2️⃣ I Engaged**.\n"
+                "-# Each post is tracked separately — engaging on a different alert doesn't unlock this one."
+            )
         elif reason == "too_fast":
-            elapsed = engagement.get_engage_start_elapsed(interaction.user.id, tweet_id) or 0.0
-            remaining = max(1, int(engagement.MIN_ENGAGE_DELAY_SEC - elapsed))
-            msg = f"Hold on — give it about {remaining} more second(s), then tap this again."
+            elapsed = engagement.get_engage_start_elapsed(uid, tweet_id) or 0.0
+            remaining = max(1, engagement.MIN_ENGAGE_DELAY_SEC - elapsed)
+            unlock_ts = int(time.time() + remaining)
+            msg = f"⏳ Not yet — you can claim <t:{unlock_ts}:R>. Go make sure you've actually engaged with the post!"
         elif reason == "already_claimed":
-            msg = "You already claimed this tweet."
+            msg = "You already claimed this post."
         elif reason in ("daily_cap", "global_cap"):
             msg = (
                 f"Daily limit reached ({engagement.X_ENGAGE_DAILY_CAP}/"
