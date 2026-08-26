@@ -262,7 +262,17 @@ class TweetEngageView(View):
 
         tweet_id = str(row.get("tweet_id") or "")
         url = str(row.get("tweet_url") or "")
-        engagement.record_engage_start(interaction.user.id, tweet_id)
+        started = engagement.record_engage_start(interaction.user.id, tweet_id)
+        if not started:
+            # Tell the truth instead of showing the "tap below, you're good"
+            # message when the start wasn't actually saved — that mismatch
+            # (looks successful, but Claim later says "not_started") is
+            # exactly what made this confusing before.
+            await interaction.response.send_message(
+                "Something went wrong starting this — please tap **🚀 Engage on X** again.",
+                ephemeral=True,
+            )
+            return
 
         link_view = View(timeout=180)
         if url:

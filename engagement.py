@@ -624,11 +624,15 @@ def get_tweet_for_message(message_id: int) -> Optional[dict]:
 MIN_ENGAGE_DELAY_SEC = _env_int("ENGAGE_MIN_DELAY_SEC", 20)
 
 
-def record_engage_start(discord_user_id: int, tweet_id: str) -> None:
+def record_engage_start(discord_user_id: int, tweet_id: str) -> bool:
+    """Record that a member clicked 'Engage on X'. Returns whether it was
+    actually saved — the caller MUST check this before telling the member
+    they're good to go, otherwise a silent DB failure here looks to the
+    member exactly like "I clicked Engage but the bot says I didn't"."""
     uid = int(discord_user_id or 0)
     tid = str(tweet_id or "").strip()
     if uid <= 0 or not tid:
-        return
+        return False
     try:
         import time as _time
 
@@ -639,8 +643,12 @@ def record_engage_start(discord_user_id: int, tweet_id: str) -> None:
                 "DO UPDATE SET started_at = excluded.started_at",
                 (uid, tid, _time.time()),
             )
+        # Read back rather than trust the write blindly — belt-and-suspenders
+        # against a commit that silently no-ops (e.g. a stale connection).
+        return get_engage_start_elapsed(uid, tid) is not None
     except Exception as e:
-        logger.warning("[Engagement] record_engage_start failed: %s", e)
+        logger.warning("[Engagement] record_engage_start failed for user=%s tweet=%s: %s", uid, tid, e)
+        return False
 
 
 def get_engage_start_elapsed(discord_user_id: int, tweet_id: str) -> Optional[float]:
