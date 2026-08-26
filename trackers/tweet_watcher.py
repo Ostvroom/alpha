@@ -315,10 +315,31 @@ class TweetEngageView(View):
         if ok:
             msg = f"✅ **+{pts} points** — thanks for engaging! 🎉"
         elif reason == "not_started":
-            # Explicitly calls out "on THIS alert" — each tweet tracks its own
-            # start independently, so having engaged on a DIFFERENT alert
-            # earlier does not unlock this one. That mismatch is the most
-            # likely real-world cause of this message, not a bug.
+            # Live evidence from Render logs: users were repeatedly mashing
+            # ONLY this claim button, never touching "1️⃣ Engage on X" at all
+            # (6 claim attempts, zero engage-start events, same tweet). Rather
+            # than dead-ending them on an error every time, auto-start their
+            # timer on this very click. The anti-farming property survives —
+            # the clock only starts NOW, so an instant re-click still gets
+            # "too_fast" — but this self-heals "clicked the wrong button
+            # first" instead of requiring them to notice and go back.
+            url = str(row.get("tweet_url") or "")
+            auto_started = engagement.record_engage_start(uid, tweet_id)
+            print(f"[TweetWatcher] engage-claim: auto-start user={uid} tweet={tweet_id} saved={auto_started}")
+            if auto_started:
+                unlock_ts = int(time.time() + engagement.MIN_ENGAGE_DELAY_SEC)
+                link_view = View(timeout=max(180, engagement.MIN_ENGAGE_DELAY_SEC + 60))
+                if url:
+                    link_view.add_item(
+                        Button(style=discord.ButtonStyle.link, label="Open the post", emoji="🔗", url=url)
+                    )
+                await interaction.response.send_message(
+                    "⏱️ Timer started! Tap below to open the post and actually engage "
+                    f"with it, then tap **2️⃣ I Engaged** again <t:{unlock_ts}:R>.",
+                    view=link_view,
+                    ephemeral=True,
+                )
+                return
             msg = (
                 "👉 Tap **1️⃣ Engage on X** on **this alert** first, then come back "
                 "and tap **2️⃣ I Engaged**.\n"
