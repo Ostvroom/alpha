@@ -8,7 +8,7 @@ import re
 import sqlite3
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Tuple
+from typing import Optional, Sequence, Tuple
 
 import aiohttp
 import discord
@@ -24,9 +24,32 @@ _URL_RE = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
 _EVM_CA_RE = re.compile(r"0x[a-fA-F0-9]{40}")
 _SOLANA_CA_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 
-ALPHA_CHANNEL_ID = int(os.getenv("ALPHA_CHANNEL_ID", "1506376120252239872"))
+
+def _env_channel_ids(multi_name: str, single_name: str, default: str) -> tuple[int, ...]:
+    raw = os.getenv(multi_name) or os.getenv(single_name) or default
+    ids: list[int] = []
+    for part in re.split(r"[\s,]+", raw.strip()):
+        if not part:
+            continue
+        try:
+            channel_id = int(part)
+        except ValueError:
+            logger.warning("[AlphaPing] Ignoring invalid channel id %r in %s", part, multi_name)
+            continue
+        if channel_id > 0 and channel_id not in ids:
+            ids.append(channel_id)
+    return tuple(ids)
+
+
+ALPHA_CHANNEL_IDS = _env_channel_ids(
+    "ALPHA_CHANNEL_IDS", "ALPHA_CHANNEL_ID", "1506376120252239872"
+)
+ALPHA_CHANNEL_ID = ALPHA_CHANNEL_IDS[0] if ALPHA_CHANNEL_IDS else 0
 ALPHA_TARGET_ROLE_ID = int(os.getenv("ALPHA_TARGET_ROLE_ID", "1505260948707999774"))
-MEME_CHANNEL_ID = int(os.getenv("MEME_CHANNEL_ID", "1248943502084018186"))
+MEME_CHANNEL_IDS = _env_channel_ids(
+    "MEME_CHANNEL_IDS", "MEME_CHANNEL_ID", "1248943502084018186"
+)
+MEME_CHANNEL_ID = MEME_CHANNEL_IDS[0] if MEME_CHANNEL_IDS else 0
 # Optional — leave unset (0) to post meme calls without pinging a role.
 MEME_TARGET_ROLE_ID = int(os.getenv("MEME_TARGET_ROLE_ID", "0"))
 SCORE_COOK = int(os.getenv("ALPHA_SCORE_COOK", os.getenv("ALPHA_SCORE_GOOD", "1")))
@@ -671,12 +694,13 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
         bot.add_view(AlertVoteView())
 
     async def _post_alert(self, ctx: commands.Context, kind: str,
-                          channel_id: int, role_id: int,
+                          channel_ids: Sequence[int], role_id: int,
                           args: Optional[str], usage_name: str) -> None:
         if not ctx.guild:
             return
-        if ctx.channel.id != channel_id:
-            await ctx.send(f"Use this command in the {usage_name} channel.", delete_after=8)
+        allowed_channel_ids = {int(cid) for cid in channel_ids if int(cid) > 0}
+        if ctx.channel.id not in allowed_channel_ids:
+            await ctx.send(f"Use this command in a configured {usage_name} channel.", delete_after=8)
             return
 
         contract_address = None
@@ -780,13 +804,13 @@ class MarketAlertsCog(commands.Cog, name="MarketAlerts"):
     @commands.command(name="alpha")
     async def alpha(self, ctx: commands.Context,
                     *, args: Optional[str] = None) -> None:
-        await self._post_alert(ctx, "alpha", ALPHA_CHANNEL_ID, ALPHA_TARGET_ROLE_ID,
+        await self._post_alert(ctx, "alpha", ALPHA_CHANNEL_IDS, ALPHA_TARGET_ROLE_ID,
                                args, "alpha")
 
     @commands.command(name="meme")
     async def meme(self, ctx: commands.Context,
                    *, args: Optional[str] = None) -> None:
-        await self._post_alert(ctx, "meme", MEME_CHANNEL_ID, MEME_TARGET_ROLE_ID,
+        await self._post_alert(ctx, "meme", MEME_CHANNEL_IDS, MEME_TARGET_ROLE_ID,
                                args, "meme")
 
     async def _send_caller_profile(self, ctx: commands.Context, kind: str,
