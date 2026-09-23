@@ -700,6 +700,7 @@ async def check_watched_accounts(
     bot,
     twitter_client,
     channel: Optional[discord.TextChannel] = None,
+    fallback_twitter_client=None,
 ) -> int:
     """
     Check all watched accounts for new tweets and post to Discord.
@@ -744,24 +745,48 @@ async def check_watched_accounts(
             )
             continue
 
-        try:
-            tweets = await asyncio.wait_for(
-                _fetch_recent_tweets(twitter_client, handle, count=_fetch_count(), known_user_id=twitter_id),
+        async def _fetch_with_timeout(client):
+            return await asyncio.wait_for(
+                _fetch_recent_tweets(client, handle, count=_fetch_count(), known_user_id=twitter_id),
                 timeout=_handle_timeout_sec(),
             )
+
+        tweets: List[Any] = []
+        primary_timed_out = False
+        try:
+            tweets = await _fetch_with_timeout(twitter_client)
         except asyncio.TimeoutError:
-            _record_handle_failure(handle)
+            primary_timed_out = True
             print(
                 f"[TweetWatcher] Timeout fetching @{handle} after "
-                f"{_handle_timeout_sec():.0f}s; skipping this account for now."
+                f"{_handle_timeout_sec():.0f}s on watcher pool."
             )
-            continue
+
+        # The dedicated watcher pool is intentionally small. If its sessions are
+        # blocked, retry once through the larger BrainScan pool before declaring
+        # the handle dead or quarantining it.
+        if (
+            not tweets
+            and fallback_twitter_client is not None
+            and fallback_twitter_client is not twitter_client
+        ):
+            reason = "timeout" if primary_timed_out else "empty response"
+            print(f"[TweetWatcher] @{handle}: watcher pool {reason}; retrying on Brain pool.")
+            try:
+                tweets = await _fetch_with_timeout(fallback_twitter_client)
+            except asyncio.TimeoutError:
+                print(
+                    f"[TweetWatcher] Timeout fetching @{handle} after "
+                    f"{_handle_timeout_sec():.0f}s on Brain fallback pool."
+                )
+
         if not tweets:
             _record_handle_failure(handle)
             print(f"[TweetWatcher] No tweets returned for @{handle}; keeping last_seen unchanged.")
             continue
 
         _record_handle_success(handle)
+        database.touch_tweet_watcher_checked(handle)
 
         # Sort by tweet ID ascending (oldest first) so we post chronologically
         # Twitter tweet IDs are snowflakes — higher = newer
@@ -887,6 +912,7 @@ async def post_latest_for_handle(
     channel: Optional[discord.TextChannel] = None,
     *,
     update_state: bool = False,
+    fallback_twitter_client=None,
 ) -> tuple[bool, str]:
     """Fetch and post the latest tweet/RT for one watched handle as a manual test.
 
@@ -917,13 +943,27 @@ async def post_latest_for_handle(
 
     state = database.get_tweet_watcher_state(h) or {}
     twitter_id = str(state.get("twitter_id") or "").strip()
-    try:
-        tweets = await asyncio.wait_for(
-            _fetch_recent_tweets(twitter_client, h, count=_fetch_count(), known_user_id=twitter_id),
+    async def _fetch_with_timeout(client):
+        return await asyncio.wait_for(
+            _fetch_recent_tweets(client, h, count=_fetch_count(), known_user_id=twitter_id),
             timeout=_handle_timeout_sec(),
         )
+
+    try:
+        tweets = await _fetch_with_timeout(twitter_client)
     except asyncio.TimeoutError:
-        return False, f"Timed out fetching @{h} after {_handle_timeout_sec():.0f}s."
+        tweets = []
+
+    if (
+        not tweets
+        and fallback_twitter_client is not None
+        and fallback_twitter_client is not twitter_client
+    ):
+        print(f"[TweetWatcher] Test for @{h}: watcher pool failed; retrying on Brain pool.")
+        try:
+            tweets = await _fetch_with_timeout(fallback_twitter_client)
+        except asyncio.TimeoutError:
+            return False, f"Timed out fetching @{h} on both X session pools."
     if not tweets:
         return False, f"No tweets returned for @{h}."
 

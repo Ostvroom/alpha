@@ -522,6 +522,9 @@ TWITTER_BACKGROUND_EXCLUSIVE_MODE = _env_flag("TWITTER_BACKGROUND_EXCLUSIVE_MODE
 # ── Separate X session pools: TweetWatcher gets its own cookies/proxies so it can
 # never stall the Brain scan (and vice-versa). Comma-separated cookie filenames. ──
 TWEET_WATCHER_SEPARATE_POOL = _env_flag("TWEET_WATCHER_SEPARATE_POOL", "1")
+# A reserved watcher pool keeps alerts responsive, but two bad reserved sessions
+# must not make the watcher blind while the larger BrainScan pool is healthy.
+TWEET_WATCHER_FALLBACK_TO_BRAIN_POOL = _env_flag("TWEET_WATCHER_FALLBACK_TO_BRAIN_POOL", "1")
 # Filename-agnostic: reserve the LAST N loaded sessions for the watcher; the Brain
 # keeps the rest. Auto-disabled if there aren't enough sessions to split.
 TWEET_WATCHER_SESSION_COUNT = max(1, _env_int("TWEET_WATCHER_SESSION_COUNT", 2))

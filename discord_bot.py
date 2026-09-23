@@ -832,6 +832,21 @@ class BlockBrainBot(commands.Bot):
         register_claim_role_views(self)
         if getattr(config, "TWEET_WATCHER_ENABLED", False) and config.TWEET_WATCHER_CHANNEL_ID:
             self.tweet_watcher_task.start()
+            _watch_count = len(database.list_tweet_watcher_handles())
+            _watch_sessions = len(getattr(self.twitter_watcher, "_sessions", []) or [])
+            _watch_fallback = bool(
+                getattr(config, "TWEET_WATCHER_FALLBACK_TO_BRAIN_POOL", True)
+                and self.twitter_watcher is not self.twitter
+            )
+            print(
+                f"    [TweetWatcher] Enabled: {_watch_count} account(s), "
+                f"every {config.TWEET_WATCHER_INTERVAL_MIN}m → channel "
+                f"{config.TWEET_WATCHER_CHANNEL_ID}; watcher sessions={_watch_sessions}, "
+                f"Brain fallback={'on' if _watch_fallback else 'off'}"
+            )
+        else:
+            _watch_reason = "disabled" if not getattr(config, "TWEET_WATCHER_ENABLED", False) else "channel not configured"
+            print(f"    [TweetWatcher] Not running: {_watch_reason}.")
         self.monitor_twitter.start()
         if getattr(config, "BRAIN_SCAN_STARTUP_CATCHUP", True):
             self._brain_scan_startup_task = asyncio.create_task(self._brain_scan_startup_catchup())
@@ -2843,7 +2858,14 @@ class BlockBrainBot(commands.Bot):
             return
         try:
             from trackers.tweet_watcher import check_watched_accounts
-            posted = await check_watched_accounts(self, self.twitter_watcher)
+            fallback = None
+            if getattr(config, "TWEET_WATCHER_FALLBACK_TO_BRAIN_POOL", True):
+                fallback = self.twitter
+            posted = await check_watched_accounts(
+                self,
+                self.twitter_watcher,
+                fallback_twitter_client=fallback,
+            )
             if posted:
                 print(f"[TweetWatcher] Posted {posted} new tweet(s)")
         except Exception as e:
@@ -4570,9 +4592,10 @@ class WalletCommands(commands.Cog):
             if ok and post_latest:
                 latest_ok, latest_msg = await post_latest_for_handle(
                     self.bot,
-                    self.bot.twitter,
+                    self.bot.twitter_watcher,
                     handle=handle,
                     update_state=True,
+                    fallback_twitter_client=self.bot.twitter,
                 )
                 if latest_ok:
                     await interaction.followup.send(f"{msg}\nLatest baseline posted: {latest_msg}")
@@ -4618,7 +4641,14 @@ class WalletCommands(commands.Cog):
         await interaction.response.defer(thinking=True)
         try:
             from trackers.tweet_watcher import check_watched_accounts
-            posted = await check_watched_accounts(self.bot, self.bot.twitter)
+            fallback = None
+            if getattr(config, "TWEET_WATCHER_FALLBACK_TO_BRAIN_POOL", True):
+                fallback = self.bot.twitter
+            posted = await check_watched_accounts(
+                self.bot,
+                self.bot.twitter_watcher,
+                fallback_twitter_client=fallback,
+            )
             await interaction.followup.send(f"✅ Check complete. Posted {posted} new tweet(s).")
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
@@ -4640,9 +4670,10 @@ class WalletCommands(commands.Cog):
 
             ok, msg = await post_latest_for_handle(
                 self.bot,
-                self.bot.twitter,
+                self.bot.twitter_watcher,
                 handle=handle,
                 update_state=update_state,
+                fallback_twitter_client=self.bot.twitter,
             )
             if ok:
                 await interaction.followup.send(f"✅ {msg}", ephemeral=True)

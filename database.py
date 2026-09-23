@@ -2119,6 +2119,18 @@ def upsert_tweet_watcher_state(handle: str, twitter_id: str, last_seen_tweet_id:
     conn.close()
 
 
+def touch_tweet_watcher_checked(handle: str) -> None:
+    """Record a successful watcher poll without changing its tweet baseline."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE tweet_watcher_state SET last_checked_at=CURRENT_TIMESTAMP WHERE handle = ?",
+        (handle.lower(),),
+    )
+    conn.commit()
+    conn.close()
+
+
 def remove_tweet_watcher_state(handle: str) -> None:
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
