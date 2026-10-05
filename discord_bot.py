@@ -1295,8 +1295,14 @@ class BlockBrainBot(commands.Bot):
     async def on_message(self, message: discord.Message):
         if message.author.bot:
             return
-            
-        content = message.content.strip()
+
+        # Quality-chat tracking is deliberately best-effort. A database or
+        # sync issue must never stop normal Discord commands.
+        try:
+            import engagement
+            engagement.award_message(message)
+        except Exception as error:
+            print(f"[Engagement] message tracking failed: {error}")
         
         # Process other commands (like !velcor3 ...)
         await self.process_commands(message)

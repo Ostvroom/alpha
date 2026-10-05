@@ -63,14 +63,13 @@ def _env_float(name: str, default: float) -> float:
 X_ENGAGE_POINTS = _env_int("ENGAGE_X_POINTS", 10)
 X_ENGAGE_DAILY_CAP = _env_int("ENGAGE_X_DAILY_CAP", 3)
 
-# Chat messages. Raw message count is the easiest signal to farm, so points are
-# gated on length, a per-message cooldown, a repeat-content check and a cap.
-MSG_POINTS = _env_int("ENGAGE_MSG_POINTS", 2)
-MSG_REPLY_POINTS = _env_int("ENGAGE_MSG_REPLY_POINTS", 3)
+# Quality chat messages are stored as counts, not $V3. The staking database
+# converts completed batches of 10 into rewards (1 $V3 standard / 5 $V3 in
+# priority channels), which keeps retries idempotent and the payout auditable.
 MSG_DAILY_CAP = _env_int("ENGAGE_MSG_DAILY_CAP", 40)
 MSG_COOLDOWN_SEC = _env_int("ENGAGE_MSG_COOLDOWN_SEC", 60)
-MSG_MIN_CHARS = _env_int("ENGAGE_MSG_MIN_CHARS", 15)
-ALPHA_CHANNEL_MULTIPLIER = _env_float("ENGAGE_ALPHA_CHANNEL_MULTIPLIER", 1.5)
+MSG_MIN_CHARS = _env_int("ENGAGE_MSG_MIN_CHARS", 24)
+MSG_MIN_WORDS = _env_int("ENGAGE_MSG_MIN_WORDS", 4)
 
 # Alpha / meme calls and community curation.
 CALL_POINTS = _env_int("ENGAGE_CALL_POINTS", 25)
@@ -106,15 +105,38 @@ def _points_channel_ids() -> set:
     return out
 
 
-def _alpha_channel_ids() -> set:
-    """Channels that earn the alpha-channel multiplier."""
-    raw = (os.getenv("ENGAGE_ALPHA_CHANNEL_IDS", "") or "").strip()
+def _priority_channel_ids() -> set:
+    """Channels that earn the boosted quality-message reward."""
+    raw = ",".join(filter(None, (
+        (os.getenv("ENGAGE_PRIORITY_CHANNEL_IDS", "") or "").strip(),
+        (os.getenv("ENGAGE_ALPHA_CHANNEL_IDS", "") or "").strip(),
+    )))
     out = set()
     for part in raw.replace(";", ",").split(","):
         part = part.strip()
         if part.isdigit():
             out.add(int(part))
     return out
+
+
+def _excluded_channel_ids() -> set:
+    """Bot/output channels where messages must never count."""
+    raw = (os.getenv("ENGAGE_EXCLUDED_CHANNEL_IDS", "") or "").strip()
+    out = set()
+    for part in raw.replace(";", ",").split(","):
+        part = part.strip()
+        if part.isdigit():
+            out.add(int(part))
+    return out
+
+
+def _priority_channel_names() -> set:
+    raw = os.getenv(
+        "ENGAGE_PRIORITY_CHANNEL_NAMES",
+        "trading-chat,trading,shitcoin,shitcoing,alpha-discussion,alpha-discussions",
+    ) or ""
+    return {part.strip().lower().replace("_", "-").replace(" ", "-")
+            for part in raw.replace(";", ",").split(",") if part.strip()}
 
 
 # --- Audit log buffer ------------------------------------------------------
@@ -337,6 +359,21 @@ def get_staking_point_totals(discord_user_id: int) -> Tuple[int, int, int]:
     return int(row["total"] or 0), int(row["discord_points"] or 0), int(row["x_points"] or 0)
 
 
+def get_quality_message_counts(discord_user_id: int) -> Tuple[int, int]:
+    """Return absolute accepted-message counts as (standard, priority)."""
+    with closing(_conn()) as conn:
+        row = conn.execute(
+            "SELECT "
+            "COALESCE(SUM(CASE WHEN event_type = 'quality_message_standard' THEN 1 ELSE 0 END), 0) AS standard_count, "
+            "COALESCE(SUM(CASE WHEN event_type = 'quality_message_priority' THEN 1 ELSE 0 END), 0) AS priority_count "
+            "FROM engagement_events WHERE discord_user_id = ?",
+            (int(discord_user_id),),
+        ).fetchone()
+    if not row:
+        return 0, 0
+    return int(row["standard_count"] or 0), int(row["priority_count"] or 0)
+
+
 def _alpha_score_snapshot(discord_user_id: int, guild_id: int = 0) -> int:
     try:
         import alpha_ping
@@ -371,11 +408,13 @@ def queue_staking_score_sync(discord_user_id: int, guild_id: int = 0) -> bool:
 
         uid = int(discord_user_id)
         total, discord_points, x_raid_points = get_staking_point_totals(uid)
+        quality_count, priority_quality_count = get_quality_message_counts(uid)
         weekly_score, weekly_calls, week_start = _alpha_week_snapshot(uid, guild_id)
         return queue_score_sync(
             uid, total, discord_points, x_raid_points,
             _alpha_score_snapshot(uid, guild_id),
             weekly_score, weekly_calls, week_start,
+            quality_count, priority_quality_count,
         )
     except Exception as error:
         logger.warning("[StakingSync] unable to queue user %s: %s", discord_user_id, error)
@@ -817,8 +856,55 @@ def _meaningful_length(text: str) -> int:
     return len(s.strip())
 
 
+def _quality_message_text(text: str) -> str:
+    """Return normalized human text after removing links, pings and emoji."""
+    import re
+
+    value = str(text or "")
+    value = re.sub(r"<@[!&]?\d+>|<#\d+>|<a?:\w+:\d+>", " ", value)
+    value = re.sub(r"https?://\S+", " ", value)
+    value = re.sub(r"[^a-zA-Z0-9'\s]", " ", value)
+    return " ".join(value.lower().split())
+
+
+def is_quality_message(text: str) -> bool:
+    """Conservative rule for real conversation; rejects greetings and spam."""
+    import re
+
+    raw = str(text or "").strip()
+    if not raw or raw.startswith(("!", "/", ".")):
+        return False
+    normalized = _quality_message_text(raw)
+    low_effort = {
+        "gm", "gn", "hi", "hey", "hello", "bye", "goodbye", "lfg", "lol",
+        "thanks", "thank you", "thx", "welcome", "good morning", "good night",
+        "wen", "moon", "nice", "wow", "ok", "okay", "yes", "no",
+    }
+    if not normalized or normalized in low_effort or len(normalized) < MSG_MIN_CHARS:
+        return False
+    words = re.findall(r"[a-zA-Z0-9']+", normalized)
+    if len(words) < MSG_MIN_WORDS or len(set(words)) < 3:
+        return False
+    if re.search(r"(.)\1{5,}", normalized):
+        return False
+    return True
+
+
+def _is_priority_channel(channel) -> bool:
+    channel_id = int(getattr(channel, "id", 0) or 0)
+    if channel_id in _priority_channel_ids():
+        return True
+    names = _priority_channel_names()
+    for candidate in (channel, getattr(channel, "parent", None)):
+        name = str(getattr(candidate, "name", "") or "").lower()
+        name = name.replace("_", "-").replace(" ", "-")
+        if name in names:
+            return True
+    return False
+
+
 def award_message(message) -> Tuple[bool, str, int]:
-    """Award points for a chat message. Returns (ok, reason, points).
+    """Record one accepted quality message. Returns (ok, reason, count).
 
     Called from on_message, so every rejection path must be cheap and must
     never raise into the event handler.
@@ -831,21 +917,26 @@ def award_message(message) -> Tuple[bool, str, int]:
         if uid <= 0:
             return False, "invalid", 0
 
-        alpha_ids = _alpha_channel_ids()
-        # Alpha channels are implicitly points-eligible: listing one only in
-        # ENGAGE_ALPHA_CHANNEL_IDS would otherwise silently earn nothing.
-        allow = _points_channel_ids() | alpha_ids
-        ch_id = int(getattr(getattr(message, "channel", None), "id", 0) or 0)
-        # No allowlist configured -> pay nowhere. Opt-in is the safe default.
-        if not allow or ch_id not in allow:
+        if getattr(message, "guild", None) is None:
+            return False, "not_guild_message", 0
+        channel = getattr(message, "channel", None)
+        ch_id = int(getattr(channel, "id", 0) or 0)
+        parent_id = int(getattr(getattr(channel, "parent", None), "id", 0) or 0)
+        allow = _points_channel_ids()
+        priority = _is_priority_channel(channel)
+        if ch_id in _excluded_channel_ids() or parent_id in _excluded_channel_ids():
+            return False, "channel_excluded", 0
+        # With no allowlist, all normal server conversation is eligible. When
+        # configured, the list is strict; priority channels remain implicit.
+        if allow and ch_id not in allow and parent_id not in allow and not priority:
             return False, "channel_not_eligible", 0
 
         if not member_is_eligible(author):
             return False, "account_too_new", 0
 
         content = getattr(message, "content", "") or ""
-        if _meaningful_length(content) < MSG_MIN_CHARS:
-            return False, "too_short", 0
+        if not is_quality_message(content):
+            return False, "not_quality", 0
 
         import time as _time
 
@@ -858,17 +949,14 @@ def award_message(message) -> Tuple[bool, str, int]:
         if chash in hashes:
             return False, "repeat_content", 0
 
-        base = MSG_REPLY_POINTS if getattr(message, "reference", None) else MSG_POINTS
-        if ch_id in alpha_ids:
-            base = int(round(base * ALPHA_CHANNEL_MULTIPLIER))
-        pts = max(1, int(round(base * holder_multiplier(author))))
+        event_type = "quality_message_priority" if priority else "quality_message_standard"
 
         ok, reason, awarded = award(
             uid,
-            "message_activity",
-            pts,
+            event_type,
+            1,
             event_id=make_event_id("message", uid, getattr(message, "id", 0)),
-            description=f"Chat activity in #{getattr(getattr(message,'channel',None),'name','?')}",
+            description=f"Quality chat in #{getattr(channel, 'name', '?')}",
             daily_cap=MSG_DAILY_CAP,
         )
         if ok:
@@ -983,10 +1071,12 @@ def sync_alpha_score(discord_user_id: int, guild_id: int = 0, kind: str = "alpha
         from staking_sync import queue_score_sync
 
         total, discord_points, x_raid_points = get_staking_point_totals(uid)
+        quality_count, priority_quality_count = get_quality_message_counts(uid)
         weekly_score, weekly_calls, week_start = _alpha_week_snapshot(uid, 0)
         return queue_score_sync(
             uid, total, discord_points, x_raid_points, int(score),
             weekly_score, weekly_calls, week_start,
+            quality_count, priority_quality_count,
         )
     except Exception as e:
         logger.warning("[Engagement] alpha_score sync failed for %s: %s", uid, e)

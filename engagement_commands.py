@@ -255,16 +255,11 @@ class EngagementCommands(commands.Cog, name="Engagement"):
     @commands.command(name="engageconfig")
     @commands.has_permissions(manage_guild=True)
     async def engage_config(self, ctx: commands.Context) -> None:
-        """Show the live earning rules and channel setup (admin only).
-
-        Exists mainly to debug the most common failure: chat earning nothing
-        because no channel allowlist is configured.
-        """
+        """Show quality-chat reward rules and channel setup (admin only)."""
         if not ctx.guild:
             return
         pts_ids = engagement._points_channel_ids()
-        alpha_ids = engagement._alpha_channel_ids()
-        earning = pts_ids | alpha_ids
+        priority_ids = engagement._priority_channel_ids()
 
         embed = discord.Embed(
             title="⚙️ Engagement Configuration",
@@ -272,15 +267,10 @@ class EngagementCommands(commands.Cog, name="Engagement"):
             timestamp=datetime.now(timezone.utc),
         )
         embed.add_field(
-            name="Points per action",
+            name="Quality chat rewards",
             value=(
-                f"Message **{engagement.MSG_POINTS}** · Reply **{engagement.MSG_REPLY_POINTS}**\n"
-                f"Alpha channel **×{engagement.ALPHA_CHANNEL_MULTIPLIER}** · "
-                f"Holder **×{engagement.HOLDER_MULTIPLIER}**\n"
-                f"Call **{engagement.CALL_POINTS}** · Vote cast **{engagement.VOTE_CAST_POINTS}**\n"
-                f"Cook received **{engagement.COOK_RECEIVED_POINTS}** · "
-                f"Skip received **{engagement.SKIP_RECEIVED_POINTS}**\n"
-                f"X engage **{engagement.X_ENGAGE_POINTS}**"
+                "Standard channels: **10 accepted messages = 1 $V3**\n"
+                "Trading, shitcoin and Alpha channels: **10 accepted messages = 5 $V3**"
             ),
             inline=False,
         )
@@ -299,31 +289,32 @@ class EngagementCommands(commands.Cog, name="Engagement"):
             name="Anti-spam",
             value=(
                 f"Cooldown **{engagement.MSG_COOLDOWN_SEC}s** · "
-                f"Min length **{engagement.MSG_MIN_CHARS}**\n"
+                f"Min length **{engagement.MSG_MIN_CHARS}** · "
+                f"Min words **{engagement.MSG_MIN_WORDS}**\n"
                 f"Account age **{engagement.MIN_ACCOUNT_AGE_DAYS}d** · "
                 f"Member age **{engagement.MIN_MEMBER_AGE_HOURS}h**"
             ),
             inline=False,
         )
-        if earning:
-            shown = ", ".join(f"<#{c}>" for c in list(earning)[:15])
+        if pts_ids:
+            shown = ", ".join(f"<#{c}>" for c in list(pts_ids)[:15])
             embed.add_field(
-                name=f"Earning channels ({len(earning)})",
-                value=shown[:1024]
-                + (f"\n*alpha ×{engagement.ALPHA_CHANNEL_MULTIPLIER}: "
-                   + ", ".join(f"<#{c}>" for c in list(alpha_ids)[:10]) + "*" if alpha_ids else ""),
+                name=f"Allowed channels ({len(pts_ids)})",
+                value=shown[:1024],
                 inline=False,
             )
         else:
             embed.add_field(
-                name="⚠️ Earning channels",
-                value=(
-                    "**None configured — chat earns nothing.**\n"
-                    "Set `ENGAGE_POINTS_CHANNEL_IDS` (and optionally "
-                    "`ENGAGE_ALPHA_CHANNEL_IDS`) to enable chat points."
-                ),
+                name="Allowed channels",
+                value="All server conversation channels, except configured exclusions.",
                 inline=False,
             )
+        priority_value = ", ".join(f"<#{c}>" for c in list(priority_ids)[:15])
+        embed.add_field(
+            name="Boosted channels",
+            value=priority_value or "Matched by name: trading, shitcoin, Alpha discussion.",
+            inline=False,
+        )
         log_state = (
             f"<#{engagement.LOG_CHANNEL_ID}> every {engagement.LOG_FLUSH_SECONDS}s"
             if engagement.LOG_ENABLED and engagement.LOG_CHANNEL_ID

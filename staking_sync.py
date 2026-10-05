@@ -135,6 +135,8 @@ def queue_score_sync(
     alpha_weekly_score: int,
     alpha_weekly_calls: int,
     alpha_week_start: str,
+    quality_message_count: int = 0,
+    priority_quality_message_count: int = 0,
 ) -> bool:
     if not enabled():
         return False
@@ -153,6 +155,8 @@ def queue_score_sync(
         "alphaWeeklyScore": int(alpha_weekly_score),
         "alphaWeeklyCalls": max(0, int(alpha_weekly_calls)),
         "alphaWeekStart": str(alpha_week_start),
+        "qualityMessageCount": max(0, int(quality_message_count)),
+        "priorityQualityMessageCount": max(0, int(priority_quality_message_count)),
         "sourceUpdatedAt": datetime.now(timezone.utc).isoformat(),
     }
     _ensure_worker()

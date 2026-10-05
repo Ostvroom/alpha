@@ -19,6 +19,8 @@ payload = {
     "alphaWeeklyScore": 7,
     "alphaWeeklyCalls": 2,
     "alphaWeekStart": "2026-07-20",
+    "qualityMessageCount": 37,
+    "priorityQualityMessageCount": 24,
     "sourceUpdatedAt": "2026-07-23T12:00:00+00:00",
 }
 body = json.dumps(payload, separators=(",", ":"), sort_keys=True)
@@ -29,6 +31,8 @@ assert signature == sign_body(body, timestamp, secret)
 assert signature != sign_body(body + " ", timestamp, secret)
 assert isinstance(payload["discordUserId"], str)
 assert payload["engagementPoints"] == -3
+assert payload["qualityMessageCount"] == 37
+assert payload["priorityQualityMessageCount"] == 24
 assert payload["discordPoints"] == -2
 assert payload["xRaidPoints"] == -1
 assert payload["discordPoints"] + payload["xRaidPoints"] == payload["engagementPoints"]
