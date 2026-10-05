@@ -67,7 +67,9 @@ X_ENGAGE_DAILY_CAP = _env_int("ENGAGE_X_DAILY_CAP", 3)
 # converts completed batches of 10 into rewards (1 $V3 standard / 5 $V3 in
 # priority channels), which keeps retries idempotent and the payout auditable.
 MSG_DAILY_CAP = _env_int("ENGAGE_MSG_DAILY_CAP", 40)
-MSG_COOLDOWN_SEC = _env_int("ENGAGE_MSG_COOLDOWN_SEC", 60)
+# Distinct messages can count back-to-back. Duplicate hashes, quality checks,
+# account age, exclusions and the daily cap still provide spam protection.
+MSG_COOLDOWN_SEC = 0
 MSG_MIN_CHARS = _env_int("ENGAGE_MSG_MIN_CHARS", 24)
 MSG_MIN_WORDS = _env_int("ENGAGE_MSG_MIN_WORDS", 4)
 
@@ -922,14 +924,9 @@ def award_message(message) -> Tuple[bool, str, int]:
         channel = getattr(message, "channel", None)
         ch_id = int(getattr(channel, "id", 0) or 0)
         parent_id = int(getattr(getattr(channel, "parent", None), "id", 0) or 0)
-        allow = _points_channel_ids()
         priority = _is_priority_channel(channel)
         if ch_id in _excluded_channel_ids() or parent_id in _excluded_channel_ids():
             return False, "channel_excluded", 0
-        # With no allowlist, all normal server conversation is eligible. When
-        # configured, the list is strict; priority channels remain implicit.
-        if allow and ch_id not in allow and parent_id not in allow and not priority:
-            return False, "channel_not_eligible", 0
 
         if not member_is_eligible(author):
             return False, "account_too_new", 0
@@ -941,9 +938,7 @@ def award_message(message) -> Tuple[bool, str, int]:
         import time as _time
 
         now_ts = _time.time()
-        last_ts, hashes = _message_state(uid)
-        if now_ts - last_ts < MSG_COOLDOWN_SEC:
-            return False, "cooldown", 0
+        _last_ts, hashes = _message_state(uid)
 
         chash = _content_hash(content)
         if chash in hashes:
@@ -960,8 +955,7 @@ def award_message(message) -> Tuple[bool, str, int]:
             daily_cap=MSG_DAILY_CAP,
         )
         if ok:
-            # Only advance cooldown//hash trail on a real award, so a capped or
-            # rejected message doesn't start the next cooldown window.
+            # Only advance the hash trail on a real award.
             _save_message_state(uid, now_ts, hashes + [chash])
         return ok, reason, awarded
     except Exception as e:

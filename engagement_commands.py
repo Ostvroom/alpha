@@ -73,7 +73,7 @@ class EngagementCommands(commands.Cog, name="Engagement"):
         if not rows:
             embed.description = (
                 "No engagement recorded yet.\n"
-                "If this is unexpected, check that `ENGAGE_POINTS_CHANNEL_IDS` is set."
+                "Quality messages count in all server channels except configured exclusions."
             )
         else:
             medals = {0: "🥇", 1: "🥈", 2: "🥉"}
@@ -258,8 +258,8 @@ class EngagementCommands(commands.Cog, name="Engagement"):
         """Show quality-chat reward rules and channel setup (admin only)."""
         if not ctx.guild:
             return
-        pts_ids = engagement._points_channel_ids()
         priority_ids = engagement._priority_channel_ids()
+        excluded_ids = engagement._excluded_channel_ids()
 
         embed = discord.Embed(
             title="⚙️ Engagement Configuration",
@@ -288,7 +288,7 @@ class EngagementCommands(commands.Cog, name="Engagement"):
         embed.add_field(
             name="Anti-spam",
             value=(
-                f"Cooldown **{engagement.MSG_COOLDOWN_SEC}s** · "
+                f"Distinct messages can count back-to-back · "
                 f"Min length **{engagement.MSG_MIN_CHARS}** · "
                 f"Min words **{engagement.MSG_MIN_WORDS}**\n"
                 f"Account age **{engagement.MIN_ACCOUNT_AGE_DAYS}d** · "
@@ -296,17 +296,17 @@ class EngagementCommands(commands.Cog, name="Engagement"):
             ),
             inline=False,
         )
-        if pts_ids:
-            shown = ", ".join(f"<#{c}>" for c in list(pts_ids)[:15])
+        if excluded_ids:
+            shown = ", ".join(f"<#{c}>" for c in list(excluded_ids)[:15])
             embed.add_field(
-                name=f"Allowed channels ({len(pts_ids)})",
+                name=f"Excluded channels ({len(excluded_ids)})",
                 value=shown[:1024],
                 inline=False,
             )
         else:
             embed.add_field(
-                name="Allowed channels",
-                value="All server conversation channels, except configured exclusions.",
+                name="Eligible channels",
+                value="All server conversation channels.",
                 inline=False,
             )
         priority_value = ", ".join(f"<#{c}>" for c in list(priority_ids)[:15])
