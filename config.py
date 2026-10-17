@@ -532,6 +532,15 @@ TWEET_WATCHER_SESSION_COUNT = max(1, _env_int("TWEET_WATCHER_SESSION_COUNT", 2))
 TWEET_WATCHER_PROXY_SPLIT = max(1, _env_int("TWEET_WATCHER_PROXY_SPLIT", 8))
 # TweetWatcher is real-time user-facing traffic, so start it quickly after deploy.
 TWEET_WATCHER_STARTUP_DELAY_SEC = max(0.0, min(900.0, _env_float("TWEET_WATCHER_STARTUP_DELAY_SEC", 5.0)))
+
+# IPRoyal residential traffic monitor. The API token comes from IPRoyal
+# Dashboard -> Settings -> API. Never reuse the proxy password as this token.
+IPROYAL_API_TOKEN = (os.getenv("IPROYAL_API_TOKEN") or "").strip()
+IPROYAL_ALERT_USER_IDS = parse_user_ids("IPROYAL_ALERT_USER_IDS") or BOT_OWNER_IDS
+IPROYAL_BALANCE_CHECK_HOURS = max(0.25, min(24.0, _env_float("IPROYAL_BALANCE_CHECK_HOURS", 6.0)))
+IPROYAL_WARNING_GB = max(0.0, _env_float("IPROYAL_WARNING_GB", 2.0))
+IPROYAL_CRITICAL_GB = max(0.0, min(IPROYAL_WARNING_GB, _env_float("IPROYAL_CRITICAL_GB", 0.5)))
+
 X_PROJECT_SEARCH_STARTUP_DELAY_SEC = max(0.0, min(1800.0, _env_float("X_PROJECT_SEARCH_STARTUP_DELAY_SEC", 360.0)))
 BRAIN_SCAN_YIELD_TO_TWEET_WATCHER = _env_flag("BRAIN_SCAN_YIELD_TO_TWEET_WATCHER", "1")
 BRAIN_SCAN_TWEET_WATCHER_YIELD_SEC = max(

@@ -224,6 +224,16 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS proxy_balance_alert_state (
+            provider TEXT PRIMARY KEY,
+            level TEXT NOT NULL,
+            available_traffic REAL,
+            checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            alerted_at TIMESTAMP
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -2150,6 +2160,61 @@ def list_tweet_watcher_handles() -> list[dict]:
         {"handle": r[0], "twitter_id": r[1], "last_seen_tweet_id": r[2], "last_checked_at": r[3]}
         for r in rows
     ]
+
+
+def get_proxy_balance_alert_state(provider: str) -> Optional[dict]:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT level, available_traffic, checked_at, alerted_at "
+        "FROM proxy_balance_alert_state WHERE provider = ?",
+        (str(provider).lower(),),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "level": row[0],
+        "available_traffic": row[1],
+        "checked_at": row[2],
+        "alerted_at": row[3],
+    }
+
+
+def upsert_proxy_balance_alert_state(
+    provider: str,
+    level: str,
+    available_traffic: float,
+    *,
+    alerted: bool = False,
+) -> None:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO proxy_balance_alert_state
+            (provider, level, available_traffic, checked_at, alerted_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP, CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END)
+        ON CONFLICT(provider) DO UPDATE SET
+            level=excluded.level,
+            available_traffic=excluded.available_traffic,
+            checked_at=CURRENT_TIMESTAMP,
+            alerted_at=CASE
+                WHEN ? THEN CURRENT_TIMESTAMP
+                ELSE proxy_balance_alert_state.alerted_at
+            END
+        """,
+        (
+            str(provider).lower(),
+            str(level),
+            float(available_traffic),
+            1 if alerted else 0,
+            1 if alerted else 0,
+        ),
+    )
+    conn.commit()
+    conn.close()
 
 
 if __name__ == "__main__":

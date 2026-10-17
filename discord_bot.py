@@ -847,6 +847,16 @@ class BlockBrainBot(commands.Bot):
         else:
             _watch_reason = "disabled" if not getattr(config, "TWEET_WATCHER_ENABLED", False) else "channel not configured"
             print(f"    [TweetWatcher] Not running: {_watch_reason}.")
+        if config.IPROYAL_API_TOKEN and config.IPROYAL_ALERT_USER_IDS:
+            self.iproyal_balance_task.start()
+            print(
+                f"    [IPRoyal] Traffic monitor enabled: every "
+                f"{config.IPROYAL_BALANCE_CHECK_HOURS:g}h, warning ≤ "
+                f"{config.IPROYAL_WARNING_GB:g} GB, critical ≤ "
+                f"{config.IPROYAL_CRITICAL_GB:g} GB"
+            )
+        elif config.IPROYAL_API_TOKEN:
+            print("    [IPRoyal] Traffic monitor not running: no Discord alert user IDs configured.")
         self.monitor_twitter.start()
         if getattr(config, "BRAIN_SCAN_STARTUP_CATCHUP", True):
             self._brain_scan_startup_task = asyncio.create_task(self._brain_scan_startup_catchup())
@@ -2886,6 +2896,20 @@ class BlockBrainBot(commands.Bot):
         delay = float(getattr(config, "TWEET_WATCHER_STARTUP_DELAY_SEC", 5.0) or 0.0)
         if delay > 0:
             await asyncio.sleep(delay)
+
+    @tasks.loop(hours=config.IPROYAL_BALANCE_CHECK_HOURS)
+    async def iproyal_balance_task(self):
+        try:
+            from trackers.iproyal_balance import check_and_notify
+
+            await check_and_notify(self)
+        except Exception as exc:
+            print(f"[IPRoyal] Traffic check failed: {type(exc).__name__}: {exc}")
+
+    @iproyal_balance_task.before_loop
+    async def before_iproyal_balance_task(self):
+        await self.wait_until_ready()
+        await asyncio.sleep(10)
 
     # ─────────────────────────────────────────────────────────────────────────
     # CT DOMAIN WATCHER  (certificate transparency → new crypto domains)
