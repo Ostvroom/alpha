@@ -1248,10 +1248,14 @@ class TwitterClient:
         # 407 / "Proxy Authentication Required" is a PROXY failure (iProyal session
         # expired, concurrent-connection or bandwidth limit hit) — NOT a flagged
         # cookie. It must rotate the proxy, never burn the X session. Same for the
-        # generic "Proxy" / "ProxyError" transport failures.
+        # generic "Proxy" / "ProxyError" transport failures. Proxy providers use
+        # 402 when an account has no balance/traffic left; that is also a proxy
+        # failure, not an X account or cookie failure.
         is_proxy_err = any(
             x in reason
             for x in (
+                "402",
+                "Payment Required",
                 "522",
                 "502",
                 "504",
@@ -1437,6 +1441,8 @@ class TwitterClient:
                     is_network_err = is_twikit_internal or any(
                         code in err_msg
                         for code in [
+                            "402",
+                            "Payment Required",
                             "522",
                             "502",
                             "504",
@@ -1895,7 +1901,7 @@ class TwitterClient:
             if not err_msg:
                 err_msg = f"Empty {type(e).__name__}"
 
-            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
+            if any(code in err_msg for code in ["429", "503", "403", "402", "502", "504", "522"]) or "Payment Required" in err_msg or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 print(f"      Retrying due to {err_msg}...")
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
@@ -1961,7 +1967,7 @@ class TwitterClient:
                 if _retry_depth < 2:
                     return await self._get_new_following_with_delta_twikit(user_id, hva_handle, _retry_depth + 1)
                 raise RuntimeError(f"Twikit transaction bootstrap failed after retries: {err_msg}") from e
-            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
+            if any(code in err_msg for code in ["429", "503", "403", "402", "502", "504", "522"]) or "Payment Required" in err_msg or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 print(f"      Retrying due to {err_msg}...")
                 self._mark_session_blocked(err_msg)
                 if _retry_depth < 2:
@@ -2031,7 +2037,7 @@ class TwitterClient:
                 tw = await self._get_user_timeline_twikit(user_id, count, _retry_depth)
                 if tw:
                     return tw
-            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
+            if any(code in err_msg for code in ["429", "503", "403", "402", "502", "504", "522"]) or "Payment Required" in err_msg or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 self._mark_session_blocked(err_msg)
                 max_retries = int(getattr(config, "TWITTER_TIMELINE_CLIENT_RETRIES", 0) or 0)
                 if _retry_depth < max_retries:
@@ -2065,7 +2071,7 @@ class TwitterClient:
                 if _retry_depth < 2:
                     return await self._get_user_timeline_twikit(user_id, count, _retry_depth + 1)
                 raise RuntimeError(f"Twikit transaction bootstrap failed after retries: {err_msg}") from e
-            if any(code in err_msg for code in ["429", "503", "403", "502", "504", "522"]) or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
+            if any(code in err_msg for code in ["429", "503", "403", "402", "502", "504", "522"]) or "Payment Required" in err_msg or "Empty" in err_msg or "Timeout" in err_msg or "SSL" in err_msg or "invalid response" in err_msg:
                 self._mark_session_blocked(err_msg)
                 max_retries = int(getattr(config, "TWITTER_TIMELINE_CLIENT_RETRIES", 0) or 0)
                 if _retry_depth < max_retries:

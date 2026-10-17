@@ -23,6 +23,35 @@ _TWITTER_BLUE = 0x1D9BF0
 _DESCRIPTION_LIMIT = 2200  # leaves room under Discord's 6000-char multi-embed cap
 
 
+class TweetWatcherTransportError(RuntimeError):
+    """The X transport failed; this says nothing about the watched account."""
+
+
+def _is_transport_error(error: Any) -> bool:
+    message = str(error or "").lower()
+    return any(
+        marker in message
+        for marker in (
+            "402",
+            "payment required",
+            "proxyerror",
+            "proxy error",
+            "connecttimeout",
+            "readtimeout",
+            "connection reset",
+            "connection aborted",
+            "timeline fetch failed",
+            "invalid response",
+            "ssl",
+            "429",
+            "502",
+            "503",
+            "504",
+            "522",
+        )
+    )
+
+
 def _fmt_count(n: Any) -> str:
     try:
         n = int(n or 0)
@@ -451,8 +480,18 @@ def _quarantine_sec() -> float:
 
 
 def _is_quarantined(handle: str) -> bool:
-    st = _handle_fail_state.get(handle.lower())
-    return bool(st and st.get("until", 0.0) > time.time())
+    key = handle.lower()
+    st = _handle_fail_state.get(key)
+    if not st:
+        return False
+    until = float(st.get("until", 0.0) or 0.0)
+    if until > time.time():
+        return True
+    # A completed cooldown is a fresh chance. Keeping the old failure count made
+    # the next single failure immediately re-quarantine a handle forever.
+    if until:
+        _handle_fail_state.pop(key, None)
+    return False
 
 
 def _quarantine_remaining(handle: str) -> int:
@@ -542,8 +581,8 @@ async def _fetch_recent_tweets(
         return tweets or []
     except Exception as e:
         print(f"[TweetWatcher] Error fetching tweets for {handle}: {e}")
-        import traceback
-        traceback.print_exc()
+        if _is_transport_error(e):
+            raise TweetWatcherTransportError(str(e)) from e
         return []
 
 
@@ -753,14 +792,18 @@ async def check_watched_accounts(
 
         tweets: List[Any] = []
         primary_timed_out = False
+        transport_failed = False
         try:
             tweets = await _fetch_with_timeout(twitter_client)
         except asyncio.TimeoutError:
             primary_timed_out = True
+            transport_failed = True
             print(
                 f"[TweetWatcher] Timeout fetching @{handle} after "
                 f"{_handle_timeout_sec():.0f}s on watcher pool."
             )
+        except TweetWatcherTransportError:
+            transport_failed = True
 
         # The dedicated watcher pool is intentionally small. If its sessions are
         # blocked, retry once through the larger BrainScan pool before declaring
@@ -775,12 +818,21 @@ async def check_watched_accounts(
             try:
                 tweets = await _fetch_with_timeout(fallback_twitter_client)
             except asyncio.TimeoutError:
+                transport_failed = True
                 print(
                     f"[TweetWatcher] Timeout fetching @{handle} after "
                     f"{_handle_timeout_sec():.0f}s on Brain fallback pool."
                 )
+            except TweetWatcherTransportError:
+                transport_failed = True
 
         if not tweets:
+            if transport_failed:
+                print(
+                    f"[TweetWatcher] X transport unavailable for @{handle}; "
+                    "account failure counter unchanged."
+                )
+                continue
             _record_handle_failure(handle)
             print(f"[TweetWatcher] No tweets returned for @{handle}; keeping last_seen unchanged.")
             continue
@@ -953,6 +1005,8 @@ async def post_latest_for_handle(
         tweets = await _fetch_with_timeout(twitter_client)
     except asyncio.TimeoutError:
         tweets = []
+    except TweetWatcherTransportError:
+        tweets = []
 
     if (
         not tweets
@@ -964,6 +1018,8 @@ async def post_latest_for_handle(
             tweets = await _fetch_with_timeout(fallback_twitter_client)
         except asyncio.TimeoutError:
             return False, f"Timed out fetching @{h} on both X session pools."
+        except TweetWatcherTransportError as e:
+            return False, f"X transport unavailable for @{h}: {e}"
     if not tweets:
         return False, f"No tweets returned for @{h}."
 
