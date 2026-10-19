@@ -1313,7 +1313,10 @@ class VelcorFeatures(commands.Cog):
             return True
 
     async def _handle_holder_verification_log(self, message: discord.Message) -> int:
-        if not message.guild or message.channel.id != HOLDER_VERIFICATION_LOG_CHANNEL_ID:
+        # Verification providers can post this embed in different staff-log
+        # channels. The exact title, bot author, current Holder role and the
+        # persistent first-welcome check are the trust boundaries here.
+        if not message.guild:
             return 0
         welcomed = 0
         for user_id in self._holder_ids_from_verification_message(message):
@@ -1327,25 +1330,61 @@ class VelcorFeatures(commands.Cog):
                 welcomed += 1
         return welcomed
 
+    async def _recover_holder_role_audits(self, cutoff: datetime) -> int:
+        """Recover Holder grants missed while the gateway was unavailable."""
+        recovered = 0
+        for guild in self.bot.guilds:
+            try:
+                async for entry in guild.audit_logs(
+                    limit=100,
+                    action=discord.AuditLogAction.member_role_update,
+                    after=cutoff,
+                    oldest_first=True,
+                ):
+                    added_roles = getattr(entry.after, "roles", None) or []
+                    if HOLDER_VERIFIED_ROLE_ID not in {
+                        int(role.id) for role in added_roles
+                    }:
+                        continue
+                    member = guild.get_member(entry.target.id)
+                    if member is None:
+                        try:
+                            member = await guild.fetch_member(entry.target.id)
+                        except Exception:
+                            continue
+                    if await self._welcome_holder_once(member, source="role-audit-recovery"):
+                        recovered += 1
+            except discord.Forbidden:
+                print(
+                    f"[VelcorFeatures] Cannot inspect role audit history in {guild.name}; "
+                    "the live role listener remains active."
+                )
+            except Exception as e:
+                print(f"[VelcorFeatures] Holder role audit recovery failed in {guild.name}: {e}")
+        return recovered
+
     async def _recover_recent_holder_welcomes(self) -> None:
-        """Replay recent verifier logs after a deploy/reconnect to heal missed events."""
-        if not HOLDER_VERIFICATION_LOG_CHANNEL_ID:
-            return
+        """Replay recent role grants and verifier logs to heal missed events."""
         cutoff = datetime.now(timezone.utc) - timedelta(hours=HOLDER_WELCOME_LOG_LOOKBACK_HOURS)
-        try:
-            channel = self.bot.get_channel(HOLDER_VERIFICATION_LOG_CHANNEL_ID)
-            if channel is None:
-                channel = await self.bot.fetch_channel(HOLDER_VERIFICATION_LOG_CHANNEL_ID)
-            messages = [message async for message in channel.history(limit=100, after=cutoff)]
-            recovered = 0
-            for message in reversed(messages):
-                recovered += await self._handle_holder_verification_log(message)
-            print(
-                f"[VelcorFeatures] Holder welcome recovery checked {len(messages)} "
-                f"recent verification log message(s); welcomed={recovered}"
-            )
-        except Exception as e:
-            print(f"[VelcorFeatures] Holder welcome recovery unavailable: {e}")
+        recovered = await self._recover_holder_role_audits(cutoff)
+
+        messages_checked = 0
+        if HOLDER_VERIFICATION_LOG_CHANNEL_ID:
+            try:
+                channel = self.bot.get_channel(HOLDER_VERIFICATION_LOG_CHANNEL_ID)
+                if channel is None:
+                    channel = await self.bot.fetch_channel(HOLDER_VERIFICATION_LOG_CHANNEL_ID)
+                messages = [message async for message in channel.history(limit=100, after=cutoff)]
+                messages_checked = len(messages)
+                for message in reversed(messages):
+                    recovered += await self._handle_holder_verification_log(message)
+            except Exception as e:
+                print(f"[VelcorFeatures] Holder verification-log recovery unavailable: {e}")
+
+        print(
+            f"[VelcorFeatures] Holder welcome recovery checked role audit history and "
+            f"{messages_checked} verification log message(s); welcomed={recovered}"
+        )
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
