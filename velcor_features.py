@@ -39,8 +39,16 @@ ENABLE_HOLDER_WELCOME = getattr(config, "ENABLE_HOLDER_WELCOME", True)
 HOLDER_WELCOME_PAUSED = getattr(config, "HOLDER_WELCOME_PAUSED", False)
 HOLDER_VERIFIED_ROLE_ID = int(getattr(config, "HOLDER_VERIFIED_ROLE_ID", 0) or 0)
 HOLDER_WELCOME_CHANNEL_ID = int(getattr(config, "HOLDER_WELCOME_CHANNEL_ID", 0) or 0)
+HOLDER_VERIFICATION_LOG_CHANNEL_ID = int(
+    getattr(config, "HOLDER_VERIFICATION_LOG_CHANNEL_ID", 0) or 0
+)
+HOLDER_WELCOME_LOG_LOOKBACK_HOURS = int(
+    getattr(config, "HOLDER_WELCOME_LOG_LOOKBACK_HOURS", 24) or 24
+)
 HOLDER_CLAIM_ROLES_CHANNEL_ID = int(getattr(config, "HOLDER_CLAIM_ROLES_CHANNEL_ID", 0) or 0)
 HOLDER_WELCOME_MESSAGE = getattr(config, "HOLDER_WELCOME_MESSAGE", "")
+
+_DISCORD_MENTION_RE = re.compile(r"<@!?(\d+)>")
 
 
 def _auto_react_emoji() -> discord.PartialEmoji | str:
@@ -1193,6 +1201,8 @@ class VelcorFeatures(commands.Cog):
         self.bot = bot
         self.guild_settings: dict = {}
         self.scan_in_progress: dict = {}
+        self._holder_welcome_locks: dict[tuple[int, int], asyncio.Lock] = {}
+        self._holder_welcome_recovery_started = False
         init_database()
         self.guild_settings = load_all_settings()
 
@@ -1202,10 +1212,144 @@ class VelcorFeatures(commands.Cog):
     async def on_ready(self):
         n = register_claim_role_views(self.bot)
         print(f"[VelcorFeatures] Cog loaded — claim-role dropdowns registered: {n}")
+        print(
+            "[VelcorFeatures] Holder welcome "
+            f"{'paused' if HOLDER_WELCOME_PAUSED else 'active'} "
+            f"(role={HOLDER_VERIFIED_ROLE_ID}, channel={HOLDER_WELCOME_CHANNEL_ID}, "
+            f"verification_log={HOLDER_VERIFICATION_LOG_CHANNEL_ID})"
+        )
+        if not ENABLE_HOLDER_WELCOME and not HOLDER_WELCOME_PAUSED:
+            print(
+                "[VelcorFeatures] Ignoring legacy ENABLE_HOLDER_WELCOME=0; "
+                "set HOLDER_WELCOME_PAUSED=1 to intentionally pause welcomes."
+            )
+        if not self._holder_welcome_recovery_started:
+            self._holder_welcome_recovery_started = True
+            asyncio.create_task(self._recover_recent_holder_welcomes())
+
+    @staticmethod
+    def _holder_ids_from_verification_message(message: discord.Message) -> set[int]:
+        """Return user IDs mentioned by an exact Holder Verified log embed."""
+        ids: set[int] = set()
+        for embed in message.embeds:
+            if not (embed.title or "").strip().casefold().endswith("holder verified"):
+                continue
+            text = json.dumps(embed.to_dict(), ensure_ascii=False)
+            ids.update(int(value) for value in _DISCORD_MENTION_RE.findall(text))
+        return ids
+
+    async def _welcome_holder_once(self, member: discord.Member, *, source: str) -> bool:
+        """Send the first-ever holder welcome, serialized across all triggers."""
+        if HOLDER_WELCOME_PAUSED:
+            return False
+        if not HOLDER_VERIFIED_ROLE_ID or not HOLDER_WELCOME_CHANNEL_ID:
+            return False
+        if member.bot or not member.guild:
+            return False
+        if HOLDER_VERIFIED_ROLE_ID not in {int(role.id) for role in member.roles}:
+            return False
+
+        key = (int(member.guild.id), int(member.id))
+        lock = self._holder_welcome_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            try:
+                holder_welcome_store.init_db()
+                if holder_welcome_store.has_welcomed_holder(member.guild.id, member.id):
+                    holder_welcome_store.mark_holder_seen(
+                        guild_id=member.guild.id,
+                        user_id=member.id,
+                        role_id=HOLDER_VERIFIED_ROLE_ID,
+                    )
+                    return False
+            except Exception as e:
+                print(f"[VelcorFeatures] Holder welcome dedupe unavailable; skipping welcome: {e}")
+                return False
+
+            channel = member.guild.get_channel(HOLDER_WELCOME_CHANNEL_ID)
+            if channel is None:
+                try:
+                    channel = await member.guild.fetch_channel(HOLDER_WELCOME_CHANNEL_ID)
+                except Exception as e:
+                    print(f"[VelcorFeatures] Holder welcome channel unavailable: {e}")
+                    return False
+
+            claim_channel = None
+            if HOLDER_CLAIM_ROLES_CHANNEL_ID:
+                claim_channel = member.guild.get_channel(HOLDER_CLAIM_ROLES_CHANNEL_ID)
+            claim_channel_text = (
+                claim_channel.mention
+                if claim_channel
+                else f"<#{HOLDER_CLAIM_ROLES_CHANNEL_ID}>"
+            )
+            body = (HOLDER_WELCOME_MESSAGE or "Welcome, {mention} to the Velcorians family!").format(
+                mention=member.mention,
+                claim_roles_channel=claim_channel_text,
+                user=member.display_name,
+                guild=member.guild.name,
+            )
+
+            try:
+                sent = await channel.send(body)
+            except discord.Forbidden:
+                print(f"[VelcorFeatures] No permission in holder welcome channel {HOLDER_WELCOME_CHANNEL_ID}")
+                return False
+            except Exception as e:
+                print(f"[VelcorFeatures] Holder welcome send failed: {e}")
+                return False
+
+            try:
+                holder_welcome_store.mark_holder_seen(
+                    guild_id=member.guild.id,
+                    user_id=member.id,
+                    role_id=HOLDER_VERIFIED_ROLE_ID,
+                    welcome_message_id=getattr(sent, "id", None),
+                )
+            except Exception as e:
+                print(f"[VelcorFeatures] Holder welcome sent but dedupe save failed: {e}")
+            print(
+                f"[VelcorFeatures] Holder welcome sent to {member} "
+                f"({member.id}) via {source}"
+            )
+            return True
+
+    async def _handle_holder_verification_log(self, message: discord.Message) -> int:
+        if not message.guild or message.channel.id != HOLDER_VERIFICATION_LOG_CHANNEL_ID:
+            return 0
+        welcomed = 0
+        for user_id in self._holder_ids_from_verification_message(message):
+            member = message.guild.get_member(user_id)
+            if member is None:
+                try:
+                    member = await message.guild.fetch_member(user_id)
+                except Exception:
+                    continue
+            if await self._welcome_holder_once(member, source="verification-log"):
+                welcomed += 1
+        return welcomed
+
+    async def _recover_recent_holder_welcomes(self) -> None:
+        """Replay recent verifier logs after a deploy/reconnect to heal missed events."""
+        if not HOLDER_VERIFICATION_LOG_CHANNEL_ID:
+            return
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=HOLDER_WELCOME_LOG_LOOKBACK_HOURS)
+        try:
+            channel = self.bot.get_channel(HOLDER_VERIFICATION_LOG_CHANNEL_ID)
+            if channel is None:
+                channel = await self.bot.fetch_channel(HOLDER_VERIFICATION_LOG_CHANNEL_ID)
+            messages = [message async for message in channel.history(limit=100, after=cutoff)]
+            recovered = 0
+            for message in reversed(messages):
+                recovered += await self._handle_holder_verification_log(message)
+            print(
+                f"[VelcorFeatures] Holder welcome recovery checked {len(messages)} "
+                f"recent verification log message(s); welcomed={recovered}"
+            )
+        except Exception as e:
+            print(f"[VelcorFeatures] Holder welcome recovery unavailable: {e}")
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
-        if not ENABLE_HOLDER_WELCOME or HOLDER_WELCOME_PAUSED:
+        if HOLDER_WELCOME_PAUSED:
             return
         if not HOLDER_VERIFIED_ROLE_ID or not HOLDER_WELCOME_CHANNEL_ID:
             return
@@ -1218,57 +1362,7 @@ class VelcorFeatures(commands.Cog):
             return
         if HOLDER_VERIFIED_ROLE_ID in before_role_ids:
             return
-
-        try:
-            holder_welcome_store.init_db()
-            if holder_welcome_store.has_welcomed_holder(after.guild.id, after.id):
-                holder_welcome_store.mark_holder_seen(
-                    guild_id=after.guild.id,
-                    user_id=after.id,
-                    role_id=HOLDER_VERIFIED_ROLE_ID,
-                )
-                return
-        except Exception as e:
-            print(f"[VelcorFeatures] Holder welcome dedupe unavailable; skipping welcome: {e}")
-            return
-
-        channel = after.guild.get_channel(HOLDER_WELCOME_CHANNEL_ID)
-        if channel is None:
-            try:
-                channel = await after.guild.fetch_channel(HOLDER_WELCOME_CHANNEL_ID)
-            except Exception as e:
-                print(f"[VelcorFeatures] Holder welcome channel unavailable: {e}")
-                return
-
-        claim_channel = None
-        if HOLDER_CLAIM_ROLES_CHANNEL_ID:
-            claim_channel = after.guild.get_channel(HOLDER_CLAIM_ROLES_CHANNEL_ID)
-        claim_channel_text = claim_channel.mention if claim_channel else f"<#{HOLDER_CLAIM_ROLES_CHANNEL_ID}>"
-        body = (HOLDER_WELCOME_MESSAGE or "Welcome, {mention} to the Velcorians family!").format(
-            mention=after.mention,
-            claim_roles_channel=claim_channel_text,
-            user=after.display_name,
-            guild=after.guild.name,
-        )
-
-        try:
-            sent = await channel.send(body)
-        except discord.Forbidden:
-            print(f"[VelcorFeatures] No permission in holder welcome channel {HOLDER_WELCOME_CHANNEL_ID}")
-            return
-        except Exception as e:
-            print(f"[VelcorFeatures] Holder welcome send failed: {e}")
-            return
-
-        try:
-            holder_welcome_store.mark_holder_seen(
-                guild_id=after.guild.id,
-                user_id=after.id,
-                role_id=HOLDER_VERIFIED_ROLE_ID,
-                welcome_message_id=getattr(sent, "id", None),
-            )
-        except Exception as e:
-            print(f"[VelcorFeatures] Holder welcome sent but dedupe save failed: {e}")
+        await self._welcome_holder_once(after, source="member-update")
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
@@ -1397,6 +1491,7 @@ class VelcorFeatures(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot:
+            await self._handle_holder_verification_log(message)
             return
         if not message.guild:
             return

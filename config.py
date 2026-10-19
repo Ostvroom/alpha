@@ -819,11 +819,22 @@ VERIFICATION_RULES_TEXT = os.getenv(
     "Welcome. Please read our rules, then verify below to access the server.",
 )
 # NFT / holder verification — welcome when member receives the holder role (any assign path)
+# Legacy visibility flag retained for startup diagnostics. HOLDER_WELCOME_PAUSED
+# is the single kill switch; old ENABLE_HOLDER_WELCOME=0 values previously left
+# behind in deployment settings must not silently disable first-holder welcomes.
 ENABLE_HOLDER_WELCOME = _env_flag("ENABLE_HOLDER_WELCOME", "1")
 HOLDER_WELCOME_PAUSED = _env_flag("HOLDER_WELCOME_PAUSED", "0")
 HOLDER_VERIFIED_ROLE_ID = _env_int("HOLDER_VERIFIED_ROLE_ID", 1506380353877577738)
 HOLDER_WELCOME_CHANNEL_ID = parse_channel_id(
     "HOLDER_WELCOME_CHANNEL_ID", default=1052854063257096196
+)
+# The wallet verifier posts a "Holder Verified" embed here. It is used as a
+# backup trigger when Discord's live member-role update event is missed.
+HOLDER_VERIFICATION_LOG_CHANNEL_ID = parse_channel_id(
+    "HOLDER_VERIFICATION_LOG_CHANNEL_ID", default=VERIFICATION_LOG_CHANNEL_ID
+)
+HOLDER_WELCOME_LOG_LOOKBACK_HOURS = max(
+    1, min(168, _env_int("HOLDER_WELCOME_LOG_LOOKBACK_HOURS", 24))
 )
 HOLDER_CLAIM_ROLES_CHANNEL_ID = parse_channel_id(
     "HOLDER_CLAIM_ROLES_CHANNEL_ID", default=1506343782948405378
